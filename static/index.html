@@ -1,0 +1,935 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Enterprise Network GIS Portal - Multi Layer + Drag & Drop</title>
+
+    <!-- Google Fonts & Font Awesome Icons -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+
+    <!-- Leaflet CSS & JS -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Leaflet Draw Plugin CSS & JS -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+
+    <style>
+      :root {
+        --bg-sidebar: #0f172a;
+        --bg-sidebar-hover: #1e293b;
+        --text-primary: #f8fafc;
+        --text-secondary: #94a3b8;
+        --accent-blue: #2563eb;
+        --accent-green: #10b981;
+        --accent-red: #ef4444;
+        --accent-amber: #f59e0b;
+        --header-height: 60px;
+        --sidebar-width: 250px;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body,
+      html {
+        height: 100%;
+        font-family: "Inter", sans-serif;
+        background: #f1f5f9;
+        color: #1e293b;
+        overflow: hidden;
+      }
+
+      .app-container {
+        display: flex;
+        height: 100vh;
+        width: 100vw;
+      }
+
+      .sidebar {
+        width: var(--sidebar-width);
+        background: var(--bg-sidebar);
+        color: var(--text-primary);
+        display: flex;
+        flex-direction: column;
+        z-index: 2000;
+        box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+      }
+
+      .brand-header {
+        height: var(--header-height);
+        display: flex;
+        align-items: center;
+        padding: 0 20px;
+        border-bottom: 1px solid #1e293b;
+        gap: 12px;
+      }
+      .brand-header i {
+        font-size: 22px;
+        color: var(--accent-blue);
+      }
+      .brand-header h2 {
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .nav-menu {
+        flex: 1;
+        padding: 20px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        overflow-y: auto;
+      }
+      .nav-section-title {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: #64748b;
+        padding: 10px 12px 4px 12px;
+      }
+
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 14px;
+        color: var(--text-secondary);
+        text-decoration: none;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      .nav-item:hover,
+      .nav-item.active {
+        background: var(--bg-sidebar-hover);
+        color: var(--text-primary);
+      }
+      .nav-item.active {
+        border-left: 3px solid var(--accent-blue);
+        border-radius: 0 6px 6px 0;
+      }
+      .nav-item i {
+        font-size: 16px;
+        width: 20px;
+        text-align: center;
+      }
+
+      .main-wrapper {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+      }
+
+      .top-header {
+        height: var(--header-height);
+        background: #ffffff;
+        border-bottom: 1px solid #e2e8f0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 24px;
+        z-index: 1000;
+      }
+
+      .header-title h3 {
+        font-size: 16px;
+        font-weight: 600;
+        color: #0f172a;
+      }
+      .header-title p {
+        font-size: 12px;
+        color: #64748b;
+      }
+
+      .status-badge {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: #ecfdf5;
+        color: #047857;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .status-pulse {
+        width: 8px;
+        height: 8px;
+        background: var(--accent-green);
+        border-radius: 50%;
+        animation: pulse 1.5s infinite;
+      }
+      @keyframes pulse {
+        0% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.4;
+        }
+        100% {
+          opacity: 1;
+        }
+      }
+
+      .map-viewport {
+        flex: 1;
+        position: relative;
+        width: 100%;
+        height: calc(100vh - var(--header-height));
+      }
+      #map {
+        width: 100%;
+        height: 100%;
+        z-index: 1;
+      }
+
+      .metrics-overlay {
+        position: absolute;
+        top: 16px;
+        left: 16px;
+        z-index: 900;
+        display: flex;
+        gap: 12px;
+      }
+
+      .metric-card {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(8px);
+        padding: 10px 16px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        border: 1px solid rgba(226, 232, 240, 0.8);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 140px;
+      }
+
+      .metric-icon {
+        width: 38px;
+        height: 38px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 16px;
+      }
+      .metric-icon.purple {
+        background: #f3e8ff;
+        color: #8b5cf6;
+      }
+      .metric-icon.blue {
+        background: #eff6ff;
+        color: var(--accent-blue);
+      }
+      .metric-icon.red {
+        background: #fef2f2;
+        color: var(--accent-red);
+      }
+
+      .metric-data h4 {
+        font-size: 18px;
+        font-weight: 700;
+        color: #0f172a;
+        line-height: 1.2;
+      }
+      .metric-data span {
+        font-size: 11px;
+        color: #64748b;
+        font-weight: 500;
+      }
+
+      .custom-map-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        color: white;
+        box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+        border: 2px solid white;
+      }
+      .icon-pop {
+        background-color: #8b5cf6;
+      }
+      .icon-odp {
+        background-color: #10b981;
+      }
+      .icon-closure {
+        background-color: #f59e0b;
+      }
+      .icon-pelanggan {
+        background-color: #06b6d4;
+      }
+      .icon-tiang {
+        background-color: #64748b;
+      }
+      .icon-incident {
+        background-color: #ef4444;
+      }
+
+      .popup-header {
+        font-weight: 700;
+        font-size: 14px;
+        color: #0f172a;
+        border-bottom: 1px solid #e2e8f0;
+        padding-bottom: 6px;
+        margin-bottom: 8px;
+      }
+      .popup-row {
+        font-size: 12px;
+        color: #475569;
+        margin-bottom: 5px;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .popup-row span {
+        color: #64748b;
+        font-weight: 500;
+      }
+      .popup-row b {
+        color: #0f172a;
+        font-family: monospace;
+        font-size: 11.5px;
+      }
+
+      .popup-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .btn-status {
+        padding: 6px 12px;
+        font-size: 11px;
+        font-weight: 600;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        color: #fff;
+        width: 100%;
+        transition: opacity 0.2s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+      }
+      .btn-danger {
+        background: var(--accent-red);
+      }
+      .btn-success {
+        background: var(--accent-green);
+      }
+      .btn-warning {
+        background: var(--accent-amber);
+      }
+      .btn-outline-danger {
+        background: transparent;
+        color: var(--accent-red);
+        border: 1px solid var(--accent-red);
+      }
+      .btn-outline-danger:hover {
+        background: #fef2f2;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-container">
+      <aside class="sidebar">
+        <div class="brand-header">
+          <i class="fa-solid fa-network-wired"></i>
+          <h2>NETGIS Enterprise</h2>
+        </div>
+
+        <nav class="nav-menu">
+          <div class="nav-section-title">Core Modules</div>
+          <a class="nav-item active"
+            ><i class="fa-solid fa-map-location-dot"></i
+            ><span>Fiber Coverage Map</span></a
+          >
+          <a class="nav-item" onclick="alert('Modul Asset Inventory')"
+            ><i class="fa-solid fa-boxes-stacked"></i
+            ><span>Asset Inventory</span></a
+          >
+          <a class="nav-item" onclick="alert('Modul NOC Incident')"
+            ><i class="fa-solid fa-triangle-exclamation"></i
+            ><span>NOC Monitor</span></a
+          >
+          <div class="nav-section-title">Sales & System</div>
+          <a class="nav-item" onclick="alert('Modul Coverage Checker')"
+            ><i class="fa-solid fa-user-plus"></i
+            ><span>Coverage Checker</span></a
+          >
+          <a class="nav-item" onclick="alert('Modul Access Control')"
+            ><i class="fa-solid fa-users-gear"></i
+            ><span>Access Control</span></a
+          >
+        </nav>
+      </aside>
+
+      <main class="main-wrapper">
+        <header class="top-header">
+          <div class="header-title">
+            <h3>Centralized Asplan Portal</h3>
+            <p>Area Coverage: Banjarmasin & Regional Backbone</p>
+          </div>
+          <div class="status-badge">
+            <div class="status-pulse"></div>
+            <span>GIS Database: Connected</span>
+          </div>
+        </header>
+
+        <div class="map-viewport">
+          <div class="metrics-overlay">
+            <div class="metric-card">
+              <div class="metric-icon purple">
+                <i class="fa-solid fa-microchip"></i>
+              </div>
+              <div class="metric-data">
+                <h4 id="stat-odp">0</h4>
+                <span>Total ODP</span>
+              </div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-icon blue">
+                <i class="fa-solid fa-route"></i>
+              </div>
+              <div class="metric-data">
+                <h4 id="stat-cables">0</h4>
+                <span>Jalur Kabel</span>
+              </div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-icon red">
+                <i class="fa-solid fa-circle-exclamation"></i>
+              </div>
+              <div class="metric-data">
+                <h4 id="stat-incidents">0</h4>
+                <span>Incident</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="map"></div>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      const map = L.map("map", { zoomControl: false }).setView(
+        [-3.323, 114.593],
+        14,
+      );
+      L.control.zoom({ position: "topleft" }).addTo(map);
+
+      const osmLayer = L.tileLayer(
+        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        { maxZoom: 19 },
+      ).addTo(map);
+      const googleSatLayer = L.tileLayer(
+        "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+        { maxZoom: 20 },
+      );
+
+      // --- DEKLARASI TERPISAH UNTUK SETIAP LAYER (MARKER & KABEL) ---
+      const popGroup = L.layerGroup().addTo(map);
+      const odpGroup = L.layerGroup().addTo(map);
+      const closureGroup = L.layerGroup().addTo(map);
+      const pelangganGroup = L.layerGroup().addTo(map);
+      const tiangGroup = L.layerGroup().addTo(map);
+      const incidentGroup = L.layerGroup().addTo(map);
+
+      const backboneGroup = L.layerGroup().addTo(map);
+      const feederGroup = L.layerGroup().addTo(map);
+      const distGroup = L.layerGroup().addTo(map);
+      const dropGroup = L.layerGroup().addTo(map);
+
+      // FeatureGroup gabungan yang menampung semua layer untuk kebutuhan DRAG & DROP
+      const editableGroup = L.featureGroup().addTo(map);
+
+      // Layer Control Box (Kanan Atas)
+      const baseMaps = {
+        OpenStreetMap: osmLayer,
+        "Google Satellite": googleSatLayer,
+      };
+      const overlayMaps = {
+        "Jalur Backbone": backboneGroup,
+        "Jalur Feeder": feederGroup,
+        "Jalur Distribusi": distGroup,
+        "Jalur Drop Cable": dropGroup,
+        "POP / Headend": popGroup,
+        "Joint Closure": closureGroup,
+        ODP: odpGroup,
+        Pelanggan: pelangganGroup,
+        "Tiang (7m/9m)": tiangGroup,
+        "Titik Incident": incidentGroup,
+      };
+      L.control
+        .layers(baseMaps, overlayMaps, {
+          position: "topright",
+          collapsed: false,
+        })
+        .addTo(map);
+
+      // Setup Toolbar Draw (Menggunakan editableGroup)
+      const drawControl = new L.Control.Draw({
+        draw: {
+          polygon: false,
+          circle: false,
+          rectangle: false,
+          circlemarker: false,
+          marker: true,
+          polyline: true,
+        },
+        edit: {
+          featureGroup: editableGroup,
+          remove: false,
+        },
+      });
+      map.addControl(drawControl);
+
+      function calculatePolylineLength(coordinates) {
+        let totalDistance = 0;
+        for (let i = 0; i < coordinates.length - 1; i++) {
+          const coord1 = L.latLng(coordinates[i][1], coordinates[i][0]);
+          const coord2 = L.latLng(coordinates[i + 1][1], coordinates[i + 1][0]);
+          totalDistance += coord1.distanceTo(coord2);
+        }
+        return totalDistance;
+      }
+
+      function createCustomIcon(type, status) {
+        let iconClass = "fa-solid fa-location-dot";
+        let bgClass = "icon-odp";
+
+        if (status === "Cut/Broken" || type === "INCIDENT") {
+          iconClass = "fa-solid fa-triangle-exclamation";
+          bgClass = "icon-incident";
+        } else {
+          switch (type) {
+            case "POP":
+              iconClass = "fa-solid fa-server";
+              bgClass = "icon-pop";
+              break;
+            case "ODP":
+              iconClass = "fa-solid fa-box-archive";
+              bgClass = "icon-odp";
+              break;
+            case "CLOSURE":
+              iconClass = "fa-solid fa-link";
+              bgClass = "icon-closure";
+              break;
+            case "PELANGGAN":
+              iconClass = "fa-solid fa-house-user";
+              bgClass = "icon-pelanggan";
+              break;
+            case "TIANG":
+              iconClass = "fa-solid fa-ellipsis-vertical";
+              bgClass = "icon-tiang";
+              break;
+          }
+        }
+
+        return L.divIcon({
+          className: "custom-div-icon",
+          html: `<div class="custom-map-icon ${bgClass}" style="width: 30px; height: 30px;"><i class="${iconClass}"></i></div>`,
+          iconSize: [30, 30],
+          iconAnchor: [15, 15],
+        });
+      }
+
+      function loadDashboardSummary() {
+        fetch("/api/dashboard/summary")
+          .then((res) => res.json())
+          .then((data) => {
+            document.getElementById("stat-odp").innerText = data.total_odp;
+            document.getElementById("stat-cables").innerText =
+              data.total_cables;
+            document.getElementById("stat-incidents").innerText =
+              data.total_incidents;
+          });
+      }
+
+      // --- API FUNCTIONS ---
+      function updateNodeStatus(id, newStatus) {
+        fetch(`/api/nodes/${id}/status`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: newStatus }),
+        }).then((res) => {
+          if (res.ok) loadData();
+        });
+      }
+
+      function editNodeProperties(
+        id,
+        currentName,
+        currentType,
+        currentStatus,
+        lat,
+        lng,
+      ) {
+        const newName = prompt("Ubah Nama Aset:", currentName);
+        if (newName === null) return;
+        const newType = prompt(
+          "Ubah Tipe Aset:\n(ODP / POP / CLOSURE / PELANGGAN / TIANG / INCIDENT)",
+          currentType,
+        );
+        if (newType === null) return;
+
+        fetch(`/api/nodes/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: newName,
+            type: newType.trim().toUpperCase(),
+            status: currentStatus,
+            latitude: lat,
+            longitude: lng,
+          }),
+        }).then((res) => {
+          if (res.ok) loadData();
+        });
+      }
+
+      function deleteNode(id, name) {
+        if (confirm(`Apakah Anda yakin ingin menghapus marker "${name}"?`)) {
+          fetch(`/api/nodes/${id}`, { method: "DELETE" }).then((res) => {
+            if (res.ok) loadData();
+          });
+        }
+      }
+
+      function updateCableStatus(id, newStatus) {
+        fetch(`/api/cables/${id}/status`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: newStatus }),
+        }).then((res) => {
+          if (res.ok) loadData();
+        });
+      }
+
+      function editCableProperties(
+        id,
+        currentName,
+        currentType,
+        currentStatus,
+        coords,
+      ) {
+        const newName = prompt("Ubah Nama Jalur Kabel:", currentName);
+        if (newName === null) return;
+        const newType = prompt(
+          "Ubah Tipe Kabel:\n(Backbone / Feeder / Distribution / Drop)",
+          currentType,
+        );
+        if (newType === null) return;
+
+        fetch(`/api/cables/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: newName,
+            type: newType.trim(),
+            status: currentStatus,
+            coordinates: coords,
+          }),
+        }).then((res) => {
+          if (res.ok) loadData();
+        });
+      }
+
+      function deleteCable(id, name) {
+        if (
+          confirm(`Apakah Anda yakin ingin menghapus jalur kabel "${name}"?`)
+        ) {
+          fetch(`/api/cables/${id}`, { method: "DELETE" }).then((res) => {
+            if (res.ok) loadData();
+          });
+        }
+      }
+
+      // --- READ & RENDER ALL DATA ---
+      function loadData() {
+        // Membersihkan seluruh layer
+        popGroup.clearLayers();
+        odpGroup.clearLayers();
+        closureGroup.clearLayers();
+        pelangganGroup.clearLayers();
+        tiangGroup.clearLayers();
+        incidentGroup.clearLayers();
+        backboneGroup.clearLayers();
+        feederGroup.clearLayers();
+        distGroup.clearLayers();
+        dropGroup.clearLayers();
+        editableGroup.clearLayers();
+
+        loadDashboardSummary();
+
+        // READ NODES
+        fetch("/api/nodes")
+          .then((res) => res.json())
+          .then((data) => {
+            L.geoJSON(data, {
+              pointToLayer: function (feature, latlng) {
+                const props = feature.properties;
+                const markerIcon = createCustomIcon(props.type, props.status);
+                const marker = L.marker(latlng, { icon: markerIcon });
+
+                marker.metaType = "node";
+                marker.metaData = props;
+
+                const isIncident = props.status === "Cut/Broken";
+                const btnText = isIncident
+                  ? "Set Normal (Active)"
+                  : "Report Incident";
+                const btnClass = isIncident ? "btn-success" : "btn-danger";
+                const nextStatus = isIncident ? "Active" : "Cut/Broken";
+
+                marker.bindPopup(`
+                            <div class="popup-header">${props.name}</div>
+                            <div class="popup-row"><span>Kategori:</span> <b>${props.type}</b></div>
+                            <div class="popup-row"><span>Latitude:</span> <b>${latlng.lat.toFixed(6)}</b></div>
+                            <div class="popup-row"><span>Longitude:</span> <b>${latlng.lng.toFixed(6)}</b></div>
+                            <div class="popup-row"><span>Status:</span> <b>${props.status}</b></div>
+                            
+                            <div class="popup-actions">
+                                <button class="btn-status ${btnClass}" onclick="updateNodeStatus(${props.id}, '${nextStatus}')">
+                                    <i class="fa-solid fa-power-off"></i> ${btnText}
+                                </button>
+                                <button class="btn-status btn-warning" onclick="editNodeProperties(${props.id}, '${props.name}', '${props.type}', '${props.status}', ${latlng.lat}, ${latlng.lng})">
+                                    <i class="fa-solid fa-pen"></i> Edit Info Aset
+                                </button>
+                                <button class="btn-status btn-outline-danger" onclick="deleteNode(${props.id}, '${props.name}')">
+                                    <i class="fa-solid fa-trash"></i> Hapus Aset
+                                </button>
+                            </div>
+                        `);
+
+                // Memasukkan marker ke Layer Category masing-masing
+                if (props.type === "POP") popGroup.addLayer(marker);
+                else if (props.type === "CLOSURE")
+                  closureGroup.addLayer(marker);
+                else if (props.type === "PELANGGAN")
+                  pelangganGroup.addLayer(marker);
+                else if (props.type === "TIANG") tiangGroup.addLayer(marker);
+                else if (props.type === "INCIDENT" || isIncident)
+                  incidentGroup.addLayer(marker);
+                else odpGroup.addLayer(marker);
+
+                // Memasukkan ke editable group untuk memungkinkan Drag & Drop
+                editableGroup.addLayer(marker);
+                return marker;
+              },
+            });
+          });
+
+        // READ CABLES
+        fetch("/api/cables")
+          .then((res) => res.json())
+          .then((data) => {
+            L.geoJSON(data, {
+              style: function (feature) {
+                const type = feature.properties.type;
+                const isCut = feature.properties.status === "Cut/Broken";
+
+                let color = "#0891b2";
+                let weight = 3;
+                let dashArray = null;
+
+                if (type === "Backbone") {
+                  color = "#2660dc";
+                  weight = 6;
+                } else if (type === "Feeder") {
+                  color = "#2563eb";
+                  weight = 4.5;
+                } else if (type === "Distribution") {
+                  color = "#0891b2";
+                  weight = 3;
+                } else if (type === "Drop") {
+                  color = "#d97706";
+                  weight = 2;
+                }
+
+                if (isCut) {
+                  color = "#ef4444";
+                  dashArray = "6, 8";
+                }
+
+                return {
+                  color: color,
+                  weight: weight,
+                  dashArray: dashArray,
+                  opacity: 0.9,
+                };
+              },
+              onEachFeature: function (feature, layer) {
+                const props = feature.properties;
+                const coords = feature.geometry.coordinates;
+
+                layer.metaType = "cable";
+                layer.metaData = props;
+
+                const lengthInMeters = calculatePolylineLength(coords);
+                const formattedLength =
+                  lengthInMeters > 1000
+                    ? `${(lengthInMeters / 1000).toFixed(2)} km (${Math.round(lengthInMeters)} m)`
+                    : `${Math.round(lengthInMeters)} m`;
+
+                const isCut = props.status === "Cut/Broken";
+                const btnText = isCut
+                  ? "Set Normal (Active)"
+                  : "Report Cable Cut";
+                const btnClass = isCut ? "btn-success" : "btn-danger";
+                const nextStatus = isCut ? "Active" : "Cut/Broken";
+
+                layer.bindPopup(`
+                            <div class="popup-header">${props.name}</div>
+                            <div class="popup-row"><span>Tipe Jalur:</span> <b>Kabel ${props.type}</b></div>
+                            <div class="popup-row"><span>Panjang Kabel:</span> <b>${formattedLength}</b></div>
+                            <div class="popup-row"><span>Status:</span> <b>${props.status}</b></div>
+
+                            <div class="popup-actions">
+                                <button class="btn-status ${btnClass}" onclick="updateCableStatus(${props.id}, '${nextStatus}')">
+                                    <i class="fa-solid fa-power-off"></i> ${btnText}
+                                </button>
+                                <button class="btn-status btn-warning" onclick='editCableProperties(${props.id}, "${props.name}", "${props.type}", "${props.status}", ${JSON.stringify(coords)})'>
+                                    <i class="fa-solid fa-pen"></i> Edit Info Kabel
+                                </button>
+                                <button class="btn-status btn-outline-danger" onclick="deleteCable(${props.id}, '${props.name}')">
+                                    <i class="fa-solid fa-trash"></i> Hapus Kabel
+                                </button>
+                            </div>
+                        `);
+
+                // Memasukkan ke Layer Category masing-masing
+                if (props.type === "Backbone") backboneGroup.addLayer(layer);
+                else if (props.type === "Feeder") feederGroup.addLayer(layer);
+                else if (props.type === "Drop") dropGroup.addLayer(layer);
+                else distGroup.addLayer(layer);
+
+                // Memasukkan ke editable group untuk memungkinkan Drag & Drop
+                editableGroup.addLayer(layer);
+              },
+            });
+          });
+      }
+
+      loadData();
+
+      // LISTEN DRAG & DROP / EDIT GEOMETRY KE BACKEND
+      map.on(L.Draw.Event.EDITED, function (e) {
+        const layers = e.layers;
+        layers.eachLayer(function (layer) {
+          if (layer.metaType === "node") {
+            const latlng = layer.getLatLng();
+            fetch(`/api/nodes/${layer.metaData.id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                latitude: parseFloat(latlng.lat),
+                longitude: parseFloat(latlng.lng),
+              }),
+            }).then(() => loadData());
+          } else if (layer.metaType === "cable") {
+            const latlngs = layer.getLatLngs();
+            const newCoords = latlngs.map((pt) => [
+              parseFloat(pt.lng),
+              parseFloat(pt.lat),
+            ]);
+            fetch(`/api/cables/${layer.metaData.id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                coordinates: newCoords,
+              }),
+            }).then(() => loadData());
+          }
+        });
+      });
+
+      // LISTEN DRAW CREATED
+      map.on(L.Draw.Event.CREATED, function (event) {
+        const layer = event.layer;
+        const type = event.layerType;
+
+        if (type === "marker") {
+          const latlng = layer.getLatLng();
+          const name = prompt(
+            "Nama Titik (misal: ODP-B2/05, Tiang 7m A-12, Rumah Bpk Ahmad):",
+          );
+          if (!name) return;
+          const nodeType = prompt(
+            "Pilih Tipe Titik:\n(ODP / POP / CLOSURE / PELANGGAN / TIANG / INCIDENT)",
+            "ODP",
+          );
+
+          fetch("/api/nodes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: name,
+              type: nodeType ? nodeType.trim().toUpperCase() : "ODP",
+              status:
+                nodeType && nodeType.toUpperCase() === "INCIDENT"
+                  ? "Cut/Broken"
+                  : "Active",
+              latitude: parseFloat(latlng.lat),
+              longitude: parseFloat(latlng.lng),
+            }),
+          }).then((res) => {
+            if (res.ok) loadData();
+            else alert("Gagal menyimpan titik marker baru");
+          });
+        } else if (type === "polyline") {
+          const latlngs = layer.getLatLngs();
+          const coords = latlngs.map((pt) => [
+            parseFloat(pt.lng),
+            parseFloat(pt.lat),
+          ]);
+          const name = prompt("Nama Jalur Kabel:");
+          if (!name) return;
+          const cableType = prompt(
+            "Pilih Tipe Jalur:\n(Backbone / Feeder / Distribution / Drop)",
+            "Feeder",
+          );
+
+          fetch("/api/cables", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: name,
+              type: cableType ? cableType.trim() : "Distribution",
+              status: "Active",
+              coordinates: coords,
+            }),
+          }).then((res) => {
+            if (res.ok) loadData();
+            else alert("Gagal menyimpan kabel baru");
+          });
+        }
+      });
+    </script>
+  </body>
+</html>
