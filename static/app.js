@@ -175,7 +175,17 @@ function editNodeProperties(
 function deleteNode(id, name) {
   if (confirm(`Apakah Anda yakin ingin menghapus marker "${name}"?`)) {
     fetch(`/api/nodes/${id}`, { method: "DELETE" }).then((res) => {
-      if (res.ok) loadData();
+      if (res.ok) {
+        // 1. Refresh peta
+        loadData();
+
+        // 2. Refresh tabel Asset Inventory jika modal sedang terbuka / dipanggil dari inventory
+        if (typeof fetchInventoryData === "function") {
+          fetchInventoryData();
+        }
+      } else {
+        alert("Gagal menghapus aset node.");
+      }
     });
   }
 }
@@ -222,7 +232,17 @@ function editCableProperties(
 function deleteCable(id, name) {
   if (confirm(`Apakah Anda yakin ingin menghapus jalur kabel "${name}"?`)) {
     fetch(`/api/cables/${id}`, { method: "DELETE" }).then((res) => {
-      if (res.ok) loadData();
+      if (res.ok) {
+        // 1. Refresh peta
+        loadData();
+
+        // 2. Refresh tabel Asset Inventory jika modal sedang terbuka / dipanggil dari inventory
+        if (typeof fetchInventoryData === "function") {
+          fetchInventoryData();
+        }
+      } else {
+        alert("Gagal menghapus jalur kabel.");
+      }
     });
   }
 }
@@ -659,6 +679,9 @@ function onAssetTypeChange() {
         `;
   } else if (selectedType === "POP") {
     capacitySelect.innerHTML = `
+            <option value="2C">2 Core (2C)</option>
+            <option value="4C">4 Core (4C)</option>
+            <option value="8C">8 Core (8C)</option>
             <option value="12C">12 Core (12C)</option>
             <option value="24C">24 Core (24C)</option>
             <option value="48C">48 Core (48C)</option>
@@ -667,6 +690,9 @@ function onAssetTypeChange() {
         `;
   } else if (selectedType === "CLOSURE") {
     capacitySelect.innerHTML = `
+            <option value="2C">2 Core (2C)</option>
+            <option value="4C">4 Core (4C)</option>
+            <option value="8C">8 Core (8C)</option>
             <option value="12C">12 Core (12C)</option>
             <option value="24C">24 Core (24C)</option>
             <option value="48C">48 Core (48C)</option>
@@ -685,10 +711,18 @@ function onAssetTypeChange() {
             <option value="Slack 50m">Slack 50m</option>
         `;
   } else if (selectedType === "PELANGGAN") {
-    capacitySelect.innerHTML = `<option value="1 Port">1 Port</option>`;
+    capacitySelect.innerHTML = `
+    <option value="2 Core" selected>2 Core</option>
+    <option value="4 Core">4 Core</option>
+    <option value="8 Core">8 Core</option>
+    <option value="12 Core">12 Core</option>
+  `;
   } else {
     // Pilihan Kapasitas Kabel (Feeder, Distribution, Backbone, Dropcore)
     capacitySelect.innerHTML = `
+            <option value="2C">2 Core (2C)</option>
+            <option value="4C">4 Core (4C)</option>
+            <option value="8C">8 Core (8C)</option>
             <option value="12C">12 Core (12C)</option>
             <option value="24C">24 Core (24C)</option>
             <option value="48C">48 Core (48C)</option>
@@ -772,14 +806,14 @@ function saveAssetData(e) {
 // Variable global penampung data inventory
 let allInventoryData = [];
 
-function openInventoryModal() {
-  document.getElementById("modal-inventory").style.display = "flex";
-  fetchInventoryData();
-}
+// function openInventoryModal() {
+//   document.getElementById("modal-inventory").style.display = "flex";
+//   fetchInventoryData();
+// }
 
-function closeInventoryModal() {
-  document.getElementById("modal-inventory").style.display = "none";
-}
+// function closeInventoryModal() {
+//   document.getElementById("modal-inventory").style.display = "none";
+// }
 
 function fetchInventoryData() {
   // Ambil data Nodes dan Cables secara paralel
@@ -887,6 +921,10 @@ const ISO_FIBER_COLORS = [
 ];
 
 // --- FUNGSI BUKA MODAL DETAIL CORE / PORT ---
+let currentActiveAsset = null;
+let activeConnections = [];
+
+// --- OPEN CORE DETAIL MODAL WITH SPLICING ---
 function openCoreDetailModal(id, category, name) {
   const modal = document.getElementById("modal-core-detail");
   const title = document.getElementById("core-modal-title");
@@ -894,10 +932,36 @@ function openCoreDetailModal(id, category, name) {
   const gridContainer = document.getElementById("core-grid-container");
 
   modal.style.display = "flex";
-  title.innerHTML = `<i class="fa-solid fa-diagram-project"></i> Detail Status: ${name}`;
+  title.innerHTML = `<i class="fa-solid fa-diagram-project"></i> Detail Status & Splicing: ${name}`;
 
+  // Jika allInventoryData masih kosong, ambil data dulu dari server
+  if (!allInventoryData || allInventoryData.length === 0) {
+    Promise.all([
+      fetch("/api/nodes").then((r) => r.json()),
+      fetch("/api/cables").then((r) => r.json()),
+    ]).then(([nodesData, cablesData]) => {
+      const nodes = (nodesData.features || []).map((f) => ({
+        ...f.properties,
+        category: "NODE",
+      }));
+      const cables = (cablesData.features || []).map((f) => ({
+        ...f.properties,
+        category: "CABLE",
+      }));
+      allInventoryData = [...nodes, ...cables];
+
+      initCoreDetailLogic(id, category, infoContainer, gridContainer);
+    });
+  } else {
+    initCoreDetailLogic(id, category, infoContainer, gridContainer);
+  }
+}
+
+function initCoreDetailLogic(id, category, infoContainer, gridContainer) {
+  // Gunakan String() untuk menghindari bug mismatch tipe data integer/string ID
   const item = allInventoryData.find(
-    (x) => x.id === id && x.category === category,
+    (x) =>
+      String(x.id) === String(id) && String(x.category) === String(category),
   );
 
   if (!item) {
@@ -906,28 +970,335 @@ function openCoreDetailModal(id, category, name) {
     return;
   }
 
+  currentActiveAsset = item;
+
   infoContainer.innerHTML = `
-    <div><b>Tipe Aset:</b> ${item.type}</div>
+    <div><b>Tipe Aset:</b> ${item.type || "-"}</div>
     <div><b>Cluster / Area:</b> ${item.cluster || "-"} / ${item.area || "-"}</div>
-    <div><b>Kapasitas / Konfigurasi:</b> ${item.capacity || "-"}</div>
+    <div><b>Kapasitas:</b> ${item.capacity || "-"}</div>
   `;
 
-  const assetType = (item.type || "").toUpperCase();
+  fetchConnectionsAndRender();
+}
 
-  // KABEL, CLOSURE, dan POP menggunakan tampilan ISO Core Colors
-  if (category === "CABLE" || assetType === "CLOSURE" || assetType === "POP") {
-    renderCableCores(item, gridContainer);
-  } else if (assetType === "ODP") {
-    renderODPSplitterGrid(item, gridContainer);
+function fetchConnectionsAndRender() {
+  if (!currentActiveAsset) return;
+
+  fetch(
+    `/api/connections?asset_type=${currentActiveAsset.category}&asset_id=${currentActiveAsset.id}`,
+  )
+    .then((res) => {
+      if (!res.ok) {
+        throw new Error("Gagal mengambil koneksi dari server");
+      }
+      return res.json();
+    })
+    .then((connections) => {
+      // Pastikan activeConnections selalu bernilai Array
+      activeConnections = Array.isArray(connections) ? connections : [];
+
+      const gridContainer = document.getElementById("core-grid-container");
+      const assetType = (currentActiveAsset.type || "").toUpperCase();
+
+      if (
+        currentActiveAsset.category === "CABLE" ||
+        assetType === "CLOSURE" ||
+        assetType === "POP"
+      ) {
+        renderCableCores(currentActiveAsset, gridContainer);
+      } else if (assetType === "ODP") {
+        renderODPSplitter(currentActiveAsset, gridContainer);
+      } else {
+        renderNodePorts(currentActiveAsset, gridContainer);
+      }
+
+      populateSplicingDropdowns();
+      renderActiveConnectionsTable();
+    })
+    .catch((err) => {
+      console.error("Gagal memuat koneksi:", err);
+      activeConnections = []; // Reset ke array kosong agar UI tidak crash
+    });
+}
+
+// --- POPULATE DROPDOWNS SPLICING (VERSI PERBAIKAN) ---
+function populateSplicingDropdowns() {
+  const fromSelect = document.getElementById("splice-from-core");
+  const toAssetSelect = document.getElementById("splice-to-asset");
+  const viaCableSelect = document.getElementById("splice-via-cable"); // [Baru] Ref Ke Dropdown Kabel Penghubung
+
+  if (!fromSelect || !toAssetSelect || !currentActiveAsset) return;
+
+  fromSelect.innerHTML =
+    '<option value="">-- Pilih Core/Port Aset Ini --</option>';
+  toAssetSelect.innerHTML = '<option value="">-- Pilih Aset Tujuan --</option>';
+  if (viaCableSelect) {
+    viaCableSelect.innerHTML =
+      '<option value="">-- Tanpa Kabel / Langsung (Direct) --</option>';
+  }
+
+  // 1. ISI DROPDOWN CORE/PORT ASET SAAT INI
+  const totalCores = parseInt(currentActiveAsset.capacity) || 12;
+  const isODP = (currentActiveAsset.type || "").toUpperCase() === "ODP";
+
+  if (isODP) {
+    const matches = (currentActiveAsset.capacity || "").match(
+      /(\d+)\s*In\s*-\s*(\d+)\s*Out/i,
+    );
+    const inCount = matches ? parseInt(matches[1]) : 1;
+    const outCount = matches ? parseInt(matches[2]) : 8;
+
+    for (let i = 1; i <= inCount; i++) {
+      fromSelect.innerHTML += `<option value="IN-${i}">Input IN-${i}</option>`;
+    }
+    for (let o = 1; o <= outCount; o++) {
+      fromSelect.innerHTML += `<option value="OUT-${o}">Output OUT-${o}</option>`;
+    }
   } else {
-    renderNodePorts(item, gridContainer);
+    for (let i = 1; i <= totalCores; i++) {
+      const tubeNo = Math.floor((i - 1) / 12) + 1;
+      fromSelect.innerHTML += `<option value="Tube ${tubeNo} - Core ${i}">Tube ${tubeNo} - Core ${i}</option>`;
+    }
+  }
+
+  // 2. ISI DROPDOWN ASET TUJUAN & KABEL PENGHUBUNG
+  if (allInventoryData && allInventoryData.length > 0) {
+    let availableTargets = 0;
+
+    allInventoryData.forEach((item) => {
+      const isSameAsset =
+        String(item.id) === String(currentActiveAsset.id) &&
+        String(item.category) === String(currentActiveAsset.category);
+
+      // Isi daftar Aset Tujuan (selain aset aktif)
+      if (!isSameAsset) {
+        availableTargets++;
+        toAssetSelect.innerHTML += `<option value="${item.category}:${item.id}">${item.name} (${item.type || item.category})</option>`;
+      }
+
+      // [Baru] Isi daftar Kabel Penghubung (Kategori CABLE)
+      if (item.category === "CABLE" && viaCableSelect) {
+        viaCableSelect.innerHTML += `<option value="${item.id}">${item.name} (${item.type}) - ${item.capacity}</option>`;
+      }
+    });
+
+    if (availableTargets === 0) {
+      toAssetSelect.innerHTML =
+        '<option value="">-- Tidak Ada Aset Lain Tersedia --</option>';
+    }
+  } else {
+    toAssetSelect.innerHTML =
+      '<option value="">-- Data Inventory Kosong --</option>';
+  }
+}
+
+function onTargetAssetChange() {
+  const targetVal = document.getElementById("splice-to-asset").value;
+  const toCoreSelect = document.getElementById("splice-to-core");
+  toCoreSelect.innerHTML =
+    '<option value="">-- Pilih Core/Port Tujuan --</option>';
+
+  if (!targetVal) return;
+
+  const [cat, id] = targetVal.split(":");
+  const targetAsset = allInventoryData.find(
+    (x) => x.id === parseInt(id) && x.category === cat,
+  );
+
+  if (!targetAsset) return;
+
+  const totalCores = parseInt(targetAsset.capacity) || 12;
+  const isODP = (targetAsset.type || "").toUpperCase() === "ODP";
+
+  if (isODP) {
+    const matches = (targetAsset.capacity || "").match(
+      /(\d+)\s*In\s*-\s*(\d+)\s*Out/i,
+    );
+    const inCount = matches ? parseInt(matches[1]) : 1;
+    const outCount = matches ? parseInt(matches[2]) : 8;
+
+    for (let i = 1; i <= inCount; i++)
+      toCoreSelect.innerHTML += `<option value="IN-${i}">Input IN-${i}</option>`;
+    for (let o = 1; o <= outCount; o++)
+      toCoreSelect.innerHTML += `<option value="OUT-${o}">Output OUT-${o}</option>`;
+  } else {
+    for (let i = 1; i <= totalCores; i++) {
+      const tubeNo = Math.floor((i - 1) / 12) + 1;
+      toCoreSelect.innerHTML += `<option value="Tube ${tubeNo} - Core ${i}">Tube ${tubeNo} - Core ${i}</option>`;
+    }
+  }
+}
+
+// --- SUBMIT CORE CONNECTION ---
+function submitSplicingConnection() {
+  const fromCore = document.getElementById("splice-from-core").value;
+  const viaCable = document.getElementById("splice-via-cable")
+    ? document.getElementById("splice-via-cable").value
+    : null;
+  const toAssetVal = document.getElementById("splice-to-asset").value;
+  const toCore = document.getElementById("splice-to-core").value;
+
+  // Pastikan aset asal aktif tersedia
+  if (!currentActiveAsset) {
+    alert("Data aset aktif tidak ditemukan!");
+    return;
+  }
+
+  if (!fromCore || !toAssetVal || !toCore) {
+    alert("Harap lengkapi semua field pilihan sambungan!");
+    return;
+  }
+
+  // Format dropdown splice-to-asset adalah "CATEGORY:ID" (contoh: "NODE:5" atau "CABLE:2")
+  const [toType, toId] = toAssetVal.split(":");
+
+  const payload = {
+    from_asset_type: currentActiveAsset.category, // ✅ Perbaikan: Mengambil category dari currentActiveAsset
+    from_asset_id: parseInt(currentActiveAsset.id), // ✅ Perbaikan: Mengambil id dari currentActiveAsset
+    from_port_core: fromCore,
+    to_asset_type: toType,
+    to_asset_id: parseInt(toId),
+    to_port_core: toCore,
+    via_cable_id: viaCable ? parseInt(viaCable) : null,
+    status: "Connected",
+    notes: "",
+  };
+
+  fetch("/api/connections", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(
+          errData.detail || errData.message || "Gagal menyimpan sambungan",
+        );
+      }
+      return res.json();
+    })
+    .then((data) => {
+      alert("Sambungan berhasil disimpan!");
+      fetchConnectionsAndRender(); // Refreshes modal & visual core
+      if (typeof loadData === "function") loadData(); // Refresh peta & layer
+    })
+    .catch((err) => {
+      console.error(err);
+      alert("Gagal menyimpan sambungan core: " + err.message);
+    });
+}
+
+// --- RENDER CONNECTION TABLE & UPDATE BADGE STATUS ---
+function renderActiveConnectionsTable() {
+  const tbody = document.getElementById("active-connections-tbody");
+  if (!tbody) return;
+
+  tbody.innerHTML = "";
+
+  // 1. KONDISI JIKA BELUM ADA KONEKSI (colspan="5")
+  if (!activeConnections || activeConnections.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="5" style="text-align: center; color: #94a3b8; padding: 12px; font-style: italic;">
+          Belum ada sambungan terpasang pada aset ini.
+        </td>
+      </tr>`;
+    return;
+  }
+
+  // 2. LOOPING DATA KONEKSI
+  activeConnections.forEach((conn) => {
+    // Tentukan Arah Koneksi (Aset Ini vs Aset Tujuan)
+    const isFrom =
+      conn.from_asset_type === currentActiveAsset.category &&
+      String(conn.from_asset_id) === String(currentActiveAsset.id);
+
+    const localPort = isFrom ? conn.from_port_core : conn.to_port_core;
+    const targetType = isFrom ? conn.to_asset_type : conn.from_asset_type;
+    const targetId = isFrom ? conn.to_asset_id : conn.from_asset_id;
+    const targetPort = isFrom ? conn.to_port_core : conn.from_port_core;
+
+    // Cari Nama Aset Tujuan
+    const targetAsset = (allInventoryData || []).find(
+      (x) => String(x.id) === String(targetId) && x.category === targetType,
+    );
+    const targetName = targetAsset
+      ? `${targetAsset.name} (${targetAsset.type || targetAsset.category})`
+      : `Asset ID ${targetId}`;
+
+    // Cari Nama Kabel Penghubung (via_cable_id)
+    let cableName = "- Direct -";
+    if (conn.via_cable_id) {
+      const cableObj = (allInventoryData || []).find(
+        (x) =>
+          x.category === "CABLE" && String(x.id) === String(conn.via_cable_id),
+      );
+      if (cableObj) {
+        cableName = cableObj.name;
+      }
+    }
+
+    // Render Baris Tabel (5 Kolom Sesuai <th> HTML)
+    const tr = document.createElement("tr");
+    tr.style.borderBottom = "1px solid #f1f5f9";
+    tr.innerHTML = `
+      <!-- 1. Core/Port Aset Ini -->
+      <td style="padding: 8px; font-weight: bold; color: #2563eb;">
+        ${localPort}
+      </td>
+
+      <!-- 2. Melalui Kabel -->
+      <td style="padding: 8px;">
+        <span style="background: ${conn.via_cable_id ? "#e0f2fe" : "#f1f5f9"}; color: ${conn.via_cable_id ? "#0369a1" : "#64748b"}; padding: 3px 8px; border-radius: 4px; font-weight: 500; font-size: 11px; display: inline-block;">
+          <i class="fa-solid fa-cable-car" style="margin-right: 4px;"></i>${cableName}
+        </span>
+      </td>
+
+      <!-- 3. Tersambung Ke Aset -->
+      <td style="padding: 8px; color: #334155;">
+        ${targetName}
+      </td>
+
+      <!-- 4. Core/Port Tujuan -->
+      <td style="padding: 8px; font-weight: bold; color: #16a34a;">
+        ${targetPort}
+      </td>
+
+      <!-- 5. Aksi -->
+      <td style="padding: 8px; text-align: center;">
+        <button 
+          onclick="disconnectCore(${conn.id})" 
+          style="background: #ef4444; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 500;"
+          title="Putus Sambungan Ini"
+        >
+          <i class="fa-solid fa-link-slash"></i> Putus
+        </button>
+      </td>
+    `;
+
+    tbody.appendChild(tr);
+  });
+}
+
+function disconnectCore(connectionId) {
+  if (confirm("Apakah Anda yakin ingin memutus sambungan core ini?")) {
+    fetch(`/api/connections/${connectionId}`, { method: "DELETE" }).then(
+      (res) => {
+        if (res.ok) {
+          alert("Sambungan berhasil diputus!");
+          fetchConnectionsAndRender();
+        } else {
+          alert("Gagal memutus sambungan");
+        }
+      },
+    );
   }
 }
 function closeCoreDetailModal() {
   document.getElementById("modal-core-detail").style.display = "none";
 }
 
-// --- RENDER CORE KABEL (BERDASARKAN TUBE & CORE COLOR) ---
 // --- RENDER CORE KABEL / CLOSURE / POP (STANDAR TUBE & CORE COLOR ISO) ---
 function renderCableCores(item, container) {
   const type = (item.type || "").toUpperCase();
@@ -945,16 +1316,28 @@ function renderCableCores(item, container) {
     const tubeNo = Math.floor((i - 1) / 12) + 1;
     const colorInfo = ISO_FIBER_COLORS[colorIndex];
 
+    // Label format penandaan core
+    const coreLabel = `Tube ${tubeNo} - Core ${i}`;
+
+    // Cek apakah core ini terdaftar di activeConnections (sebagai asal / tujuan)
+    const isConnected = activeConnections.some(
+      (conn) =>
+        conn.from_port_core === coreLabel || conn.to_port_core === coreLabel,
+    );
+
+    const statusText = isConnected ? "Connected" : "Available";
+    const statusColor = isConnected ? "#2563eb" : "#16a34a"; // Biru jika Connected, Hijau jika Available
+
     html += `
       <div style="border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px; text-align: center; background: #fafafa;">
         <div style="font-size: 10px; color: #64748b; margin-bottom: 4px;">
-          Tube ${tubeNo} - Core ${i}
+          ${coreLabel}
         </div>
         <div style="background-color: ${colorInfo.hex}; color: ${colorInfo.text}; border: ${colorInfo.border ? "1px solid " + colorInfo.border : "none"};
                     padding: 6px; border-radius: 4px; font-weight: bold; font-size: 12px; box-shadow: inset 0 0 4px rgba(0,0,0,0.2);">
           ${colorInfo.name}
         </div>
-        <div style="font-size: 10px; margin-top: 5px; color: #16a34a; font-weight: 600;">Available</div>
+        <div style="font-size: 10px; margin-top: 5px; color: ${statusColor}; font-weight: 600;">${statusText}</div>
       </div>
     `;
   }
@@ -963,52 +1346,120 @@ function renderCableCores(item, container) {
   container.innerHTML = html;
 }
 
-function renderODPSplitterGrid(odp, container) {
-  const cap = odp.capacity || "1 In - 8 Out";
+// --- FUNCTION: RENDER VISUAL SPLITTER ODP (IN / OUT) ---
+function renderODPSplitter(asset) {
+  const container = document.getElementById("odp-visual-container");
+  if (!container) return;
 
-  // Parsing jumlah IN dan OUT dari string kapasitas (misal: "2 In - 8 Out")
-  let inCount = 1;
-  let outCount = 8;
+  // Sembunyikan grid core standar jika ada
+  const coreContainer = document.getElementById("core-grid-container");
+  if (coreContainer) coreContainer.style.display = "none";
 
-  const matches = cap.match(/(\d+)\s*In\s*-\s*(\d+)\s*Out/i);
-  if (matches) {
-    inCount = parseInt(matches[1]);
-    outCount = parseInt(matches[2]);
+  // PASTIKAN CONTAINER ODP DITAMPILKAN
+  container.style.display = "block";
+
+  if (!asset) {
+    container.innerHTML =
+      "<p style='color: #ef4444;'>Data aset tidak ditemukan.</p>";
+    return;
   }
 
-  let html = `<h4 style="margin-bottom: 12px; font-size: 14px; color: #334155;">Konfigurasi Splitter ODP (${cap})</h4>`;
+  // 1. Parsing Kapasitas ODP
+  const capacityStr = asset.capacity || "1 In - 8 Out";
+  const matches = capacityStr.match(/(\d+)\s*In\s*-\s*(\d+)\s*Out/i);
 
-  // --- 1. SECTION INPUT PORTS ---
-  html += `<div style="margin-bottom: 16px; background: #f0fdf4; border: 1px solid #bbf7d0; padding: 12px; border-radius: 8px;">`;
-  html += `<div style="font-size: 12px; font-weight: bold; color: #166534; margin-bottom: 8px;"><i class="fa-solid fa-arrow-down-to-line"></i> Input Ports (${inCount} IN)</div>`;
-  html += `<div style="display: flex; gap: 10px;">`;
+  const inCount = matches ? parseInt(matches[1]) : 1;
+  const outCount = matches ? parseInt(matches[2]) : 8;
+
+  // Dapatkan daftar port tersambung
+  const connectedPorts = (
+    typeof activeConnections !== "undefined" && activeConnections
+      ? activeConnections
+      : []
+  ).map((conn) => {
+    return conn.from_asset_id === asset.id
+      ? conn.from_port_core
+      : conn.to_port_core;
+  });
+
+  // 2. Render HTML Port Input (IN)
+  let inHtml = "";
   for (let i = 1; i <= inCount; i++) {
-    html += `
-      <div style="border: 2px solid #16a34a; background: #ffffff; border-radius: 6px; padding: 8px 14px; text-align: center;">
-        <div style="font-size: 10px; font-weight: bold; color: #15803d;">IN-${i}</div>
-        <i class="fa-solid fa-plug-circle-bolt" style="font-size: 16px; color: #16a34a; margin: 4px 0;"></i>
-        <div style="font-size: 10px; color: #166534;">Connected</div>
+    const portName = `IN-${i}`;
+    const isConnected = connectedPorts.includes(portName);
+
+    inHtml += `
+      <div style="
+        border: ${isConnected ? "2px solid #16a34a" : "1px dashed #cbd5e1"};
+        background: ${isConnected ? "#f0fdf4" : "#ffffff"};
+        border-radius: 8px;
+        padding: 10px;
+        width: 75px;
+        text-align: center;
+        box-shadow: ${isConnected ? "0 2px 4px rgba(22, 163, 74, 0.1)" : "none"};
+      ">
+        <div style="font-weight: 700; font-size: 11px; color: ${isConnected ? "#15803d" : "#64748b"};">${portName}</div>
+        <i class="fa-solid ${isConnected ? "fa-plug-circle-check" : "fa-plug"}" 
+           style="font-size: 18px; margin: 6px 0; color: ${isConnected ? "#16a34a" : "#94a3b8"};"></i>
+        <div style="font-size: 10px; font-weight: 600; color: ${isConnected ? "#15803d" : "#94a3b8"};">
+          ${isConnected ? "Connected" : "Idle"}
+        </div>
       </div>
     `;
   }
-  html += `</div></div>`;
 
-  // --- 2. SECTION OUTPUT PORTS ---
-  html += `<div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px; border-radius: 8px;">`;
-  html += `<div style="font-size: 12px; font-weight: bold; color: #334155; margin-bottom: 8px;"><i class="fa-solid fa-network-wired"></i> Output Ports (${outCount} OUT)</div>`;
-  html += `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(85px, 1fr)); gap: 10px;">`;
+  // 3. Render HTML Port Output (OUT)
+  let outHtml = "";
   for (let o = 1; o <= outCount; o++) {
-    html += `
-      <div style="border: 1px dashed #cbd5e1; background: #ffffff; border-radius: 6px; padding: 8px; text-align: center;">
-        <div style="font-size: 10px; font-weight: bold; color: #64748b;">OUT-${o}</div>
-        <i class="fa-solid fa-plug" style="font-size: 16px; color: #94a3b8; margin: 4px 0;"></i>
-        <div style="font-size: 9px; color: #94a3b8;">Idle</div>
+    const portName = `OUT-${o}`;
+    const isConnected = connectedPorts.includes(portName);
+
+    outHtml += `
+      <div style="
+        border: ${isConnected ? "2px solid #2563eb" : "1px dashed #cbd5e1"};
+        background: ${isConnected ? "#eff6ff" : "#ffffff"};
+        border-radius: 8px;
+        padding: 10px;
+        width: 75px;
+        text-align: center;
+        box-shadow: ${isConnected ? "0 2px 4px rgba(37, 99, 235, 0.1)" : "none"};
+      ">
+        <div style="font-weight: 700; font-size: 11px; color: ${isConnected ? "#1d4ed8" : "#64748b"};">${portName}</div>
+        <i class="fa-solid ${isConnected ? "fa-plug-circle-check" : "fa-plug"}" 
+           style="font-size: 18px; margin: 6px 0; color: ${isConnected ? "#2563eb" : "#94a3b8"};"></i>
+        <div style="font-size: 10px; font-weight: 600; color: ${isConnected ? "#1d4ed8" : "#94a3b8"};">
+          ${isConnected ? "Connected" : "Idle"}
+        </div>
       </div>
     `;
   }
-  html += `</div></div>`;
 
-  container.innerHTML = html;
+  // 4. Masukkan ke Container
+  container.innerHTML = `
+    <h4 style="font-size: 13px; color: #1e293b; margin-bottom: 12px; font-weight: 600;">
+      Konfigurasi Splitter ODP (${capacityStr})
+    </h4>
+    
+    <!-- Input Section -->
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+      <div style="font-size: 12px; font-weight: 700; color: #15803d; margin-bottom: 8px;">
+        <i class="fa-solid fa-right-to-bracket"></i> Input Ports (${inCount} IN)
+      </div>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        ${inHtml}
+      </div>
+    </div>
+
+    <!-- Output Section -->
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px;">
+      <div style="font-size: 12px; font-weight: 700; color: #1d4ed8; margin-bottom: 8px;">
+        <i class="fa-solid fa-sitemap"></i> Output Ports (${outCount} OUT)
+      </div>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        ${outHtml}
+      </div>
+    </div>
+  `;
 }
 
 // --- RENDER PORT GRID ODP / NODE ---

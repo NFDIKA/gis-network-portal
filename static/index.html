@@ -385,6 +385,9 @@
               >
                 <option value="8 Port">8 Port</option>
                 <option value="16 Port">16 Port</option>
+                <option value="2C">2 Core (2C)</option>
+                <option value="4C">4 Core (4C)</option>
+                <option value="8C">8 Core (8C)</option>
                 <option value="12C">12 Core (12C)</option>
                 <option value="24C">24 Core (24C)</option>
                 <option value="48C">48 Core (48C)</option>
@@ -433,12 +436,13 @@
       </div>
     </div>
 
-    <!-- Modal Detail Core / Port Grid -->
+    <!-- Modal Detail Core / Port Grid & Splicing Matrix -->
     <div id="modal-core-detail" class="modal-overlay" style="display: none">
-      <div class="modal-container" style="max-width: 800px; max-height: 85vh">
+      <div class="modal-container" style="max-width: 950px; max-height: 90vh">
         <div class="modal-header">
           <h3 id="core-modal-title">
-            <i class="fa-solid fa-diagram-project"></i> Detail Core / Port Aset
+            <i class="fa-solid fa-diagram-project"></i> Detail Core / Port &
+            Splicing Matrix
           </h3>
           <button class="btn-close" onclick="closeCoreDetailModal()">
             &times;
@@ -453,19 +457,163 @@
               background: #f8fafc;
               padding: 12px;
               border-radius: 6px;
-              margin-bottom: 20px;
+              margin-bottom: 15px;
               font-size: 13px;
               display: grid;
               grid-template-columns: repeat(3, 1fr);
               gap: 10px;
             "
+          ></div>
+
+          <!-- Panel Splicing Matrix / Tambah Sambungan -->
+          <div
+            style="
+              background: #f1f5f9;
+              border: 1px solid #cbd5e1;
+              padding: 12px;
+              border-radius: 8px;
+              margin-bottom: 20px;
+            "
           >
-            <!-- Diisi secara dinamis oleh JS -->
+            <h4 style="margin: 0 0 10px 0; font-size: 13px; color: #1e293b">
+              <i class="fa-solid fa-link"></i> Form Sambung Core / Port
+              (Splicing)
+            </h4>
+            <div
+              style="
+                display: flex;
+                gap: 10px;
+                align-items: center;
+                flex-wrap: wrap;
+              "
+            >
+              <!-- Core Origin / Asal -->
+              <select
+                id="splice-from-core"
+                style="
+                  padding: 6px;
+                  font-size: 12px;
+                  border-radius: 4px;
+                  border: 1px solid #ccc;
+                  flex: 1;
+                  min-width: 140px;
+                "
+              >
+                <option value="">-- Pilih Core/Port Aset Ini --</option>
+              </select>
+
+              <!-- Input Kabel Media Penghubung (VIA CABLE) -->
+              <select
+                id="splice-via-cable"
+                style="
+                  padding: 6px;
+                  font-size: 12px;
+                  border-radius: 4px;
+                  border: 1px solid #0284c7;
+                  background-color: #f0f9ff;
+                  flex: 1;
+                  min-width: 160px;
+                "
+              >
+                <option value="">-- Pilih Kabel Penghubung --</option>
+              </select>
+
+              <i
+                class="fa-solid fa-arrow-right-long"
+                style="color: #64748b"
+              ></i>
+
+              <!-- Target Asset -->
+              <select
+                id="splice-to-asset"
+                onchange="onTargetAssetChange()"
+                style="
+                  padding: 6px;
+                  font-size: 12px;
+                  border-radius: 4px;
+                  border: 1px solid #ccc;
+                  flex: 1;
+                  min-width: 160px;
+                "
+              >
+                <option value="">-- Pilih Aset Tujuan --</option>
+              </select>
+
+              <!-- Target Core / Port -->
+              <select
+                id="splice-to-core"
+                style="
+                  padding: 6px;
+                  font-size: 12px;
+                  border-radius: 4px;
+                  border: 1px solid #ccc;
+                  flex: 1;
+                  min-width: 140px;
+                "
+              >
+                <option value="">-- Pilih Core/Port Tujuan --</option>
+              </select>
+
+              <button
+                onclick="submitSplicingConnection()"
+                style="
+                  background: #16a34a;
+                  color: white;
+                  border: none;
+                  padding: 7px 12px;
+                  border-radius: 4px;
+                  cursor: pointer;
+                  font-size: 12px;
+                  font-weight: 600;
+                "
+              >
+                <i class="fa-solid fa-plug"></i> Sambungkan
+              </button>
+            </div>
           </div>
 
-          <!-- Container Visualisasi Grid -->
-          <div id="core-grid-container">
-            <!-- Render Tube/Core atau Port Grid di sini -->
+          <!-- Grid Visualisasi Core / Port (Untuk ODC, FDT, Closure, dll) -->
+          <div id="core-grid-container"></div>
+
+          <!-- Container Khusus Visualisasi Splitter ODP -->
+          <div
+            id="odp-visual-container"
+            style="display: none; margin-bottom: 20px"
+          ></div>
+
+          <!-- Tabel Daftar Sambungan Aktif -->
+          <div style="margin-top: 25px">
+            <h4 style="margin-bottom: 8px; font-size: 13px; color: #334155">
+              <i class="fa-solid fa-list-check"></i> Daftar Core Tersambung di
+              Aset Ini
+            </h4>
+            <table
+              style="
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 12px;
+                border: 1px solid #e2e8f0;
+              "
+            >
+              <thead style="background: #f8fafc">
+                <tr>
+                  <th style="padding: 8px; text-align: left">
+                    Core/Port Aset Ini
+                  </th>
+                  <th style="padding: 8px; text-align: left">Melalui Kabel</th>
+                  <th style="padding: 8px; text-align: left">
+                    Tersambung Ke Aset
+                  </th>
+                  <th style="padding: 8px; text-align: left">
+                    Core/Port Tujuan
+                  </th>
+                  <th style="padding: 8px; text-align: center">Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="active-connections-tbody">
+                <!-- Diisi via JS -->
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
