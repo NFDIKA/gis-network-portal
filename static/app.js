@@ -471,3 +471,116 @@ map.on(L.Draw.Event.CREATED, function (event) {
     });
   }
 });
+
+// --- MODAL ASSET INVENTORY LOGIC ---
+let inventoryCache = [];
+
+function openInventoryModal() {
+  document.getElementById("modal-inventory").style.display = "flex";
+  fetchInventoryData();
+}
+
+function closeInventoryModal() {
+  document.getElementById("modal-inventory").style.display = "none";
+}
+
+function fetchInventoryData() {
+  Promise.all([
+    fetch("/api/nodes").then((r) => r.json()),
+    fetch("/api/cables").then((r) => r.json()),
+  ]).then(([nodesData, cablesData]) => {
+    inventoryCache = [];
+
+    // Parsing Nodes (ODP, POP, TIANG, dll)
+    nodesData.features.forEach((f) => {
+      inventoryCache.push({
+        id: f.properties.id,
+        name: f.properties.name,
+        category: f.properties.type,
+        typeGroup: f.properties.type,
+        status: f.properties.status,
+        details: `${f.geometry.coordinates[1].toFixed(5)}, ${f.geometry.coordinates[0].toFixed(5)}`,
+        lat: f.geometry.coordinates[1],
+        lng: f.geometry.coordinates[0],
+        isCable: false,
+      });
+    });
+
+    // Parsing Cables
+    cablesData.features.forEach((f) => {
+      inventoryCache.push({
+        id: f.properties.id,
+        name: f.properties.name,
+        category: `Kabel (${f.properties.type})`,
+        typeGroup: "CABLE",
+        status: f.properties.status,
+        details: `${f.geometry.coordinates.length} titik koordinat`,
+        lat: f.geometry.coordinates[0][1],
+        lng: f.geometry.coordinates[0][0],
+        isCable: true,
+      });
+    });
+
+    renderInventoryTable(inventoryCache);
+  });
+}
+
+function renderInventoryTable(data) {
+  const tbody = document.getElementById("inventory-table-body");
+  tbody.innerHTML = "";
+
+  if (data.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: #94a3b8;">Tidak ada data ditemukan</td></tr>`;
+    return;
+  }
+
+  data.forEach((item) => {
+    const isBroken = item.status === "Cut/Broken";
+    const badgeClass = isBroken ? "badge-broken" : "badge-active";
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+            <td><b>#${item.id}</b></td>
+            <td><strong>${item.name}</strong></td>
+            <td><span class="badge-status" style="background:#e2e8f0; color:#334155;">${item.category}</span></td>
+            <td><span class="badge-status ${badgeClass}">${item.status}</span></td>
+            <td><small>${item.details}</small></td>
+            <td>
+                <button class="btn-locate" onclick="zoomToAsset(${item.lat}, ${item.lng})">
+                    <i class="fa-solid fa-crosshairs"></i> Sorot di Peta
+                </button>
+            </td>
+        `;
+    tbody.appendChild(tr);
+  });
+}
+
+function filterInventoryTable() {
+  const searchVal = document
+    .getElementById("inventory-search")
+    .value.toLowerCase();
+  const filterType = document.getElementById("inventory-filter-type").value;
+
+  const filtered = inventoryCache.filter((item) => {
+    const matchesSearch =
+      item.name.toLowerCase().includes(searchVal) ||
+      item.category.toLowerCase().includes(searchVal) ||
+      item.status.toLowerCase().includes(searchVal);
+
+    let matchesType = true;
+    if (filterType === "CABLE") {
+      matchesType = item.isCable;
+    } else if (filterType !== "ALL") {
+      matchesType = item.typeGroup === filterType;
+    }
+
+    return matchesSearch && matchesType;
+  });
+
+  renderInventoryTable(filtered);
+}
+
+function zoomToAsset(lat, lng) {
+  closeInventoryModal();
+  map.flyTo([lat, lng], 18, { duration: 1.5 });
+}
