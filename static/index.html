@@ -46,10 +46,10 @@
             ><i class="fa-solid fa-boxes-stacked"></i
             ><span>Asset Inventory</span></a
           >
-          <a class="nav-item" onclick="alert('Modul NOC Incident')"
-            ><i class="fa-solid fa-triangle-exclamation"></i
-            ><span>NOC Monitor</span></a
-          >
+          <a class="nav-item" onclick="openNocMonitorModal()">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <span>NOC Monitor</span>
+          </a>
           <div class="nav-section-title">Sales & System</div>
           <a class="nav-item" onclick="alert('Modul Coverage Checker')"
             ><i class="fa-solid fa-user-plus"></i
@@ -75,6 +75,27 @@
         </header>
 
         <div class="map-viewport">
+          <div class="map-search-overlay">
+            <div style="position: relative; flex: 1">
+              <input
+                type="text"
+                id="map-search-input"
+                placeholder="Cari Lat, Lng (-3.323, 114.593) atau Nama Aset..."
+                onkeyup="handleLiveSearch(this.value)"
+                onkeypress="if (event.key === 'Enter') handleMapSearch();"
+                autocomplete="off"
+              />
+              <!-- Dropdown Container Rekomendasi Live Search -->
+              <div
+                id="search-autocomplete-results"
+                class="autocomplete-dropdown"
+                style="display: none"
+              ></div>
+            </div>
+            <button onclick="handleMapSearch()">
+              <i class="fa-solid fa-magnifying-glass"></i> Cari
+            </button>
+          </div>
           <div class="metrics-overlay">
             <div class="metric-card">
               <div class="metric-icon purple">
@@ -612,6 +633,256 @@
               </thead>
               <tbody id="active-connections-tbody">
                 <!-- Diisi via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Form Input Ticket Incident Baru -->
+    <div id="modal-add-incident" class="modal-overlay" style="display: none">
+      <div class="modal-container" style="max-width: 550px; height: auto">
+        <div class="modal-header" style="background: #ef4444; color: white">
+          <h3>
+            <i class="fa-solid fa-triangle-exclamation"></i> Laporkan Tiket
+            Insiden Baru
+          </h3>
+          <button
+            class="btn-close"
+            onclick="closeAddIncidentModal()"
+            style="color: white"
+          >
+            &times;
+          </button>
+        </div>
+
+        <form
+          id="form-incident"
+          onsubmit="saveIncidentData(event)"
+          style="padding: 20px"
+        >
+          <input type="hidden" id="inc-lat" />
+          <input type="hidden" id="inc-lng" />
+
+          <div style="display: flex; gap: 10px; margin-bottom: 12px">
+            <div style="flex: 1">
+              <label style="font-weight: 600; font-size: 12px"
+                >No. Tiket NOC:</label
+              >
+              <input
+                type="text"
+                id="inc-ticket"
+                required
+                placeholder="INC-2026-001"
+                style="
+                  width: 100%;
+                  padding: 8px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                "
+              />
+            </div>
+            <div style="flex: 1">
+              <label style="font-weight: 600; font-size: 12px"
+                >Tingkat Keparahan (Severity):</label
+              >
+              <select
+                id="inc-severity"
+                style="
+                  width: 100%;
+                  padding: 8px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                "
+              >
+                <option value="Critical">Critical (Down Massal)</option>
+                <option value="Major">Major (High Impact)</option>
+                <option value="Minor">Minor (Degraded)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 12px">
+            <label style="font-weight: 600; font-size: 12px"
+              >Judul Insiden:</label
+            >
+            <input
+              type="text"
+              id="inc-title"
+              required
+              placeholder="Kabel Feeder Putus Tertabrak Truk"
+              style="
+                width: 100%;
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+              "
+            />
+          </div>
+
+          <div style="display: flex; gap: 10px; margin-bottom: 12px">
+            <div style="flex: 1">
+              <label style="font-weight: 600; font-size: 12px"
+                >Kategori Insiden:</label
+              >
+              <select
+                id="inc-type"
+                style="
+                  width: 100%;
+                  padding: 8px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                "
+              >
+                <option value="FO Cut">Fiber Optic Cut</option>
+                <option value="Power Outage">Power Outage / PLN Down</option>
+                <option value="Equipment Failure">
+                  Hardware / Port Failure
+                </option>
+                <option value="Cable Sagging">Kabel Andut / Turun</option>
+              </select>
+            </div>
+            <div style="flex: 1">
+              <label style="font-weight: 600; font-size: 12px"
+                >Status Tiket:</label
+              >
+              <select
+                id="inc-status"
+                style="
+                  width: 100%;
+                  padding: 8px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                "
+              >
+                <option value="Open">Open</option>
+                <option value="In Progress">In Progress</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 12px">
+            <label style="font-weight: 600; font-size: 12px"
+              >Deskripsi & Dampak:</label
+            >
+            <textarea
+              id="inc-description"
+              rows="3"
+              placeholder="Sebutkan dampak ODP / Pelanggan yang terimbas..."
+              style="
+                width: 100%;
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+              "
+            ></textarea>
+          </div>
+
+          <div
+            style="
+              margin-top: 20px;
+              display: flex;
+              justify-content: flex-end;
+              gap: 10px;
+            "
+          >
+            <button
+              type="button"
+              onclick="closeAddIncidentModal()"
+              style="
+                padding: 8px 16px;
+                border: 1px solid #ccc;
+                background: #fff;
+                border-radius: 4px;
+                cursor: pointer;
+              "
+            >
+              Batal
+            </button>
+            <button
+              type="submit"
+              style="
+                padding: 8px 16px;
+                background: #ef4444;
+                color: #fff;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-weight: 600;
+              "
+            >
+              Simpan Tiket Insiden
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal NOC Monitor (History/Log Incident) -->
+    <div id="modal-noc-monitor" class="modal-overlay" style="display: none">
+      <div class="modal-container" style="max-width: 900px; height: 80vh">
+        <div class="modal-header" style="background: #ef4444; color: white">
+          <h3>
+            <i class="fa-solid fa-clock-rotate-left"></i> NOC Incident Monitor &
+            History Log
+          </h3>
+          <button
+            class="btn-close"
+            onclick="closeNocMonitorModal()"
+            style="color: white"
+          >
+            &times;
+          </button>
+        </div>
+
+        <div
+          class="modal-body"
+          style="
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            height: calc(100% - 60px);
+          "
+        >
+          <div
+            style="
+              flex: 1;
+              overflow-y: auto;
+              border: 1px solid #e2e8f0;
+              border-radius: 6px;
+            "
+          >
+            <table
+              style="
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 13px;
+                text-align: left;
+              "
+            >
+              <thead
+                style="
+                  background: #f8fafc;
+                  position: sticky;
+                  top: 0;
+                  border-bottom: 2px solid #e2e8f0;
+                  z-index: 10;
+                "
+              >
+                <tr>
+                  <th style="padding: 10px">No. Tiket</th>
+                  <th style="padding: 10px">Judul Insiden</th>
+                  <th style="padding: 10px">Kategori</th>
+                  <th style="padding: 10px">Severity</th>
+                  <th style="padding: 10px">Status</th>
+                  <th style="padding: 10px">Waktu Lapor</th>
+                  <th style="padding: 10px; text-align: center">Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="noc-table-body">
+                <!-- Log Incident di-render via JavaScript -->
               </tbody>
             </table>
           </div>

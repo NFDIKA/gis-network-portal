@@ -163,26 +163,128 @@ html {
   }
 }
 
+/* Layout Peta & Container Viewport */
 .map-viewport {
   flex: 1;
   position: relative;
   width: 100%;
   height: calc(100vh - var(--header-height));
+  overflow: hidden;
 }
+
 #map {
   width: 100%;
   height: 100%;
   z-index: 1;
 }
 
-/* Metrics Overlay */
+/* Metric Overlay di Kiri Atas */
 .metrics-overlay {
   position: absolute;
   top: 16px;
-  left: 16px;
+  left: 60px; /* Digeser sedikit ke kanan agar tidak menutupi toolbar Zoom / Draw Leaflet */
   z-index: 900;
   display: flex;
   gap: 12px;
+}
+
+/* Map Search Overlay di Kanan Atas (Diberi margin agar tidak menutupi Layer Control Peta) */
+.map-search-overlay {
+  position: absolute;
+  top: 16px;
+  right: 180px; /* Memberikan ruang untuk Leaflet Layer Control Box di pojok kanan atas */
+  z-index: 900;
+  display: flex;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  padding: 6px 10px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+}
+
+.map-search-overlay input {
+  width: 280px;
+  padding: 8px 12px;
+  font-size: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  outline: none;
+}
+
+.map-search-overlay button {
+  background: var(--accent-blue);
+  color: white;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.map-search-overlay button:hover {
+  background: #1d4ed8;
+}
+
+/* Autocomplete Dropdown Search */
+.autocomplete-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15);
+  max-height: 250px;
+  overflow-y: auto;
+  z-index: 2000;
+}
+
+.autocomplete-item {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  transition: background 0.15s ease;
+}
+
+.autocomplete-item:last-child {
+  border-bottom: none;
+}
+
+.autocomplete-item:hover {
+  background: #f8fafc;
+}
+
+.autocomplete-item .item-title {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.autocomplete-item .item-subtitle {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.autocomplete-item .item-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e2e8f0;
+  color: #334155;
+  font-weight: 600;
+}
+
+/* Menyesuaikan Z-Index Layer Control bawaan Leaflet agar selalu berada di paling depan */
+.leaflet-top.leaflet-right {
+  z-index: 1000 !important;
 }
 
 .metric-card {

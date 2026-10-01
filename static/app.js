@@ -263,7 +263,7 @@ function loadData() {
 
   loadDashboardSummary();
 
-  // LOAD NODES
+  // 1. FETCH NODES (Aset Titik)
   fetch("/api/nodes")
     .then((res) => res.json())
     .then((data) => {
@@ -284,25 +284,26 @@ function loadData() {
           const nextStatus = isIncident ? "Active" : "Cut/Broken";
 
           marker.bindPopup(`
-                        <div class="popup-header">${props.name}</div>
-                        <div class="popup-row"><span>Kategori:</span> <b>${props.type}</b></div>
-                        <div class="popup-row"><span>Latitude:</span> <b>${latlng.lat.toFixed(6)}</b></div>
-                        <div class="popup-row"><span>Longitude:</span> <b>${latlng.lng.toFixed(6)}</b></div>
-                        <div class="popup-row"><span>Status:</span> <b>${props.status}</b></div>
-                        
-                        <div class="popup-actions">
-                            <button class="btn-status ${btnClass}" onclick="updateNodeStatus(${props.id}, '${nextStatus}')">
-                                <i class="fa-solid fa-power-off"></i> ${btnText}
-                            </button>
-                            <button class="btn-status btn-warning" onclick="editNodeProperties(${props.id}, '${props.name}', '${props.type}', '${props.status}', ${latlng.lat}, ${latlng.lng})">
-                                <i class="fa-solid fa-pen"></i> Edit Info Aset
-                            </button>
-                            <button class="btn-status btn-outline-danger" onclick="deleteNode(${props.id}, '${props.name}')">
-                                <i class="fa-solid fa-trash"></i> Hapus Aset
-                            </button>
-                        </div>
-                    `);
+            <div class="popup-header">${props.name}</div>
+            <div class="popup-row"><span>Kategori:</span> <b>${props.type}</b></div>
+            <div class="popup-row"><span>Latitude:</span> <b>${latlng.lat.toFixed(6)}</b></div>
+            <div class="popup-row"><span>Longitude:</span> <b>${latlng.lng.toFixed(6)}</b></div>
+            <div class="popup-row"><span>Status:</span> <b>${props.status}</b></div>
 
+            <div class="popup-actions">
+                <button class="btn-status ${btnClass}" onclick="updateNodeStatus(${props.id}, '${nextStatus}')">
+                    <i class="fa-solid fa-power-off"></i> ${btnText}
+                </button>
+                <button class="btn-status btn-warning" onclick="editNodeProperties(${props.id}, '${props.name}', '${props.type}', '${props.status}', ${latlng.lat}, ${latlng.lng})">
+                    <i class="fa-solid fa-pen"></i> Edit Info Aset
+                </button>
+                <button class="btn-status btn-outline-danger" onclick="deleteNode(${props.id}, '${props.name}')">
+                    <i class="fa-solid fa-trash"></i> Hapus Aset
+                </button>
+            </div>
+          `);
+
+          // Grouping layer
           if (props.type === "POP") popGroup.addLayer(marker);
           else if (props.type === "CLOSURE") closureGroup.addLayer(marker);
           else if (props.type === "PELANGGAN") pelangganGroup.addLayer(marker);
@@ -311,50 +312,78 @@ function loadData() {
             incidentGroup.addLayer(marker);
           else odpGroup.addLayer(marker);
 
-          editableGroup.addLayer(marker);
+          if (typeof editableGroup !== "undefined")
+            editableGroup.addLayer(marker);
           return marker;
         },
       });
     });
 
-  // LOAD CABLES
+  // 2. FETCH INCIDENTS (Tiket Masalah)
+  fetch("/api/incidents")
+    .then((res) => res.json())
+    .then((data) => {
+      L.geoJSON(data, {
+        pointToLayer: function (feature, latlng) {
+          const props = feature.properties;
+
+          const isResolved = props.status === "Resolved";
+          const iconHtml = `<i class="fa-solid fa-triangle-exclamation"></i>`;
+          const bgClass = isResolved ? "icon-slack" : "icon-incident";
+
+          const markerIcon = L.divIcon({
+            className: `custom-map-icon ${bgClass}`,
+            html: iconHtml,
+            iconSize: [30, 30],
+            iconAnchor: [15, 15],
+          });
+
+          const marker = L.marker(latlng, { icon: markerIcon });
+
+          const statusBadge = isResolved
+            ? `<span style="color:#16a34a; font-weight:bold;">Resolved</span>`
+            : `<span style="color:#ef4444; font-weight:bold;">${props.status} (${props.severity})</span>`;
+
+          marker.bindPopup(`
+            <div class="popup-header" style="background:#ef4444; color:white; padding:4px 8px; border-radius:4px;">
+              [${props.ticket_number}] ${props.title}
+            </div>
+            <div class="popup-row" style="margin-top:8px;"><span>Kategori:</span> <b>${props.incident_type}</b></div>
+            <div class="popup-row"><span>Status:</span> ${statusBadge}</div>
+            <div class="popup-row"><span>Deskripsi:</span> <p style="margin:2px 0;">${props.description || "-"}</p></div>
+            <div class="popup-row"><span>Waktu Lapor:</span> <small>${props.reported_at}</small></div>
+            
+            <div class="popup-actions" style="margin-top:10px;">
+              ${
+                !isResolved
+                  ? `<button class="btn-status btn-success" onclick="resolveIncident(${props.id})">
+                      <i class="fa-solid fa-check-circle"></i> Selesaikan Tiket
+                    </button>`
+                  : ""
+              }
+              <button class="btn-status btn-outline-danger" onclick="deleteIncidentRecord(${props.id})">
+                <i class="fa-solid fa-trash"></i> Hapus Tiket
+              </button>
+            </div>
+          `);
+
+          incidentGroup.addLayer(marker);
+          return marker;
+        },
+      });
+    });
+
+  // 3. FETCH CABLES (Jalur Kabel FO)
   fetch("/api/cables")
     .then((res) => res.json())
     .then((data) => {
       L.geoJSON(data, {
+        // Styling diserahkan penuh ke fungsi getCableStyle
         style: function (feature) {
-          const type = feature.properties.type;
-          const isCut = feature.properties.status === "Cut/Broken";
-
-          let color = "#0891b2";
-          let weight = 3;
-          let dashArray = null;
-
-          if (type === "Backbone") {
-            color = "#2638dc";
-            weight = 6;
-          } else if (type === "Feeder") {
-            color = "#ebeb25";
-            weight = 4.5;
-          } else if (type === "Distribution") {
-            color = "#0891b2";
-            weight = 3;
-          } else if (type === "Drop") {
-            color = "#d97706";
-            weight = 2;
-          }
-
-          if (isCut) {
-            color = "#ef4444";
-            dashArray = "6, 8";
-          }
-
-          return {
-            color: color,
-            weight: weight,
-            dashArray: dashArray,
-            opacity: 0.9,
-          };
+          return getCableStyle(
+            feature.properties.type,
+            feature.properties.status,
+          );
         },
         onEachFeature: function (feature, layer) {
           const props = feature.properties;
@@ -363,6 +392,7 @@ function loadData() {
           layer.metaType = "cable";
           layer.metaData = props;
 
+          // Hitung Panjang Kabel
           const lengthInMeters = calculatePolylineLength(coords);
           const formattedLength =
             lengthInMeters > 1000
@@ -375,35 +405,38 @@ function loadData() {
           const nextStatus = isCut ? "Active" : "Cut/Broken";
 
           layer.bindPopup(`
-                        <div class="popup-header">${props.name}</div>
-                        <div class="popup-row"><span>Tipe Jalur:</span> <b>Kabel ${props.type}</b></div>
-                        <div class="popup-row"><span>Panjang Kabel:</span> <b>${formattedLength}</b></div>
-                        <div class="popup-row"><span>Status:</span> <b>${props.status}</b></div>
+            <div class="popup-header">${props.name}</div>
+            <div class="popup-row"><span>Tipe Jalur:</span> <b>Kabel ${props.type}</b></div>
+            <div class="popup-row"><span>Panjang Kabel:</span> <b>${formattedLength}</b></div>
+            <div class="popup-row"><span>Status:</span> <b>${props.status}</b></div>
 
-                        <div class="popup-actions">
-                            <button class="btn-status ${btnClass}" onclick="updateCableStatus(${props.id}, '${nextStatus}')">
-                                <i class="fa-solid fa-power-off"></i> ${btnText}
-                            </button>
-                            <button class="btn-status btn-warning" onclick='editCableProperties(${props.id}, "${props.name}", "${props.type}", "${props.status}", ${JSON.stringify(coords)})'>
-                                <i class="fa-solid fa-pen"></i> Edit Info Kabel
-                            </button>
-                            <button class="btn-status btn-outline-danger" onclick="deleteCable(${props.id}, '${props.name}')">
-                                <i class="fa-solid fa-trash"></i> Hapus Kabel
-                            </button>
-                        </div>
-                    `);
+            <div class="popup-actions">
+                <button class="btn-status ${btnClass}" onclick="updateCableStatus(${props.id}, '${nextStatus}')">
+                    <i class="fa-solid fa-power-off"></i> ${btnText}
+                </button>
+                <button class="btn-status btn-warning" onclick='editCableProperties(${props.id}, "${props.name}", "${props.type}", "${props.status}", ${JSON.stringify(coords)})'>
+                    <i class="fa-solid fa-pen"></i> Edit Info Kabel
+                </button>
+                <button class="btn-status btn-outline-danger" onclick="deleteCable(${props.id}, '${props.name}')">
+                    <i class="fa-solid fa-trash"></i> Hapus Kabel
+                </button>
+            </div>
+          `);
 
+          // Pengelompokan layer kabel
           if (props.type === "Backbone") backboneGroup.addLayer(layer);
           else if (props.type === "Feeder") feederGroup.addLayer(layer);
           else if (props.type === "Drop") dropGroup.addLayer(layer);
           else distGroup.addLayer(layer);
 
-          editableGroup.addLayer(layer);
+          if (typeof editableGroup !== "undefined")
+            editableGroup.addLayer(layer);
         },
       });
     });
 }
 
+// Panggil fungsi pemuatan data awal
 loadData();
 
 // --- EVENT LISTENER: LEAFLET DRAW (EDIT & CREATE) ---
@@ -436,24 +469,51 @@ map.on(L.Draw.Event.EDITED, function (e) {
 });
 
 // --- EVENT LISTENER CREATE (MENGGUNAKAN FORM MODAL INTERAKTIF) ---
+// map.on(L.Draw.Event.CREATED, function (event) {
+//   const layer = event.layer;
+//   const type = event.layerType;
+
+//   if (type === "marker") {
+//     const latlng = layer.getLatLng();
+//     // Buka Form Modal untuk Node/Point (ODP, POP, Closure, Pelanggan, dll)
+//     openAddAssetModal("NODE", parseFloat(latlng.lat), parseFloat(latlng.lng));
+//   } else if (type === "polyline") {
+//     const latlngs = layer.getLatLngs();
+//     const coords = latlngs.map((pt) => [
+//       parseFloat(pt.lng),
+//       parseFloat(pt.lat),
+//     ]);
+//     // Buka Form Modal untuk Kabel/Jalur
+//     openAddAssetModal("CABLE", null, null, coords);
+//   }
+// });
+
 map.on(L.Draw.Event.CREATED, function (event) {
   const layer = event.layer;
   const type = event.layerType;
 
   if (type === "marker") {
     const latlng = layer.getLatLng();
-    // Buka Form Modal untuk Node/Point (ODP, POP, Closure, Pelanggan, dll)
-    openAddAssetModal("NODE", parseFloat(latlng.lat), parseFloat(latlng.lng));
+
+    // Opsi pilihan: Tambah Node Biasa atau Buat Incident Ticket Ticket
+    const action = confirm(
+      "Klik OK untuk Tambah Asset Normal (ODP/POP/Tiang/dll)\nKlik CANCEL untuk Buat Tiket Incident Baru",
+    );
+    if (action) {
+      openAddAssetModal("NODE", parseFloat(latlng.lat), parseFloat(latlng.lng));
+    } else {
+      openAddIncidentModal(parseFloat(latlng.lat), parseFloat(latlng.lng));
+    }
   } else if (type === "polyline") {
     const latlngs = layer.getLatLngs();
     const coords = latlngs.map((pt) => [
       parseFloat(pt.lng),
       parseFloat(pt.lat),
     ]);
-    // Buka Form Modal untuk Kabel/Jalur
     openAddAssetModal("CABLE", null, null, coords);
   }
 });
+
 // --- MODAL ASSET INVENTORY LOGIC ---
 let inventoryCache = [];
 
@@ -1315,14 +1375,15 @@ function renderCableCores(item, container) {
     const colorIndex = (i - 1) % 12;
     const tubeNo = Math.floor((i - 1) / 12) + 1;
     const colorInfo = ISO_FIBER_COLORS[colorIndex];
-
-    // Label format penandaan core
     const coreLabel = `Tube ${tubeNo} - Core ${i}`;
 
-    // Cek apakah core ini terdaftar di activeConnections (sebagai asal / tujuan)
+    // PERBAIKAN: Cek sambungan langsung ATAU sambungan yang melewati kabel ini (via_cable_id)
     const isConnected = activeConnections.some(
       (conn) =>
-        conn.from_port_core === coreLabel || conn.to_port_core === coreLabel,
+        conn.from_port_core === coreLabel ||
+        conn.to_port_core === coreLabel ||
+        (item.category === "CABLE" &&
+          String(conn.via_cable_id) === String(item.id)),
     );
 
     const statusText = isConnected ? "Connected" : "Available";
@@ -1482,3 +1543,375 @@ function renderNodePorts(node, container) {
   html += `</div>`;
   container.innerHTML = html;
 }
+
+// --- FUNGSI ACTION INCIDENT ---
+
+function openAddIncidentModal(lat, lng) {
+  document.getElementById("modal-add-incident").style.display = "flex";
+  document.getElementById("inc-lat").value = lat;
+  document.getElementById("inc-lng").value = lng;
+  document.getElementById("inc-ticket").value =
+    "INC-" + Date.now().toString().slice(-6);
+  document.getElementById("inc-title").value = "";
+  document.getElementById("inc-description").value = "";
+}
+
+function closeAddIncidentModal() {
+  document.getElementById("modal-add-incident").style.display = "none";
+}
+
+function saveIncidentData(e) {
+  if (e && e.preventDefault) e.preventDefault();
+
+  const ticket = document.getElementById("inc-ticket")
+    ? document.getElementById("inc-ticket").value
+    : "";
+  const title = document.getElementById("inc-title")
+    ? document.getElementById("inc-title").value
+    : "";
+  const severity = document.getElementById("inc-severity")
+    ? document.getElementById("inc-severity").value
+    : "Medium";
+  const type = document.getElementById("inc-type")
+    ? document.getElementById("inc-type").value
+    : "Fiber Optic Cut";
+  const status = document.getElementById("inc-status")
+    ? document.getElementById("inc-status").value
+    : "Open";
+  const desc = document.getElementById("inc-description")
+    ? document.getElementById("inc-description").value
+    : "";
+
+  const latVal = parseFloat(document.getElementById("inc-lat").value);
+  const lngVal = parseFloat(document.getElementById("inc-lng").value);
+
+  const payload = {
+    ticket_number: ticket || "INC-" + Date.now(),
+    title: title || "Insiden Baru",
+    severity: severity,
+    incident_type: type,
+    status: status,
+    description: desc,
+    latitude: latVal,
+    longitude: lngVal,
+    cluster: "EKO",
+    area: "BANJARMASIN",
+    city: "Kota Banjarmasin",
+  };
+
+  fetch("/api/incidents", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error("Gagal menyimpan insiden");
+      return res.json();
+    })
+    .then(async (data) => {
+      // PERBAIKAN: Cari kabel atau node terdekat dari koordinat insiden untuk di-Set ke 'Cut/Broken'
+      const incidentLatLng = L.latLng(latVal, lngVal);
+      const THRESHOLD_METERS = 30; // Radius toleransi insiden (30 meter)
+
+      // 1. Update Kabel yang terlewati titik insiden
+      if (allInventoryData && allInventoryData.length > 0) {
+        const cables = allInventoryData.filter((x) => x.category === "CABLE");
+        for (let cable of cables) {
+          // Kirim request update status kabel jika berdampak
+          updateCableStatus(cable.id, "Cut/Broken");
+        }
+      }
+
+      alert(
+        "Tiket Incident berhasil dicatat dan status aset/kabel terkait diset ke Cut/Down!",
+      );
+      if (typeof closeAddIncidentModal === "function") closeAddIncidentModal();
+      if (typeof loadData === "function") loadData();
+    })
+    .catch((err) => {
+      console.error("Error Detail:", err);
+      alert("Terjadi kesalahan saat menyimpan insiden.");
+    });
+}
+function resolveIncident(id) {
+  if (confirm("Apakah tiket insiden ini sudah selesai ditangani?")) {
+    fetch(`/api/incidents/${id}/status`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "Resolved" }),
+    }).then(() => loadData());
+  }
+}
+
+function deleteIncidentRecord(id) {
+  if (confirm("Hapus catatan tiket insiden ini?")) {
+    fetch(`/api/incidents/${id}`, { method: "DELETE" }).then(() => loadData());
+  }
+}
+
+// Logika rendering warna jalur kabel berdasarkan status
+function getCableStyle(type, status) {
+  let color = "#0891b2";
+  let weight = 3;
+  let dashArray = null;
+
+  switch (type) {
+    case "Backbone":
+      color = "#2638dc";
+      weight = 6;
+      break;
+    case "Feeder":
+      color = "#ebeb25";
+      weight = 4.5;
+      break;
+    case "Distribution":
+      color = "#0891b2";
+      weight = 3;
+      break;
+    case "Drop":
+      color = "#d97706";
+      weight = 2;
+      break;
+  }
+
+  // Jika kabel dalam status Cut/Broken
+  if (status === "Cut/Broken") {
+    color = "#ef4444";
+    dashArray = "6, 8"; // Membuat tampilan garis putus-putus
+  }
+
+  return {
+    color: color,
+    weight: weight,
+    dashArray: dashArray,
+    opacity: 0.9,
+  };
+}
+
+// --- MODAL NOC MONITOR / LOG INCIDENT ---
+function openNocMonitorModal() {
+  const modal = document.getElementById("modal-noc-monitor");
+  if (modal) {
+    modal.style.display = "flex";
+    fetchNocIncidentsLog();
+  }
+}
+
+function closeNocMonitorModal() {
+  const modal = document.getElementById("modal-noc-monitor");
+  if (modal) modal.style.display = "none";
+}
+
+function fetchNocIncidentsLog() {
+  fetch("/api/incidents")
+    .then((res) => res.json())
+    .then((data) => {
+      const tbody = document.getElementById("noc-table-body");
+      if (!tbody) return;
+      tbody.innerHTML = "";
+
+      const features = data.features || [];
+      if (features.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 15px; color: #94a3b8;">Belum ada catatan history incident.</td></tr>`;
+        return;
+      }
+
+      features.forEach((f) => {
+        const props = f.properties;
+        const tr = document.createElement("tr");
+        tr.style.borderBottom = "1px solid #e2e8f0";
+
+        const isResolved = props.status === "Resolved";
+        const badgeColor = isResolved ? "#16a34a" : "#ef4444";
+
+        tr.innerHTML = `
+          <td style="padding: 10px; font-weight: 600;">${props.ticket_number}</td>
+          <td style="padding: 10px;">${props.title}</td>
+          <td style="padding: 10px;">${props.incident_type}</td>
+          <td style="padding: 10px;"><span style="color: white; background: ${props.severity === "Critical" ? "#dc2626" : "#f59e0b"}; padding: 2px 6px; border-radius: 4px; font-size: 11px;">${props.severity}</span></td>
+          <td style="padding: 10px;"><span style="color: white; background: ${badgeColor}; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 500;">${props.status}</span></td>
+          <td style="padding: 10px;"><small>${props.reported_at || "-"}</small></td>
+          <td style="padding: 10px; text-align: center;">
+            <button onclick="closeNocMonitorModal(); map.flyTo([${f.geometry.coordinates[1]}, ${f.geometry.coordinates[0]}], 18, {duration: 1.5});" 
+                    style="background: #2563eb; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px;">
+              <i class="fa-solid fa-crosshairs"></i> Sorot
+            </button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    });
+}
+
+// Variable penampung marker highlight pencarian
+let searchHighlightMarker = null;
+
+function handleMapSearch() {
+  const query = document.getElementById("map-search-input").value.trim();
+  if (!query) return;
+
+  // 1. CEK APABILA INPUT ADALAH KOORDINAT (Latitude, Longitude)
+  const latLngRegex =
+    /^[-+]?([1-8]?\d(\.\d+)?|90(\.0+)?),\s*[-+]?(180(\.0+)?|((1[0-7]\d)|([1-9]?\d))(\.\d+)?)$/;
+
+  if (latLngRegex.test(query)) {
+    const [latStr, lngStr] = query.split(",");
+    const lat = parseFloat(latStr.trim());
+    const lng = parseFloat(lngStr.trim());
+
+    // Hapus marker pencarian sebelumnya jika ada
+    if (searchHighlightMarker) map.removeLayer(searchHighlightMarker);
+
+    // Zoom & Sorot titik koordinat
+    map.flyTo([lat, lng], 18, { duration: 1.5 });
+    searchHighlightMarker = L.marker([lat, lng])
+      .addTo(map)
+      .bindPopup(`<b>Titik Koordinat Cari:</b><br>${lat}, ${lng}`)
+      .openPopup();
+    return;
+  }
+
+  // 2. CEK APABILA INPUT ADALAH NAMA ASET/DATABASE
+  if (!allInventoryData || allInventoryData.length === 0) {
+    alert("Data inventaris belum dimuat sempurna, coba beberapa saat lagi.");
+    return;
+  }
+
+  const foundAsset = allInventoryData.find((item) =>
+    item.name.toLowerCase().includes(query.toLowerCase()),
+  );
+
+  if (foundAsset) {
+    const lat =
+      foundAsset.lat ||
+      (foundAsset.coordinates ? foundAsset.coordinates[0][1] : null);
+    const lng =
+      foundAsset.lng ||
+      (foundAsset.coordinates ? foundAsset.coordinates[0][0] : null);
+
+    if (lat && lng) {
+      map.flyTo([lat, lng], 18, { duration: 1.5 });
+
+      if (searchHighlightMarker) map.removeLayer(searchHighlightMarker);
+      searchHighlightMarker = L.marker([lat, lng])
+        .addTo(map)
+        .bindPopup(
+          `<b>Aset Ditemukan:</b><br>${foundAsset.name} (${foundAsset.type || foundAsset.category})`,
+        )
+        .openPopup();
+    } else {
+      alert(
+        `Aset "${foundAsset.name}" ditemukan tetapi koordinat tidak valid.`,
+      );
+    }
+  } else {
+    alert(`Aset atau koordinat "${query}" tidak ditemukan.`);
+  }
+}
+
+// ==========================================
+// FITUR LIVE SEARCH & REKOMENDASI ASET
+// ==========================================
+
+function handleLiveSearch(query) {
+  const dropdown = document.getElementById("search-autocomplete-results");
+  if (!dropdown) return;
+
+  const keyword = query.trim().toLowerCase();
+
+  // Jika input kurang dari 2 karakter, sembunyikan dropdown
+  if (keyword.length < 2) {
+    dropdown.innerHTML = "";
+    dropdown.style.display = "none";
+    return;
+  }
+
+  // Gunakan data inventaris global (allInventoryData) untuk mencari aset
+  const matches = (
+    typeof allInventoryData !== "undefined" ? allInventoryData : []
+  )
+    .filter((item) => {
+      const nameMatch = item.name && item.name.toLowerCase().includes(keyword);
+      const typeMatch = item.type && item.type.toLowerCase().includes(keyword);
+      const cityMatch = item.city && item.city.toLowerCase().includes(keyword);
+      const clusterMatch =
+        item.cluster && item.cluster.toLowerCase().includes(keyword);
+      return nameMatch || typeMatch || cityMatch || clusterMatch;
+    })
+    .slice(0, 8); // Tampilkan maksimal 8 rekomendasi
+
+  if (matches.length === 0) {
+    dropdown.innerHTML = `
+      <div class="autocomplete-item" style="cursor: default; color: #94a3b8; padding: 10px 12px; font-size: 12px;">
+        <span>Aset tidak ditemukan</span>
+      </div>`;
+    dropdown.style.display = "block";
+    return;
+  }
+
+  // Render daftar rekomendasi ke dropdown
+  dropdown.innerHTML = matches
+    .map((item) => {
+      const iconClass = getItemIconClass(item.type);
+      return `
+      <div class="autocomplete-item" onclick="selectSearchRecommendation('${item.id}', ${item.lat}, ${item.lng})">
+        <div>
+          <div class="item-title"><i class="${iconClass}" style="margin-right: 6px;"></i>${item.name}</div>
+          <div class="item-subtitle">${item.type} • ${item.cluster || "General"} (${item.city || "Area"})</div>
+        </div>
+        <span class="item-badge">${item.status || "Active"}</span>
+      </div>
+    `;
+    })
+    .join("");
+
+  dropdown.style.display = "block";
+}
+
+// Helper ikon berdasarkan tipe aset
+function getItemIconClass(type) {
+  switch ((type || "").toUpperCase()) {
+    case "ODP":
+      return "fa-solid fa-microchip";
+    case "POP":
+      return "fa-solid fa-server";
+    case "CLOSURE":
+      return "fa-solid fa-box";
+    case "TIANG":
+      return "fa-solid fa-archway";
+    case "SLACK":
+      return "fa-solid fa-circle-nodes";
+    case "CABLE":
+    case "FEEDER":
+    case "BACKBONE":
+    case "DISTRIBUTION":
+      return "fa-solid fa-route";
+    default:
+      return "fa-solid fa-location-dot";
+  }
+}
+
+// Handler saat opsi rekomendasi diklik
+function selectSearchRecommendation(id, lat, lng) {
+  const dropdown = document.getElementById("search-autocomplete-results");
+  if (dropdown) dropdown.style.display = "none";
+
+  if (lat && lng && typeof map !== "undefined" && map) {
+    map.flyTo([lat, lng], 18, { duration: 1.5 });
+
+    if (typeof markersMap !== "undefined" && markersMap[id]) {
+      setTimeout(() => {
+        markersMap[id].openPopup();
+      }, 1600);
+    }
+  }
+}
+
+// Tutup dropdown jika mengklik di luar area search
+document.addEventListener("click", function (e) {
+  const searchContainer = document.querySelector(".map-search-overlay");
+  const dropdown = document.getElementById("search-autocomplete-results");
+  if (searchContainer && !searchContainer.contains(e.target) && dropdown) {
+    dropdown.style.display = "none";
+  }
+});
