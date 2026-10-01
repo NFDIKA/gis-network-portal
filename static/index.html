@@ -137,6 +137,8 @@
             <option value="ODP">ODP Only</option>
             <option value="POP">POP / Headend</option>
             <option value="CLOSURE">Joint Closure</option>
+            <option value="TIANG">Tiang</option>
+            <option value="SLACK">Slack Kabel</option>
             <option value="CABLE">Semua Kabel</option>
           </select>
         </div>
@@ -158,6 +160,204 @@
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+
+    <!-- Modal Form Input Asset Baru -->
+    <div id="modal-add-asset" class="modal-overlay" style="display: none">
+      <div class="modal-container" style="max-width: 550px; height: auto">
+        <div class="modal-header">
+          <h3 id="form-asset-title">
+            <i class="fa-solid fa-plus-circle"></i> Tambah Aset Jaringan
+          </h3>
+          <button class="btn-close" onclick="closeAddAssetModal()">
+            &times;
+          </button>
+        </div>
+
+        <form
+          id="form-asset"
+          onsubmit="saveAssetData(event)"
+          style="padding: 20px"
+        >
+          <input type="hidden" id="asset-lat" />
+          <input type="hidden" id="asset-lng" />
+          <input type="hidden" id="asset-coords-json" />
+          <input type="hidden" id="asset-category-type" />
+          <!-- 'NODE' atau 'CABLE' -->
+
+          <div class="form-group" style="margin-bottom: 12px">
+            <label style="font-weight: 600; font-size: 12px"
+              >Nama Aset / Device:</label
+            >
+            <input
+              type="text"
+              id="asset-name"
+              required
+              placeholder="Contoh: ODP-BJM-001"
+              style="
+                width: 100%;
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+              "
+            />
+          </div>
+
+          <div style="display: flex; gap: 10px; margin-bottom: 12px">
+            <div style="flex: 1">
+              <label style="font-weight: 600; font-size: 12px"
+                >Tipe Aset:</label
+              >
+              <select
+                id="asset-type"
+                onchange="onAssetTypeChange()"
+                style="
+                  width: 100%;
+                  padding: 8px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                "
+              >
+                <option value="ODP">ODP</option>
+                <option value="POP">POP / Headend</option>
+                <option value="CLOSURE">Joint Closure</option>
+                <option value="PELANGGAN">Pelanggan</option>
+                <option value="TIANG">Tiang</option>
+                <option value="SLACK">Slack Kabel</option>
+              </select>
+            </div>
+            <div style="flex: 1">
+              <label style="font-weight: 600; font-size: 12px">Status:</label>
+              <select
+                id="asset-status"
+                style="
+                  width: 100%;
+                  padding: 8px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                "
+              >
+                <option value="Active">Active</option>
+                <option value="Maintenance">Maintenance</option>
+                <option value="Cut/Broken">Cut/Broken</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Cascading Cluster & Area -->
+          <div style="display: flex; gap: 10px; margin-bottom: 12px">
+            <div style="flex: 1">
+              <label style="font-weight: 600; font-size: 12px">Cluster:</label>
+              <select
+                id="asset-cluster"
+                onchange="updateAreaOptions()"
+                style="
+                  width: 100%;
+                  padding: 8px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                "
+              >
+                <option value="EKO">EKO</option>
+                <option value="WKO">WKO</option>
+              </select>
+            </div>
+            <div style="flex: 1">
+              <label style="font-weight: 600; font-size: 12px">Area:</label>
+              <select
+                id="asset-area"
+                style="
+                  width: 100%;
+                  padding: 8px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                "
+              >
+                <!-- Options diisi otomatis via JS -->
+              </select>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 10px; margin-bottom: 12px">
+            <div style="flex: 1">
+              <label style="font-weight: 600; font-size: 12px"
+                >Kota / Kabupaten (Auto-Geocode):</label
+              >
+              <input
+                type="text"
+                id="asset-city"
+                placeholder="Mendeteksi lokasi..."
+                readonly
+                style="
+                  width: 100%;
+                  padding: 8px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                  background: #f1f5f9;
+                "
+              />
+            </div>
+            <div style="flex: 1">
+              <label style="font-weight: 600; font-size: 12px"
+                >Kapasitas Port/Core:</label
+              >
+              <select
+                id="asset-capacity"
+                style="
+                  width: 100%;
+                  padding: 8px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                "
+              >
+                <option value="8 Port">8 Port</option>
+                <option value="16 Port">16 Port</option>
+                <option value="12C">12 Core (12C)</option>
+                <option value="24C">24 Core (24C)</option>
+                <option value="48C">48 Core (48C)</option>
+                <option value="96C">96 Core (96C)</option>
+                <option value="144C">144 Core (144C)</option>
+              </select>
+            </div>
+          </div>
+
+          <div
+            style="
+              margin-top: 20px;
+              display: flex;
+              justify-content: flex-end;
+              gap: 10px;
+            "
+          >
+            <button
+              type="button"
+              onclick="closeAddAssetModal()"
+              style="
+                padding: 8px 16px;
+                border: 1px solid #ccc;
+                background: #fff;
+                border-radius: 4px;
+                cursor: pointer;
+              "
+            >
+              Batal
+            </button>
+            <button
+              type="submit"
+              style="
+                padding: 8px 16px;
+                background: #2563eb;
+                color: #fff;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+              "
+            >
+              Simpan Aset
+            </button>
+          </div>
+        </form>
       </div>
     </div>
 

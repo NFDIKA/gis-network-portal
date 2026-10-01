@@ -232,35 +232,71 @@ html {
   font-weight: 500;
 }
 
-/* Custom Marker Styling */
+/* --- LEAFLET CONTAINER ICON BASE --- */
+.leaflet-marker-icon.custom-map-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* --- MAP MARKER BASE STYLING --- */
 .custom-map-icon {
-  display: flex;
+  display: flex !important;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  color: white;
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
-  border: 2px solid white;
-}
-.icon-pop {
-  background-color: #8b5cf6;
-}
-.icon-odp {
-  background-color: #10b981;
-}
-.icon-closure {
-  background-color: #f59e0b;
-}
-.icon-pelanggan {
-  background-color: #06b6d4;
-}
-.icon-tiang {
-  background-color: #64748b;
-}
-.icon-incident {
-  background-color: #ef4444;
+  color: #ffffff !important;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
+  border: 2px solid #ffffff;
+  width: 28px;
+  height: 28px;
+  box-sizing: border-box;
 }
 
+/* --- GENERAL ASSET BACKGROUNDS --- */
+.custom-map-icon.icon-pop {
+  background-color: #8b5cf6 !important; /* Ungu */
+}
+
+.custom-map-icon.icon-odp {
+  background-color: #10b981 !important; /* Hijau */
+}
+
+.custom-map-icon.icon-closure {
+  background-color: #f59e0b !important; /* Oranye */
+}
+
+.custom-map-icon.icon-pelanggan {
+  background-color: #06b6d4 !important; /* Cyan */
+}
+
+.custom-map-icon.icon-incident {
+  background-color: #ef4444 !important; /* Merah */
+}
+
+/* --- PERBAIKAN KHUSUS SLACK (Hitam Pekat & Solid) --- */
+.custom-map-icon.icon-slack {
+  background-color: #000000 !important; /* Hitam Solid Pekat */
+  color: #e4e255 !important;
+  border: 2px solid #c71c1c;
+}
+
+.custom-map-icon.icon-slack i {
+  font-size: 14px;
+}
+
+/* --- PERBAIKAN KHUSUS TIANG (Bentuk Persegi/Tiang Ramping) --- */
+.custom-map-icon.icon-tiang {
+  background-color: #475569 !important; /* Dark Slate Gray */
+  color: #ffffff !important;
+  border-radius: 4px !important; /* Ubah Lingkaran menjadi Persegi/KOTAK Ramping */
+  width: 18px !important; /* Buat lebih ramping vertikal seperti Tiang */
+  height: 30px !important;
+  border: 2px solid #ffffff;
+}
+
+.custom-map-icon.icon-tiang i {
+  font-size: 13px;
+}
 /* Popup Styling */
 .popup-header {
   font-weight: 700;

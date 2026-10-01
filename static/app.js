@@ -102,20 +102,23 @@ function createCustomIcon(type, status) {
         bgClass = "icon-pelanggan";
         break;
       case "TIANG":
-        iconClass = "fa-solid fa-ellipsis-vertical";
+        iconClass = "fa-solid fa-ellipsis-vertical"; // Ikon 3 titik lurus tegak / garis tiang
         bgClass = "icon-tiang";
+        break;
+      case "SLACK":
+        iconClass = "fa-solid fa-circle";
+        bgClass = "icon-slack";
         break;
     }
   }
 
   return L.divIcon({
-    className: "custom-div-icon",
-    html: `<div class="custom-map-icon ${bgClass}" style="width: 30px; height: 30px;"><i class="${iconClass}"></i></div>`,
-    iconSize: [30, 30],
-    iconAnchor: [15, 15],
+    className: `custom-map-icon ${bgClass}`, // Menempelkan class latar langsung di container Leaflet
+    html: `<i class="${iconClass}"></i>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
   });
 }
-
 function loadDashboardSummary() {
   fetch("/api/dashboard/summary")
     .then((res) => res.json())
@@ -308,10 +311,10 @@ function loadData() {
           let dashArray = null;
 
           if (type === "Backbone") {
-            color = "#dc2626";
+            color = "#2638dc";
             weight = 6;
           } else if (type === "Feeder") {
-            color = "#2563eb";
+            color = "#ebeb25";
             weight = 4.5;
           } else if (type === "Distribution") {
             color = "#0891b2";
@@ -319,7 +322,6 @@ function loadData() {
           } else if (type === "Drop") {
             color = "#d97706";
             weight = 2;
-            dashArray = "4, 4";
           }
 
           if (isCut) {
@@ -413,65 +415,25 @@ map.on(L.Draw.Event.EDITED, function (e) {
   });
 });
 
+// --- EVENT LISTENER CREATE (MENGGUNAKAN FORM MODAL INTERAKTIF) ---
 map.on(L.Draw.Event.CREATED, function (event) {
   const layer = event.layer;
   const type = event.layerType;
 
   if (type === "marker") {
     const latlng = layer.getLatLng();
-    const name = prompt(
-      "Nama Titik (misal: ODP-B2/05, Tiang 7m A-12, Rumah Bpk Ahmad):",
-    );
-    if (!name) return;
-    const nodeType = prompt(
-      "Pilih Tipe Titik:\n(ODP / POP / CLOSURE / PELANGGAN / TIANG / INCIDENT)",
-      "ODP",
-    );
-
-    fetch("/api/nodes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: name,
-        type: nodeType ? nodeType.trim().toUpperCase() : "ODP",
-        status:
-          nodeType && nodeType.toUpperCase() === "INCIDENT"
-            ? "Cut/Broken"
-            : "Active",
-        latitude: parseFloat(latlng.lat),
-        longitude: parseFloat(latlng.lng),
-      }),
-    }).then((res) => {
-      if (res.ok) loadData();
-    });
+    // Buka Form Modal untuk Node/Point (ODP, POP, Closure, Pelanggan, dll)
+    openAddAssetModal("NODE", parseFloat(latlng.lat), parseFloat(latlng.lng));
   } else if (type === "polyline") {
     const latlngs = layer.getLatLngs();
     const coords = latlngs.map((pt) => [
       parseFloat(pt.lng),
       parseFloat(pt.lat),
     ]);
-    const name = prompt("Nama Jalur Kabel:");
-    if (!name) return;
-    const cableType = prompt(
-      "Pilih Tipe Jalur:\n(Backbone / Feeder / Distribution / Drop)",
-      "Feeder",
-    );
-
-    fetch("/api/cables", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: name,
-        type: cableType ? cableType.trim() : "Distribution",
-        status: "Active",
-        coordinates: coords,
-      }),
-    }).then((res) => {
-      if (res.ok) loadData();
-    });
+    // Buka Form Modal untuk Kabel/Jalur
+    openAddAssetModal("CABLE", null, null, coords);
   }
 });
-
 // --- MODAL ASSET INVENTORY LOGIC ---
 let inventoryCache = [];
 
@@ -583,4 +545,208 @@ function filterInventoryTable() {
 function zoomToAsset(lat, lng) {
   closeInventoryModal();
   map.flyTo([lat, lng], 18, { duration: 1.5 });
+}
+
+// Pemetaan Cluster -> Area
+const AREA_MAPPING = {
+  EKO: ["BALIKPAPAN", "SAMARINDA", "BANJARMASIN", "TANJUNG SELOR"],
+  WKO: ["PONTIANAK", "PALANGKARAYA"],
+};
+
+function updateAreaOptions() {
+  const clusterSelect = document.getElementById("asset-cluster");
+  const areaSelect = document.getElementById("asset-area");
+  const selectedCluster = clusterSelect.value;
+
+  areaSelect.innerHTML = "";
+  const areas = AREA_MAPPING[selectedCluster] || [];
+
+  areas.forEach((area) => {
+    const opt = document.createElement("option");
+    opt.value = area;
+    opt.textContent = area;
+    areaSelect.appendChild(opt);
+  });
+}
+
+function fetchCityName(lat, lng) {
+  const cityInput = document.getElementById("asset-city");
+  cityInput.value = "Mendeteksi lokasi...";
+
+  fetch(
+    `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`,
+  )
+    .then((res) => res.json())
+    .then((data) => {
+      const addr = data.address || {};
+      const cityName =
+        addr.city ||
+        addr.town ||
+        addr.city_district ||
+        addr.county ||
+        addr.state ||
+        "Kota Tidak Diketahui";
+      cityInput.value = cityName;
+    })
+    .catch((err) => {
+      console.error("Geocoding failed:", err);
+      cityInput.value = "Kota Banjarmasin"; // Fallback default jika offline/error
+    });
+}
+
+function openAddAssetModal(typeCategory, lat, lng, coordsArr = null) {
+  document.getElementById("modal-add-asset").style.display = "flex";
+  document.getElementById("asset-category-type").value = typeCategory; // 'NODE' atau 'CABLE'
+  document.getElementById("asset-name").value = "";
+
+  // Set default cluster & area
+  document.getElementById("asset-cluster").value = "EKO";
+  updateAreaOptions();
+
+  const typeSelect = document.getElementById("asset-type");
+
+  if (typeCategory === "NODE") {
+    document.getElementById("form-asset-title").innerHTML =
+      `<i class="fa-solid fa-location-dot"></i> Tambah Node / Device Baru`;
+    document.getElementById("asset-lat").value = lat;
+    document.getElementById("asset-lng").value = lng;
+
+    typeSelect.disabled = false;
+    typeSelect.innerHTML = `
+            <option value="ODP">ODP</option>
+            <option value="POP">POP / Headend</option>
+            <option value="CLOSURE">Joint Closure</option>
+            <option value="PELANGGAN">Pelanggan</option>
+            <option value="TIANG">Tiang</option>
+            <option value="SLACK">Slack Kabel</option>
+            <option value="INCIDENT">Titik Incident</option>
+        `;
+    fetchCityName(lat, lng);
+  } else {
+    document.getElementById("form-asset-title").innerHTML =
+      `<i class="fa-solid fa-route"></i> Tambah Kabel / Jalur Baru`;
+    document.getElementById("asset-coords-json").value =
+      JSON.stringify(coordsArr);
+
+    typeSelect.disabled = false;
+    typeSelect.innerHTML = `
+            <option value="Feeder">Kabel Feeder</option>
+            <option value="Distribution">Kabel Distribusi</option>
+            <option value="Backbone">Kabel Backbone</option>
+            <option value="Dropcore">Kabel Dropcore</option>
+        `;
+    // Geocode titik pertama kabel
+    fetchCityName(coordsArr[0][1], coordsArr[0][0]);
+  }
+
+  onAssetTypeChange();
+}
+
+function closeAddAssetModal() {
+  document.getElementById("modal-add-asset").style.display = "none";
+}
+
+function onAssetTypeChange() {
+  const selectedType = document.getElementById("asset-type").value;
+  const capacitySelect = document.getElementById("asset-capacity");
+
+  // Penyesuaian pilihan kapasitas sesuai jenis aset
+  if (selectedType === "ODP") {
+    capacitySelect.innerHTML = `
+            <option value="8 Port">8 Port</option>
+            <option value="16 Port">16 Port</option>
+        `;
+  } else if (selectedType === "TIANG") {
+    capacitySelect.innerHTML = `
+            <option value="Tiang 7m">Tiang 7m</option>
+            <option value="Tiang 9m">Tiang 9m</option>
+        `;
+  } else if (selectedType === "SLACK") {
+    capacitySelect.innerHTML = `
+            <option value="Slack 10m">Slack 10m</option>
+            <option value="Slack 20m">Slack 20m</option>
+            <option value="Slack 50m">Slack 50m</option>
+        `;
+  } else if (selectedType === "PELANGGAN") {
+    capacitySelect.innerHTML = `<option value="1 Port">1 Port</option>`;
+  } else {
+    capacitySelect.innerHTML = `
+            <option value="12C">12 Core (12C)</option>
+            <option value="24C">24 Core (24C)</option>
+            <option value="48C">48 Core (48C)</option>
+            <option value="96C">96 Core (96C)</option>
+            <option value="144C">144 Core (144C)</option>
+        `;
+  }
+}
+
+function saveAssetData(e) {
+  e.preventDefault();
+
+  const categoryType = document.getElementById("asset-category-type").value;
+  const name = document.getElementById("asset-name").value;
+  const type = document.getElementById("asset-type").value;
+  const status = document.getElementById("asset-status").value;
+  const cluster = document.getElementById("asset-cluster").value;
+  const area = document.getElementById("asset-area").value;
+  const city = document.getElementById("asset-city").value;
+  const capacity = document.getElementById("asset-capacity").value;
+
+  if (categoryType === "NODE") {
+    const lat = parseFloat(document.getElementById("asset-lat").value);
+    const lng = parseFloat(document.getElementById("asset-lng").value);
+
+    const payload = {
+      name,
+      type,
+      status,
+      latitude: lat,
+      longitude: lng,
+      cluster,
+      area,
+      city,
+      capacity,
+      spec_data: "{}",
+    };
+
+    fetch("/api/nodes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+      .then((r) => r.json())
+      .then((res) => {
+        alert("Node berhasil disimpan!");
+        closeAddAssetModal();
+        location.reload(); // Refresh peta & data
+      });
+  } else {
+    const coordsArr = JSON.parse(
+      document.getElementById("asset-coords-json").value,
+    );
+
+    const payload = {
+      name,
+      type,
+      status,
+      coordinates: coordsArr,
+      cluster,
+      area,
+      city,
+      capacity,
+      core_data: "{}",
+    };
+
+    fetch("/api/cables", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+      .then((r) => r.json())
+      .then((res) => {
+        alert("Kabel berhasil disimpan!");
+        closeAddAssetModal();
+        location.reload(); // Refresh peta & data
+      });
+  }
 }

@@ -6,7 +6,7 @@ from typing import List, Optional
 import sqlite3
 import json
 
-app = FastAPI(title="ISP WebGIS Prototype API - Full CRUD")
+app = FastAPI(title="ISP WebGIS Prototype API")
 
 # Allow CORS
 app.add_middleware(
@@ -21,33 +21,6 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-# Inisialisasi Tabel Database jika belum ada
-def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS nodes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            type TEXT NOT NULL,
-            status TEXT NOT NULL,
-            latitude REAL NOT NULL,
-            longitude REAL NOT NULL
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS cables (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            type TEXT NOT NULL,
-            status TEXT NOT NULL,
-            geojson_geometry TEXT NOT NULL
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-init_db()
 
 # --- MODEL DATA (PYDANTIC) ---
 class NodeCreate(BaseModel):
@@ -56,33 +29,30 @@ class NodeCreate(BaseModel):
     status: str
     latitude: float
     longitude: float
-
-class NodeUpdate(BaseModel):
-    name: Optional[str] = None
-    type: Optional[str] = None
-    status: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+    cluster: Optional[str] = "EKO"
+    area: Optional[str] = "BANJARMASIN"
+    city: Optional[str] = "Kota Banjarmasin"
+    capacity: Optional[str] = "8 Port"
+    spec_data: Optional[str] = "{}"
 
 class CableCreate(BaseModel):
     name: str
     type: str
     status: str
     coordinates: List[List[float]]
-
-class CableUpdate(BaseModel):
-    name: Optional[str] = None
-    type: Optional[str] = None
-    status: Optional[str] = None
-    coordinates: Optional[List[List[float]]] = None
+    cluster: Optional[str] = "EKO"
+    area: Optional[str] = "BANJARMASIN"
+    city: Optional[str] = "Kota Banjarmasin"
+    capacity: Optional[str] = "24C"
+    core_data: Optional[str] = "{}"
 
 class StatusUpdate(BaseModel):
     status: str  # 'Active', 'Maintenance', 'Cut/Broken'
 
 
-# --- ROUTE API NODES (MARKER) ---
+# --- ROUTE API (WAJIB DIDEKLARASIKAN SEBELUM MOUNT STATIC FILES) ---
 
-# 1. READ ALL NODES
+# 1. GET ALL NODES
 @app.get("/api/nodes")
 def get_nodes():
     conn = get_db_connection()
@@ -92,31 +62,42 @@ def get_nodes():
     
     features = []
     for node in nodes:
+        node_dict = dict(node)
         features.append({
             "type": "Feature",
             "geometry": {
                 "type": "Point",
-                "coordinates": [node["longitude"], node["latitude"]]
+                "coordinates": [node_dict["longitude"], node_dict["latitude"]]
             },
             "properties": {
-                "id": node["id"],
-                "name": node["name"],
-                "type": node["type"],
-                "status": node["status"]
+                "id": node_dict["id"],
+                "name": node_dict["name"],
+                "type": node_dict["type"],
+                "status": node_dict["status"],
+                "cluster": node_dict.get("cluster") or "EKO",
+                "area": node_dict.get("area") or "BANJARMASIN",
+                "city": node_dict.get("city") or "Kota Banjarmasin",
+                "capacity": node_dict.get("capacity") or "8 Port",
+                "spec_data": node_dict.get("spec_data") or "{}"
             }
         })
     return {"type": "FeatureCollection", "features": features}
 
-# 2. CREATE NODE
+
+# 2. CREATE NODE (POST)
 @app.post("/api/nodes")
 def create_node(node: NodeCreate):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO nodes (name, type, status, latitude, longitude)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (node.name, node.type, node.status, float(node.latitude), float(node.longitude)))
+            INSERT INTO nodes (name, type, status, latitude, longitude, cluster, area, city, capacity, spec_data)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            node.name, node.type, node.status, 
+            float(node.latitude), float(node.longitude),
+            node.cluster, node.area, node.city, node.capacity, node.spec_data
+        ))
         conn.commit()
         node_id = cursor.lastrowid
         conn.close()
@@ -126,7 +107,79 @@ def create_node(node: NodeCreate):
         print(f"[ERROR] Node Insert Failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# 3. UPDATE NODE STATUS
+
+# 3. GET ALL CABLES
+@app.get("/api/cables")
+def get_cables():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cables = cursor.execute("SELECT * FROM cables").fetchall()
+    conn.close()
+    
+    features = []
+    for cable in cables:
+        cable_dict = dict(cable)
+        
+        # Mendukung baik 'geojson_geometry' maupun 'coordinates'
+        geom_raw = cable_dict.get("geojson_geometry") or cable_dict.get("coordinates")
+        if isinstance(geom_raw, str):
+            geom = json.loads(geom_raw)
+        else:
+            geom = geom_raw
+
+        # Pastikan format berupa GeoJSON Geometry LineString
+        if isinstance(geom, list):
+            geom = {"type": "LineString", "coordinates": geom}
+
+        features.append({
+            "type": "Feature",
+            "geometry": geom,
+            "properties": {
+                "id": cable_dict["id"],
+                "name": cable_dict["name"],
+                "type": cable_dict["type"],
+                "status": cable_dict["status"],
+                "cluster": cable_dict.get("cluster") or "EKO",
+                "area": cable_dict.get("area") or "BANJARMASIN",
+                "city": cable_dict.get("city") or "Kota Banjarmasin",
+                "capacity": cable_dict.get("capacity") or "24C",
+                "core_data": cable_dict.get("core_data") or "{}"
+            }
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
+# 4. CREATE CABLE (POST)
+@app.post("/api/cables")
+def create_cable(cable: CableCreate):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        geojson_geom = {
+            "type": "LineString",
+            "coordinates": cable.coordinates
+        }
+        
+        cursor.execute('''
+            INSERT INTO cables (name, type, status, geojson_geometry, cluster, area, city, capacity, core_data)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            cable.name, cable.type, cable.status, 
+            json.dumps(geojson_geom),
+            cable.cluster, cable.area, cable.city, cable.capacity, cable.core_data
+        ))
+        conn.commit()
+        cable_id = cursor.lastrowid
+        conn.close()
+        print(f"[SUCCESS] Cable '{cable.name}' berhasil disimpan dengan ID: {cable_id}")
+        return {"message": "Kabel berhasil ditambahkan", "id": cable_id}
+    except Exception as e:
+        print(f"[ERROR] Cable Insert Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# 5. API Endpoint: Update Status Node
 @app.put("/api/nodes/{node_id}/status")
 def update_node_status(node_id: int, payload: StatusUpdate):
     try:
@@ -140,94 +193,8 @@ def update_node_status(node_id: int, payload: StatusUpdate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 4. UPDATE NODE FULL PROPERTIES
-@app.put("/api/nodes/{node_id}")
-def update_node(node_id: int, payload: NodeUpdate):
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE nodes 
-            SET name = COALESCE(?, name),
-                type = COALESCE(?, type),
-                status = COALESCE(?, status),
-                latitude = COALESCE(?, latitude),
-                longitude = COALESCE(?, longitude)
-            WHERE id = ?
-        ''', (payload.name, payload.type, payload.status, payload.latitude, payload.longitude, node_id))
-        conn.commit()
-        conn.close()
-        print(f"[SUCCESS] Node ID {node_id} berhasil diperbarui")
-        return {"message": "Node berhasil diperbarui"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-# 5. DELETE NODE
-@app.delete("/api/nodes/{node_id}")
-def delete_node(node_id: int):
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
-        conn.commit()
-        conn.close()
-        print(f"[SUCCESS] Node ID {node_id} berhasil dihapus")
-        return {"message": "Node berhasil dihapus"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# --- ROUTE API CABLES (POLYLINE) ---
-
-# 6. READ ALL CABLES
-@app.get("/api/cables")
-def get_cables():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cables = cursor.execute("SELECT * FROM cables").fetchall()
-    conn.close()
-    
-    features = []
-    for cable in cables:
-        geom = json.loads(cable["geojson_geometry"])
-        features.append({
-            "type": "Feature",
-            "geometry": geom,
-            "properties": {
-                "id": cable["id"],
-                "name": cable["name"],
-                "type": cable["type"],
-                "status": cable["status"]
-            }
-        })
-    return {"type": "FeatureCollection", "features": features}
-
-# 7. CREATE CABLE
-@app.post("/api/cables")
-def create_cable(cable: CableCreate):
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        geojson_geom = {
-            "type": "LineString",
-            "coordinates": cable.coordinates
-        }
-        
-        cursor.execute('''
-            INSERT INTO cables (name, type, status, geojson_geometry)
-            VALUES (?, ?, ?, ?)
-        ''', (cable.name, cable.type, cable.status, json.dumps(geojson_geom)))
-        conn.commit()
-        cable_id = cursor.lastrowid
-        conn.close()
-        print(f"[SUCCESS] Cable '{cable.name}' berhasil disimpan dengan ID: {cable_id}")
-        return {"message": "Kabel berhasil ditambahkan", "id": cable_id}
-    except Exception as e:
-        print(f"[ERROR] Cable Insert Failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# 8. UPDATE CABLE STATUS
+# 6. API Endpoint: Update Status Kabel
 @app.put("/api/cables/{cable_id}/status")
 def update_cable_status(cable_id: int, payload: StatusUpdate):
     try:
@@ -241,37 +208,148 @@ def update_cable_status(cable_id: int, payload: StatusUpdate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 9. UPDATE CABLE FULL PROPERTIES
+
+# 7. API Endpoint: Summary Statistik Dashboard
+@app.get("/api/dashboard/summary")
+def get_summary():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    total_nodes = cursor.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+    total_odp = cursor.execute("SELECT COUNT(*) FROM nodes WHERE type = 'ODP'").fetchone()[0]
+    total_incidents = cursor.execute("SELECT COUNT(*) FROM nodes WHERE status = 'Cut/Broken' OR type = 'INCIDENT'").fetchone()[0]
+    total_cables = cursor.execute("SELECT COUNT(*) FROM cables").fetchone()[0]
+    
+    conn.close()
+    return {
+        "total_nodes": total_nodes,
+        "total_odp": total_odp,
+        "total_incidents": total_incidents,
+        "total_cables": total_cables
+    }
+
+
+# --- MODEL DATA UPDATE ---
+class NodeUpdate(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+    status: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    cluster: Optional[str] = None
+    area: Optional[str] = None
+    city: Optional[str] = None
+    capacity: Optional[str] = None
+
+class CableUpdate(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+    status: Optional[str] = None
+    coordinates: Optional[List[List[float]]] = None
+    cluster: Optional[str] = None
+    area: Optional[str] = None
+    city: Optional[str] = None
+    capacity: Optional[str] = None
+
+
+# --- ENDPOINT UPDATE NODE (PUT) ---
+@app.put("/api/nodes/{node_id}")
+def update_node(node_id: int, payload: NodeUpdate):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Cek apakah node ada
+        existing = cursor.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if not existing:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Node tidak ditemukan")
+
+        # Update parsial (hanya field yang dikirim)
+        existing_dict = dict(existing)
+        name = payload.name if payload.name is not None else existing_dict["name"]
+        type_ = payload.type if payload.type is not None else existing_dict["type"]
+        status = payload.status if payload.status is not None else existing_dict["status"]
+        lat = payload.latitude if payload.latitude is not None else existing_dict["latitude"]
+        lng = payload.longitude if payload.longitude is not None else existing_dict["longitude"]
+        cluster = payload.cluster if payload.cluster is not None else existing_dict.get("cluster")
+        area = payload.area if payload.area is not None else existing_dict.get("area")
+        city = payload.city if payload.city is not None else existing_dict.get("city")
+        capacity = payload.capacity if payload.capacity is not None else existing_dict.get("capacity")
+
+        cursor.execute('''
+            UPDATE nodes 
+            SET name=?, type=?, status=?, latitude=?, longitude=?, cluster=?, area=?, city=?, capacity=?
+            WHERE id=?
+        ''', (name, type_, status, float(lat), float(lng), cluster, area, city, capacity, node_id))
+        
+        conn.commit()
+        conn.close()
+        print(f"[SUCCESS] Node ID {node_id} berhasil di-update")
+        return {"message": "Node berhasil diperbarui"}
+    except Exception as e:
+        print(f"[ERROR] Node Update Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- ENDPOINT DELETE NODE (DELETE) ---
+@app.delete("/api/nodes/{node_id}")
+def delete_node(node_id: int):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
+        conn.commit()
+        conn.close()
+        print(f"[SUCCESS] Node ID {node_id} berhasil dihapus")
+        return {"message": "Node berhasil dihapus"}
+    except Exception as e:
+        print(f"[ERROR] Node Delete Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- ENDPOINT UPDATE CABLE (PUT) ---
 @app.put("/api/cables/{cable_id}")
 def update_cable(cable_id: int, payload: CableUpdate):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        geojson_str = None
-        if payload.coordinates:
-            geojson_geom = {
-                "type": "LineString",
-                "coordinates": payload.coordinates
-            }
-            geojson_str = json.dumps(geojson_geom)
+
+        existing = cursor.execute("SELECT * FROM cables WHERE id = ?", (cable_id,)).fetchone()
+        if not existing:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Kabel tidak ditemukan")
+
+        existing_dict = dict(existing)
+        name = payload.name if payload.name is not None else existing_dict["name"]
+        type_ = payload.type if payload.type is not None else existing_dict["type"]
+        status = payload.status if payload.status is not None else existing_dict["status"]
+        cluster = payload.cluster if payload.cluster is not None else existing_dict.get("cluster")
+        area = payload.area if payload.area is not None else existing_dict.get("area")
+        city = payload.city if payload.city is not None else existing_dict.get("city")
+        capacity = payload.capacity if payload.capacity is not None else existing_dict.get("capacity")
+
+        if payload.coordinates is not None:
+            geojson_geom = json.dumps({"type": "LineString", "coordinates": payload.coordinates})
+        else:
+            geojson_geom = existing_dict["geojson_geometry"]
 
         cursor.execute('''
             UPDATE cables 
-            SET name = COALESCE(?, name),
-                type = COALESCE(?, type),
-                status = COALESCE(?, status),
-                geojson_geometry = COALESCE(?, geojson_geometry)
-            WHERE id = ?
-        ''', (payload.name, payload.type, payload.status, geojson_str, cable_id))
+            SET name=?, type=?, status=?, geojson_geometry=?, cluster=?, area=?, city=?, capacity=?
+            WHERE id=?
+        ''', (name, type_, status, geojson_geom, cluster, area, city, capacity, cable_id))
+
         conn.commit()
         conn.close()
-        print(f"[SUCCESS] Kabel ID {cable_id} berhasil diperbarui")
+        print(f"[SUCCESS] Cable ID {cable_id} berhasil di-update")
         return {"message": "Kabel berhasil diperbarui"}
     except Exception as e:
+        print(f"[ERROR] Cable Delete Failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# 10. DELETE CABLE
+
+# --- ENDPOINT DELETE CABLE (DELETE) ---
 @app.delete("/api/cables/{cable_id}")
 def delete_cable(cable_id: int):
     try:
@@ -280,34 +358,11 @@ def delete_cable(cable_id: int):
         cursor.execute("DELETE FROM cables WHERE id = ?", (cable_id,))
         conn.commit()
         conn.close()
-        print(f"[SUCCESS] Kabel ID {cable_id} berhasil dihapus")
+        print(f"[SUCCESS] Cable ID {cable_id} berhasil dihapus")
         return {"message": "Kabel berhasil dihapus"}
     except Exception as e:
+        print(f"[ERROR] Cable Delete Failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# --- ROUTE DASHBOARD SUMMARY ---
-
-# 11. GET SUMMARY
-@app.get("/api/dashboard/summary")
-def get_summary():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    total_nodes = cursor.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
-    total_odp = cursor.execute("SELECT COUNT(*) FROM nodes WHERE type = 'ODP'").fetchone()[0]
-    node_incidents = cursor.execute("SELECT COUNT(*) FROM nodes WHERE status = 'Cut/Broken' OR type = 'INCIDENT'").fetchone()[0]
-    cable_incidents = cursor.execute("SELECT COUNT(*) FROM cables WHERE status = 'Cut/Broken'").fetchone()[0]
-    total_cables = cursor.execute("SELECT COUNT(*) FROM cables").fetchone()[0]
-    
-    conn.close()
-    return {
-        "total_nodes": total_nodes,
-        "total_odp": total_odp,
-        "total_incidents": node_incidents + cable_incidents,
-        "total_cables": total_cables
-    }
-
 
 # --- MOUNT STATIC FILES (HARUS PALING BAWAH) ---
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
