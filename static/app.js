@@ -650,11 +650,28 @@ function onAssetTypeChange() {
   const selectedType = document.getElementById("asset-type").value;
   const capacitySelect = document.getElementById("asset-capacity");
 
-  // Penyesuaian pilihan kapasitas sesuai jenis aset
   if (selectedType === "ODP") {
     capacitySelect.innerHTML = `
-            <option value="8 Port">8 Port</option>
-            <option value="16 Port">16 Port</option>
+            <option value="1 In - 4 Out">1 Input - 4 Output</option>
+            <option value="1 In - 8 Out">1 Input - 8 Output</option>
+            <option value="2 In - 8 Out">2 Input - 8 Output</option>
+            <option value="2 In - 16 Out">2 Input - 16 Output</option>
+        `;
+  } else if (selectedType === "POP") {
+    capacitySelect.innerHTML = `
+            <option value="12C">12 Core (12C)</option>
+            <option value="24C">24 Core (24C)</option>
+            <option value="48C">48 Core (48C)</option>
+            <option value="96C">96 Core (96C)</option>
+            <option value="144C">144 Core (144C)</option>
+        `;
+  } else if (selectedType === "CLOSURE") {
+    capacitySelect.innerHTML = `
+            <option value="12C">12 Core (12C)</option>
+            <option value="24C">24 Core (24C)</option>
+            <option value="48C">48 Core (48C)</option>
+            <option value="96C">96 Core (96C)</option>
+            <option value="144C">144 Core (144C)</option>
         `;
   } else if (selectedType === "TIANG") {
     capacitySelect.innerHTML = `
@@ -670,6 +687,7 @@ function onAssetTypeChange() {
   } else if (selectedType === "PELANGGAN") {
     capacitySelect.innerHTML = `<option value="1 Port">1 Port</option>`;
   } else {
+    // Pilihan Kapasitas Kabel (Feeder, Distribution, Backbone, Dropcore)
     capacitySelect.innerHTML = `
             <option value="12C">12 Core (12C)</option>
             <option value="24C">24 Core (24C)</option>
@@ -749,4 +767,267 @@ function saveAssetData(e) {
         location.reload(); // Refresh peta & data
       });
   }
+}
+
+// Variable global penampung data inventory
+let allInventoryData = [];
+
+function openInventoryModal() {
+  document.getElementById("modal-inventory").style.display = "flex";
+  fetchInventoryData();
+}
+
+function closeInventoryModal() {
+  document.getElementById("modal-inventory").style.display = "none";
+}
+
+function fetchInventoryData() {
+  // Ambil data Nodes dan Cables secara paralel
+  Promise.all([
+    fetch("/api/nodes").then((r) => r.json()),
+    fetch("/api/cables").then((r) => r.json()),
+  ])
+    .then(([nodesData, cablesData]) => {
+      const nodes = (nodesData.features || []).map((f) => ({
+        ...f.properties,
+        category: "NODE",
+      }));
+      const cables = (cablesData.features || []).map((f) => ({
+        ...f.properties,
+        category: "CABLE",
+      }));
+
+      allInventoryData = [...nodes, ...cables];
+      renderInventoryTable();
+    })
+    .catch((err) => console.error("Error loading inventory:", err));
+}
+
+function renderInventoryTable() {
+  const clusterFilter = document.getElementById("filter-cluster").value;
+  const typeFilter = document.getElementById("filter-type").value;
+  const searchQuery = document
+    .getElementById("inventory-search")
+    .value.toLowerCase();
+  const tbody = document.getElementById("inventory-table-body");
+
+  tbody.innerHTML = "";
+
+  const filtered = allInventoryData.filter((item) => {
+    const matchCluster =
+      clusterFilter === "ALL" || item.cluster === clusterFilter;
+
+    let matchType = true;
+    if (typeFilter === "CABLE") {
+      matchType = item.category === "CABLE";
+    } else if (typeFilter !== "ALL") {
+      matchType = item.type === typeFilter;
+    }
+
+    const matchSearch =
+      (item.name || "").toLowerCase().includes(searchQuery) ||
+      (item.city || "").toLowerCase().includes(searchQuery);
+
+    return matchCluster && matchType && matchSearch;
+  });
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 20px; color: #94a3b8;">Tidak ada data aset ditemukan</td></tr>`;
+    return;
+  }
+
+  filtered.forEach((item) => {
+    const tr = document.createElement("tr");
+    tr.style.borderBottom = "1px solid #f1f5f9";
+
+    let badgeStatus = `#10b981`; // Active
+    if (item.status === "Maintenance") badgeStatus = `#f59e0b`;
+    if (item.status === "Cut/Broken") badgeStatus = `#ef4444`;
+
+    tr.innerHTML = `
+            <td style="padding: 10px; font-weight: 600;">${item.name}</td>
+            <td style="padding: 10px;"><span style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 11px;">${item.type}</span></td>
+            <td style="padding: 10px;">${item.cluster || "-"} / ${item.area || "-"}</td>
+            <td style="padding: 10px;">${item.city || "-"}</td>
+            <td style="padding: 10px; font-weight: 600;">${item.capacity || "-"}</td>
+            <td style="padding: 10px;">
+                <span style="color: white; background: ${badgeStatus}; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 500;">
+                    ${item.status}
+                </span>
+            </td>
+            <td style="padding: 10px; text-align: center;">
+                <button onclick="openCoreDetailModal(${item.id}, '${item.category}', '${item.name}')" 
+                        style="background: #2563eb; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px;" title="Lihat Status Core / Port">
+                    <i class="fa-solid fa-diagram-project"></i> Core/Port
+                </button>
+                <button onclick="${item.category === "NODE" ? `deleteNode(${item.id}, '${item.name}')` : `deleteCable(${item.id}, '${item.name}')`}" 
+                        style="background: #ef4444; color: white; border: none; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-left: 4px;" title="Hapus Aset">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </td>
+        `;
+    tbody.appendChild(tr);
+  });
+}
+
+// --- STANDAR 12 WARNA FIBER OPTIK (TIA/EIA-598-A) ---
+const ISO_FIBER_COLORS = [
+  { name: "Blue", hex: "#2563eb", text: "#ffffff" },
+  { name: "Orange", hex: "#f97316", text: "#ffffff" },
+  { name: "Green", hex: "#16a34a", text: "#ffffff" },
+  { name: "Brown", hex: "#78350f", text: "#ffffff" },
+  { name: "Slate", hex: "#64748b", text: "#ffffff" },
+  { name: "White", hex: "#ffffff", text: "#000000", border: "#cbd5e1" },
+  { name: "Red", hex: "#dc2626", text: "#ffffff" },
+  { name: "Black", hex: "#000000", text: "#ffffff" },
+  { name: "Yellow", hex: "#eab308", text: "#000000" },
+  { name: "Violet", hex: "#9333ea", text: "#ffffff" },
+  { name: "Rose/Pink", hex: "#ec4899", text: "#ffffff" },
+  { name: "Aqua/Turquoise", hex: "#06b6d4", text: "#ffffff" },
+];
+
+// --- FUNGSI BUKA MODAL DETAIL CORE / PORT ---
+function openCoreDetailModal(id, category, name) {
+  const modal = document.getElementById("modal-core-detail");
+  const title = document.getElementById("core-modal-title");
+  const infoContainer = document.getElementById("asset-detail-info");
+  const gridContainer = document.getElementById("core-grid-container");
+
+  modal.style.display = "flex";
+  title.innerHTML = `<i class="fa-solid fa-diagram-project"></i> Detail Status: ${name}`;
+
+  const item = allInventoryData.find(
+    (x) => x.id === id && x.category === category,
+  );
+
+  if (!item) {
+    gridContainer.innerHTML =
+      '<p style="color: #ef4444;">Data aset tidak ditemukan.</p>';
+    return;
+  }
+
+  infoContainer.innerHTML = `
+    <div><b>Tipe Aset:</b> ${item.type}</div>
+    <div><b>Cluster / Area:</b> ${item.cluster || "-"} / ${item.area || "-"}</div>
+    <div><b>Kapasitas / Konfigurasi:</b> ${item.capacity || "-"}</div>
+  `;
+
+  const assetType = (item.type || "").toUpperCase();
+
+  // KABEL, CLOSURE, dan POP menggunakan tampilan ISO Core Colors
+  if (category === "CABLE" || assetType === "CLOSURE" || assetType === "POP") {
+    renderCableCores(item, gridContainer);
+  } else if (assetType === "ODP") {
+    renderODPSplitterGrid(item, gridContainer);
+  } else {
+    renderNodePorts(item, gridContainer);
+  }
+}
+function closeCoreDetailModal() {
+  document.getElementById("modal-core-detail").style.display = "none";
+}
+
+// --- RENDER CORE KABEL (BERDASARKAN TUBE & CORE COLOR) ---
+// --- RENDER CORE KABEL / CLOSURE / POP (STANDAR TUBE & CORE COLOR ISO) ---
+function renderCableCores(item, container) {
+  const type = (item.type || "").toUpperCase();
+  let labelHeader = "Core Kabel";
+  if (type === "CLOSURE") labelHeader = "Joint Closure Core";
+  if (type === "POP") labelHeader = "ODF / Patch Panel POP Core";
+
+  let totalCores = parseInt(item.capacity) || 12;
+
+  let html = `<h4 style="margin-bottom: 12px; font-size: 14px; color: #334155;">Visualisasi ${labelHeader} (${item.capacity || totalCores + "C"})</h4>`;
+  html += `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px;">`;
+
+  for (let i = 1; i <= totalCores; i++) {
+    const colorIndex = (i - 1) % 12;
+    const tubeNo = Math.floor((i - 1) / 12) + 1;
+    const colorInfo = ISO_FIBER_COLORS[colorIndex];
+
+    html += `
+      <div style="border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px; text-align: center; background: #fafafa;">
+        <div style="font-size: 10px; color: #64748b; margin-bottom: 4px;">
+          Tube ${tubeNo} - Core ${i}
+        </div>
+        <div style="background-color: ${colorInfo.hex}; color: ${colorInfo.text}; border: ${colorInfo.border ? "1px solid " + colorInfo.border : "none"};
+                    padding: 6px; border-radius: 4px; font-weight: bold; font-size: 12px; box-shadow: inset 0 0 4px rgba(0,0,0,0.2);">
+          ${colorInfo.name}
+        </div>
+        <div style="font-size: 10px; margin-top: 5px; color: #16a34a; font-weight: 600;">Available</div>
+      </div>
+    `;
+  }
+
+  html += `</div>`;
+  container.innerHTML = html;
+}
+
+function renderODPSplitterGrid(odp, container) {
+  const cap = odp.capacity || "1 In - 8 Out";
+
+  // Parsing jumlah IN dan OUT dari string kapasitas (misal: "2 In - 8 Out")
+  let inCount = 1;
+  let outCount = 8;
+
+  const matches = cap.match(/(\d+)\s*In\s*-\s*(\d+)\s*Out/i);
+  if (matches) {
+    inCount = parseInt(matches[1]);
+    outCount = parseInt(matches[2]);
+  }
+
+  let html = `<h4 style="margin-bottom: 12px; font-size: 14px; color: #334155;">Konfigurasi Splitter ODP (${cap})</h4>`;
+
+  // --- 1. SECTION INPUT PORTS ---
+  html += `<div style="margin-bottom: 16px; background: #f0fdf4; border: 1px solid #bbf7d0; padding: 12px; border-radius: 8px;">`;
+  html += `<div style="font-size: 12px; font-weight: bold; color: #166534; margin-bottom: 8px;"><i class="fa-solid fa-arrow-down-to-line"></i> Input Ports (${inCount} IN)</div>`;
+  html += `<div style="display: flex; gap: 10px;">`;
+  for (let i = 1; i <= inCount; i++) {
+    html += `
+      <div style="border: 2px solid #16a34a; background: #ffffff; border-radius: 6px; padding: 8px 14px; text-align: center;">
+        <div style="font-size: 10px; font-weight: bold; color: #15803d;">IN-${i}</div>
+        <i class="fa-solid fa-plug-circle-bolt" style="font-size: 16px; color: #16a34a; margin: 4px 0;"></i>
+        <div style="font-size: 10px; color: #166534;">Connected</div>
+      </div>
+    `;
+  }
+  html += `</div></div>`;
+
+  // --- 2. SECTION OUTPUT PORTS ---
+  html += `<div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px; border-radius: 8px;">`;
+  html += `<div style="font-size: 12px; font-weight: bold; color: #334155; margin-bottom: 8px;"><i class="fa-solid fa-network-wired"></i> Output Ports (${outCount} OUT)</div>`;
+  html += `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(85px, 1fr)); gap: 10px;">`;
+  for (let o = 1; o <= outCount; o++) {
+    html += `
+      <div style="border: 1px dashed #cbd5e1; background: #ffffff; border-radius: 6px; padding: 8px; text-align: center;">
+        <div style="font-size: 10px; font-weight: bold; color: #64748b;">OUT-${o}</div>
+        <i class="fa-solid fa-plug" style="font-size: 16px; color: #94a3b8; margin: 4px 0;"></i>
+        <div style="font-size: 9px; color: #94a3b8;">Idle</div>
+      </div>
+    `;
+  }
+  html += `</div></div>`;
+
+  container.innerHTML = html;
+}
+
+// --- RENDER PORT GRID ODP / NODE ---
+function renderNodePorts(node, container) {
+  let totalPorts = parseInt(node.capacity) || 8;
+
+  let html = `<h4 style="margin-bottom: 12px; font-size: 14px; color: #334155;">Grid Port ${node.type} (${totalPorts} Port)</h4>`;
+  html += `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 10px;">`;
+
+  for (let p = 1; p <= totalPorts; p++) {
+    html += `
+      <div style="border: 2px solid #cbd5e1; border-radius: 6px; padding: 10px; text-align: center; background: #ffffff;">
+        <div style="font-size: 11px; font-weight: bold; color: #475569; margin-bottom: 4px;">Port ${p}</div>
+        <i class="fa-solid fa-plug" style="font-size: 18px; color: #94a3b8;"></i>
+        <div style="font-size: 10px; margin-top: 6px; color: #64748b;">Idle</div>
+      </div>
+    `;
+  }
+
+  html += `</div>`;
+  container.innerHTML = html;
 }

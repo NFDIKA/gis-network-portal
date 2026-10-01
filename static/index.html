@@ -112,53 +112,125 @@
 
     <!-- Modal Asset Inventory -->
     <div id="modal-inventory" class="modal-overlay" style="display: none">
-      <div class="modal-container">
+      <div class="modal-container" style="max-width: 900px; height: 80vh">
         <div class="modal-header">
-          <h3>
-            <i class="fa-solid fa-boxes-stacked"></i> Asset Inventory Data Grid
-          </h3>
+          <h3><i class="fa-solid fa-boxes-stacked"></i> Asset Inventory</h3>
           <button class="btn-close" onclick="closeInventoryModal()">
             &times;
           </button>
         </div>
 
-        <div class="modal-toolbar">
-          <div class="search-box">
-            <i class="fa-solid fa-magnifying-glass"></i>
+        <div
+          class="modal-body"
+          style="
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            height: calc(100% - 60px);
+          "
+        >
+          <!-- Control Bar: Filter & Search -->
+          <div
+            style="
+              display: flex;
+              gap: 10px;
+              align-items: center;
+              justify-content: space-between;
+            "
+          >
+            <div style="display: flex; gap: 8px">
+              <select
+                id="filter-cluster"
+                onchange="renderInventoryTable()"
+                style="
+                  padding: 6px 10px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                  font-size: 13px;
+                "
+              >
+                <option value="ALL">Semua Cluster</option>
+                <option value="EKO">Cluster EKO</option>
+                <option value="WKO">Cluster WKO</option>
+              </select>
+
+              <select
+                id="filter-type"
+                onchange="renderInventoryTable()"
+                style="
+                  padding: 6px 10px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                  font-size: 13px;
+                "
+              >
+                <option value="ALL">Semua Tipe Aset</option>
+                <option value="ODP">ODP</option>
+                <option value="POP">POP</option>
+                <option value="CLOSURE">Closure</option>
+                <option value="TIANG">Tiang</option>
+                <option value="SLACK">Slack Kabel</option>
+                <option value="CABLE">Kabel / Jalur</option>
+              </select>
+            </div>
+
             <input
               type="text"
               id="inventory-search"
-              placeholder="Cari nama aset, tipe, atau status..."
-              onkeyup="filterInventoryTable()"
+              oninput="renderInventoryTable()"
+              placeholder="Cari nama aset / kota..."
+              style="
+                padding: 6px 10px;
+                width: 220px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                font-size: 13px;
+              "
             />
           </div>
-          <select id="inventory-filter-type" onchange="filterInventoryTable()">
-            <option value="ALL">Semua Kategori</option>
-            <option value="ODP">ODP Only</option>
-            <option value="POP">POP / Headend</option>
-            <option value="CLOSURE">Joint Closure</option>
-            <option value="TIANG">Tiang</option>
-            <option value="SLACK">Slack Kabel</option>
-            <option value="CABLE">Semua Kabel</option>
-          </select>
-        </div>
 
-        <div class="modal-body">
-          <table class="data-table" id="inventory-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Nama Aset</th>
-                <th>Kategori</th>
-                <th>Status</th>
-                <th>Detail / Koordinat</th>
-                <th>Aksi</th>
-              </tr>
-            </thead>
-            <tbody id="inventory-table-body">
-              <!-- Data dimasukkan via JavaScript -->
-            </tbody>
-          </table>
+          <!-- Table Wrapper -->
+          <div
+            style="
+              flex: 1;
+              overflow-y: auto;
+              border: 1px solid #e2e8f0;
+              border-radius: 6px;
+            "
+          >
+            <table
+              style="
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 13px;
+                text-align: left;
+              "
+            >
+              <thead
+                style="
+                  background: #f8fafc;
+                  position: sticky;
+                  top: 0;
+                  border-bottom: 2px solid #e2e8f0;
+                  z-index: 10;
+                "
+              >
+                <tr>
+                  <th style="padding: 10px">Aset</th>
+                  <th style="padding: 10px">Tipe</th>
+                  <th style="padding: 10px">Cluster / Area</th>
+                  <th style="padding: 10px">Kota / Kab</th>
+                  <th style="padding: 10px">Kapasitas</th>
+                  <th style="padding: 10px">Status</th>
+                  <th style="padding: 10px; text-align: center">Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="inventory-table-body">
+                <!-- Data baris tabel di-render via JavaScript -->
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -358,6 +430,44 @@
             </button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- Modal Detail Core / Port Grid -->
+    <div id="modal-core-detail" class="modal-overlay" style="display: none">
+      <div class="modal-container" style="max-width: 800px; max-height: 85vh">
+        <div class="modal-header">
+          <h3 id="core-modal-title">
+            <i class="fa-solid fa-diagram-project"></i> Detail Core / Port Aset
+          </h3>
+          <button class="btn-close" onclick="closeCoreDetailModal()">
+            &times;
+          </button>
+        </div>
+
+        <div class="modal-body" style="padding: 20px; overflow-y: auto">
+          <!-- Header Info Aset -->
+          <div
+            id="asset-detail-info"
+            style="
+              background: #f8fafc;
+              padding: 12px;
+              border-radius: 6px;
+              margin-bottom: 20px;
+              font-size: 13px;
+              display: grid;
+              grid-template-columns: repeat(3, 1fr);
+              gap: 10px;
+            "
+          >
+            <!-- Diisi secara dinamis oleh JS -->
+          </div>
+
+          <!-- Container Visualisasi Grid -->
+          <div id="core-grid-container">
+            <!-- Render Tube/Core atau Port Grid di sini -->
+          </div>
+        </div>
       </div>
     </div>
 
