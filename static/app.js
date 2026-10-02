@@ -28,6 +28,7 @@ const closureGroup = L.layerGroup().addTo(map);
 const pelangganGroup = L.layerGroup().addTo(map);
 const tiangGroup = L.layerGroup().addTo(map);
 const slackGroup = L.layerGroup().addTo(map);
+const hhGroup = L.layerGroup().addTo(map);
 const incidentGroup = L.layerGroup().addTo(map);
 
 const backboneGroup = L.layerGroup().addTo(map);
@@ -67,6 +68,7 @@ const overlayMaps = {
   ODP: odpGroup,
   Pelanggan: pelangganGroup,
   "Tiang (7m/9m)": tiangGroup,
+  "Handhole (HH)": hhGroup,
   "Slack Kabel": slackGroup,
   "Titik Incident": incidentGroup,
 };
@@ -81,7 +83,7 @@ L.control
   .addTo(map);
 
 // Setup Toolbar Draw
-const drawControl = new L.Control.Draw({
+let drawControl = new L.Control.Draw({
   draw: {
     polygon: false,
     circle: false,
@@ -104,9 +106,11 @@ const NODE_TYPES = [
   "CLOSURE",
   "PELANGGAN",
   "TIANG",
+  "HH",
   "SLACK",
   "INCIDENT",
 ];
+const NO_PORT_TYPES = ["TIANG", "HH"]; // aset pasif: tidak punya port/core
 const CABLE_TYPES = ["Backbone", "Feeder", "Distribution", "Drop"];
 
 const markersMap = {}; // "node:5" / "cable:2" / "incident:1" -> layer Leaflet
@@ -189,6 +193,7 @@ const IMPACT_NODE_ORDER = [
   ["ODP", "ODP"],
   ["PELANGGAN", "Pelanggan"],
   ["TIANG", "Tiang"],
+  ["HH", "Handhole (HH)"],
   ["SLACK", "Slack"],
 ];
 
@@ -222,7 +227,7 @@ function impactNamesText(im, limit = 8) {
 
 // Semua request lewat sini: error server (termasuk 422/409) menjadi pesan yang terbaca
 async function apiRequest(url, method = "GET", body) {
-  const options = { method, headers: {} };
+  const options = { method, headers: {}, credentials: "same-origin" };
   if (body !== undefined) {
     options.headers["Content-Type"] = "application/json";
     options.body = JSON.stringify(body);
@@ -233,6 +238,14 @@ async function apiRequest(url, method = "GET", body) {
     data = await res.json();
   } catch (_) {
     /* respons tanpa body JSON */
+  }
+  if (res.status === 401 && !url.startsWith("/api/auth/login")) {
+    // Sesi habis / belum login: kembali ke layar login (data peta tidak ditampilkan lagi)
+    if (!url.startsWith("/api/auth/me"))
+      showLogin("Sesi berakhir, silakan masuk lagi.");
+    const e = new Error((data && data.detail) || "Belum login");
+    e.status = 401;
+    throw e;
   }
   if (!res.ok) {
     let msg = `Permintaan gagal (${res.status})`;
@@ -298,6 +311,10 @@ function createCustomIcon(type, status, repairKind) {
         iconClass = "fa-solid fa-ellipsis-vertical";
         bgClass = "icon-tiang";
         break;
+      case "HH":
+        iconClass = "fa-solid fa-square-h";
+        bgClass = "icon-hh";
+        break;
       case "SLACK":
         iconClass = "fa-solid fa-circle";
         bgClass = "icon-slack";
@@ -313,18 +330,212 @@ function createCustomIcon(type, status, repairKind) {
   });
 }
 
+// ---- Format & metadata jenis aset (dipakai kartu, ringkasan, dan inventory) ----
+function fmtLen(m) {
+  if (m === null || m === undefined || m === "") return "-";
+  const n = Number(m);
+  if (!Number.isFinite(n)) return "-";
+  if (n >= 1000) return (n / 1000).toFixed(2).replace(".", ",") + " km";
+  return Math.round(n) + " m";
+}
+const NODE_TYPE_META = {
+  POP: { label: "POP / Headend", color: "#8b5cf6", icon: "fa-server" },
+  CLOSURE: { label: "Joint Closure", color: "#f59e0b", icon: "fa-link" },
+  ODP: { label: "ODP", color: "#10b981", icon: "fa-box-archive" },
+  HH: { label: "Handhole (HH)", color: "#0f766e", icon: "fa-square-h" },
+  TIANG: { label: "Tiang", color: "#475569", icon: "fa-ellipsis-vertical" },
+  SLACK: { label: "Slack Kabel", color: "#111827", icon: "fa-circle" },
+  PELANGGAN: { label: "Pelanggan", color: "#06b6d4", icon: "fa-house-user" },
+  INCIDENT: {
+    label: "Titik Incident",
+    color: "#ef4444",
+    icon: "fa-triangle-exclamation",
+  },
+};
+const CABLE_TYPE_META = {
+  Backbone: { color: "#2638dc", label: "Backbone" },
+  Feeder: { color: "#ca8a04", label: "Feeder" },
+  Distribution: { color: "#0891b2", label: "Distribution" },
+  Drop: { color: "#d97706", label: "Drop" },
+};
+const INSTALL_LABEL = {
+  Udara: "Kabel Udara",
+  Tanah: "Kabel Tanah",
+  "Belum diisi": "Belum diisi",
+};
+
+let lastSummary = null;
+
 function loadDashboardSummary() {
-  apiRequest("/api/dashboard/summary")
+  return apiRequest("/api/dashboard/summary")
     .then((data) => {
-      const set = (id, val) => {
+      lastSummary = data;
+      const set = (id, val, html) => {
         const el = document.getElementById(id);
-        if (el) el.innerText = val;
+        if (!el) return;
+        if (html) el.innerHTML = val;
+        else el.innerText = val;
       };
       set("stat-odp", data.total_odp);
       set("stat-cables", data.total_cables);
       set("stat-incidents", data.total_incidents);
+      const odp = (data.nodes_by_type || {}).ODP;
+      if (odp) {
+        set(
+          "stat-odp-sub",
+          `${odp.Active} aktif` +
+            (odp["Cut/Broken"]
+              ? ` &middot; <span class="bad">${odp["Cut/Broken"]} gangguan</span>`
+              : ""),
+          true,
+        );
+      }
+      if (data.cables)
+        set("stat-cables-sub", `${fmtLen(data.cables.length_m)} total`);
+      set(
+        "stat-incidents-sub",
+        `${Number(data.tickets_open || 0)} tiket aktif`,
+      );
+      set(
+        "stat-assets",
+        Number(data.total_nodes || 0) + Number(data.total_cables || 0),
+      );
+      set(
+        "stat-assets-sub",
+        `${Number(data.total_nodes || 0)} node &middot; ${Number(data.total_cables || 0)} kabel`,
+        true,
+      );
+      renderInventoryChips();
+      return data;
     })
     .catch((err) => console.error("Gagal memuat ringkasan:", err));
+}
+
+// ---- Sidebar: sembunyikan / tampilkan agar peta lebih luas ----
+const SIDEBAR_KEY = "netgis_sidebar_collapsed";
+function setSidebarCollapsed(collapsed, persist = true) {
+  const app = document.querySelector(".app-container");
+  if (!app) return;
+  app.classList.toggle("sidebar-collapsed", !!collapsed);
+  const btn = document.getElementById("sidebar-toggle");
+  if (btn) btn.setAttribute("aria-pressed", collapsed ? "true" : "false");
+  if (persist) {
+    try {
+      localStorage.setItem(SIDEBAR_KEY, collapsed ? "1" : "0");
+    } catch (_) {
+      /* penyimpanan tidak tersedia */
+    }
+  }
+  // peta harus menghitung ulang ukurannya setelah animasi lebar sidebar selesai
+  const fix = () => {
+    if (map && typeof map.invalidateSize === "function") map.invalidateSize();
+  };
+  fix();
+  setTimeout(fix, 300);
+}
+function toggleSidebar() {
+  const app = document.querySelector(".app-container");
+  setSidebarCollapsed(!(app && app.classList.contains("sidebar-collapsed")));
+}
+function initSidebarState() {
+  let saved = null;
+  try {
+    saved = localStorage.getItem(SIDEBAR_KEY);
+  } catch (_) {}
+  if (saved === "1") setSidebarCollapsed(true, false);
+}
+
+// ---- Ringkasan Aset: kartu per jenis, klik = daftar di Inventory ----
+function openSummaryModal() {
+  document.getElementById("modal-summary").style.display = "flex";
+  if (lastSummary) renderSummaryModal(lastSummary);
+  loadDashboardSummary().then((d) => {
+    if (d) renderSummaryModal(d);
+  });
+}
+function closeSummaryModal() {
+  document.getElementById("modal-summary").style.display = "none";
+}
+function openSummaryList(opts) {
+  closeSummaryModal();
+  openInventoryModal(opts);
+}
+
+function renderSummaryModal(d) {
+  const byType = d.nodes_by_type || {};
+  const known = Object.keys(NODE_TYPE_META);
+  const order = known.concat(
+    Object.keys(byType).filter((t) => t && !known.includes(t)),
+  );
+  const cards = order
+    .filter((t) => t !== "INCIDENT" || (byType[t] && byType[t].total > 0))
+    .map((t) => {
+      const st = byType[t] || {
+        total: 0,
+        Active: 0,
+        Maintenance: 0,
+        "Cut/Broken": 0,
+      };
+      const meta = NODE_TYPE_META[t] || {
+        label: t,
+        color: "#64748b",
+        icon: "fa-location-dot",
+      };
+      const tot = st.total || 0;
+      const pct = (n) => (tot ? ((n / tot) * 100).toFixed(1) : 0);
+      return `<button type="button" class="sum-card" onclick="openSummaryList({ type: '${escapeHtml(t)}' })">
+      <div class="sum-card-top">
+        <span class="sum-ico" style="background:${meta.color}"><i class="fa-solid ${meta.icon}"></i></span>
+        <div><div class="sum-count">${Number(tot)}</div><div class="sum-label">${escapeHtml(meta.label)}</div></div>
+      </div>
+      <div class="sum-bar" title="Active / Maintenance / Cut-Broken">${tot ? `<i class="ok" style="width:${pct(st.Active)}%"></i><i class="mt" style="width:${pct(st.Maintenance)}%"></i><i class="bad" style="width:${pct(st["Cut/Broken"])}%"></i>` : ""}</div>
+      <div class="sum-legend"><span><b>${Number(st.Active)}</b> aktif</span><span><b>${Number(st.Maintenance)}</b> maintenance</span><span class="bad"><b>${Number(st["Cut/Broken"])}</b> putus</span></div>
+    </button>`;
+    });
+  document.getElementById("summary-nodes").innerHTML = cards.join("");
+
+  const c = d.cables || {
+    total: 0,
+    length_m: 0,
+    by_type: {},
+    by_installation: {},
+  };
+  const maxT = Math.max(
+    1,
+    ...Object.values(c.by_type || {}).map((v) => v.length_m),
+  );
+  const maxI = Math.max(
+    1,
+    ...Object.values(c.by_installation || {}).map((v) => v.length_m),
+  );
+  const typeRows = Object.entries(c.by_type || {})
+    .map(([t, v]) => {
+      const color = (CABLE_TYPE_META[t] || { color: "#64748b" }).color;
+      return `<button type="button" class="sum-row" onclick="openSummaryList({ type: '${escapeHtml(t)}', sort: 'length', order: 'desc' })">
+      <span class="dot" style="background:${color}"></span>
+      <span class="nm">${escapeHtml(t)}<small>${Number(v.count)} kabel</small></span><span class="ln">${fmtLen(v.length_m)}</span>
+      <span class="meter"><i style="width:${((v.length_m / maxT) * 100).toFixed(1)}%;background:${color}"></i></span></button>`;
+    })
+    .join("");
+  const instRows = Object.entries(c.by_installation || {})
+    .map(([k, v]) => {
+      const arg = k === "Belum diisi" ? "NONE" : k;
+      return `<button type="button" class="sum-row" onclick="openSummaryList({ type: 'CABLE', installation: '${arg}', sort: 'length', order: 'desc' })">
+      <span class="dot" style="background:${k === "Udara" ? "#0ea5e9" : k === "Tanah" ? "#a16207" : "#94a3b8"}"></span>
+      <span class="nm">${escapeHtml(INSTALL_LABEL[k] || k)}<small>${Number(v.count)} kabel</small></span><span class="ln">${fmtLen(v.length_m)}</span>
+      <span class="meter"><i style="width:${((v.length_m / maxI) * 100).toFixed(1)}%"></i></span></button>`;
+    })
+    .join("");
+  document.getElementById("summary-cables").innerHTML = `<div class="sum-cable">
+    <div class="sum-cable-head">
+      <span class="sum-ico"><i class="fa-solid fa-route"></i></span>
+      <div><div class="sum-cable-total">${fmtLen(c.length_m)}</div><div class="sum-label">Total panjang dari ${Number(c.total)} kabel${c.broken ? ` &middot; <span style="color:#ef4444;font-weight:600">${Number(c.broken)} putus</span>` : ""}</div></div>
+      <button type="button" class="inv-btn primary" onclick="openSummaryList({ type: 'CABLE', sort: 'length', order: 'desc' })"><i class="fa-solid fa-list"></i> Lihat semua kabel</button>
+    </div>
+    <div class="sum-cable-cols">
+      <div><h5>Per jenis kabel</h5>${typeRows}</div>
+      <div><h5>Per cara pemasangan</h5>${instRows}</div>
+    </div></div>`;
 }
 
 function openAssetPopup(key) {
@@ -395,6 +606,9 @@ function addNodeToGroup(marker, props) {
     case "TIANG":
       tiangGroup.addLayer(marker);
       break;
+    case "HH":
+      hhGroup.addLayer(marker);
+      break;
     case "SLACK":
       slackGroup.addLayer(marker);
       break;
@@ -437,15 +651,34 @@ function renderNodes(data) {
         }
 
         <div class="popup-actions">
-            <button class="btn-status ${btnClass}" onclick="updateNodeStatus(${id}, '${nextStatus}')">
+            ${
+              can("status.write")
+                ? `<button class="btn-status ${btnClass}" onclick="updateNodeStatus(${id}, '${nextStatus}')">
                 <i class="fa-solid fa-power-off"></i> ${btnText}
-            </button>
-            <button class="btn-status btn-warning" onclick="editNodeProperties(${id})">
+            </button>`
+                : ""
+            }
+            ${
+              can("asset.write")
+                ? `<button class="btn-status btn-warning" onclick="editNodeProperties(${id})">
                 <i class="fa-solid fa-pen"></i> Edit Info Aset
-            </button>
-            <button class="btn-status btn-outline-danger" onclick="deleteNode(${id})">
+            </button>`
+                : ""
+            }
+            ${
+              can("asset.delete")
+                ? `<button class="btn-status btn-outline-danger" onclick="deleteNode(${id})">
                 <i class="fa-solid fa-trash"></i> Hapus Aset
-            </button>
+            </button>`
+                : ""
+            }
+            ${
+              can("audit.view")
+                ? `<button class="btn-status btn-warning" onclick="openAuditModal('NODE', ${id})">
+                <i class="fa-solid fa-clock-rotate-left"></i> Riwayat
+            </button>`
+                : ""
+            }
         </div>
       `);
 
@@ -501,15 +734,19 @@ function renderIncidents(data) {
             <i class="fa-solid fa-list-check"></i> Detail &amp; Perbaikan
           </button>
           ${
-            !isResolved
+            !isResolved && can("incident.write")
               ? `<button class="btn-status btn-success" onclick="resolveIncident(${id})">
                   <i class="fa-solid fa-check-circle"></i> Selesaikan Tiket
                 </button>`
               : ""
           }
-          <button class="btn-status btn-outline-danger" onclick="deleteIncidentRecord(${id})">
+          ${
+            can("incident.delete")
+              ? `<button class="btn-status btn-outline-danger" onclick="deleteIncidentRecord(${id})">
             <i class="fa-solid fa-trash"></i> Hapus Tiket
-          </button>
+          </button>`
+              : ""
+          }
         </div>
       `);
 
@@ -526,6 +763,7 @@ function renderCables(data) {
       return getCableStyle(
         normalizeCableType(feature.properties.type),
         feature.properties.status,
+        feature.properties.installation,
       );
     },
     onEachFeature: function (feature, layer) {
@@ -552,18 +790,38 @@ function renderCables(data) {
         <div class="popup-header">${escapeHtml(props.name)}</div>
         <div class="popup-row"><span>Tipe Jalur:</span> <b>Kabel ${escapeHtml(type)}</b></div>
         <div class="popup-row"><span>Panjang Kabel:</span> <b>${formattedLength}</b></div>
+        <div class="popup-row"><span>Pemasangan:</span> <b>${props.installation === "Udara" ? "Kabel Udara" : props.installation === "Tanah" ? "Kabel Tanah" : "Belum diisi"}</b></div>
         <div class="popup-row"><span>Status:</span> <b>${escapeHtml(props.status)}</b></div>
 
         <div class="popup-actions">
-            <button class="btn-status ${btnClass}" onclick="updateCableStatus(${id}, '${nextStatus}')">
+            ${
+              can("status.write")
+                ? `<button class="btn-status ${btnClass}" onclick="updateCableStatus(${id}, '${nextStatus}')">
                 <i class="fa-solid fa-power-off"></i> ${btnText}
-            </button>
-            <button class="btn-status btn-warning" onclick="editCableProperties(${id})">
+            </button>`
+                : ""
+            }
+            ${
+              can("asset.write")
+                ? `<button class="btn-status btn-warning" onclick="editCableProperties(${id})">
                 <i class="fa-solid fa-pen"></i> Edit Info Kabel
-            </button>
-            <button class="btn-status btn-outline-danger" onclick="deleteCable(${id})">
+            </button>`
+                : ""
+            }
+            ${
+              can("asset.delete")
+                ? `<button class="btn-status btn-outline-danger" onclick="deleteCable(${id})">
                 <i class="fa-solid fa-trash"></i> Hapus Kabel
-            </button>
+            </button>`
+                : ""
+            }
+            ${
+              can("audit.view")
+                ? `<button class="btn-status btn-warning" onclick="openAuditModal('CABLE', ${id})">
+                <i class="fa-solid fa-clock-rotate-left"></i> Riwayat
+            </button>`
+                : ""
+            }
         </div>
       `);
 
@@ -602,8 +860,7 @@ function loadData() {
     .catch((err) => console.error("Gagal memuat data peta:", err));
 }
 
-// Panggil fungsi pemuatan data awal
-loadData();
+// Pemuatan data awal dilakukan setelah login terverifikasi (lihat bootAuth di bagian AUTENTIKASI)
 
 // --- EVENT LISTENER: LEAFLET DRAW (EDIT & CREATE) ---
 map.on(L.Draw.Event.EDITED, function (e) {
@@ -637,9 +894,12 @@ map.on(L.Draw.Event.CREATED, function (event) {
 
   if (type === "marker") {
     const latlng = layer.getLatLng();
-    const action = confirm(
-      "Klik OK untuk Tambah Asset Normal (ODP/POP/Tiang/dll)\nKlik CANCEL untuk Buat Tiket Incident Baru",
-    );
+    // Teknisi tidak boleh menambah aset: langsung ke form tiket
+    const action = can("asset.write")
+      ? confirm(
+          "Klik OK untuk Tambah Asset Normal (ODP/POP/Tiang/dll)\nKlik CANCEL untuk Buat Tiket Incident Baru",
+        )
+      : false;
     if (action) {
       openAddAssetModal("NODE", latlng.lat, latlng.lng);
     } else {
@@ -652,8 +912,25 @@ map.on(L.Draw.Event.CREATED, function (event) {
 });
 
 // --- MODAL ASSET INVENTORY LOGIC ---
-function openInventoryModal() {
+function openInventoryModal(opts) {
+  // dipanggil dari onclick tanpa argumen (menu) atau dengan filter awal (kartu ringkasan)
+  const o = opts && typeof opts === "object" && !opts.target ? opts : null;
   document.getElementById("modal-inventory").style.display = "flex";
+  if (o) {
+    const setv = (id, v) => {
+      const el = document.getElementById(id);
+      if (el) el.value = v;
+    };
+    setv("filter-type", o.type || "ALL");
+    setv("filter-installation", o.installation || "ALL");
+    setv("filter-status", o.status || "ALL");
+    setv("inventory-search", "");
+    inventoryState.sort = o.sort || "name";
+    inventoryState.order = o.order || "asc";
+    inventoryState.page = 1;
+  }
+  renderInventoryChips();
+  if (!lastSummary) loadDashboardSummary();
   fetchInventoryData();
 }
 
@@ -767,6 +1044,9 @@ function renderInventoryTable() {
     q: document.getElementById("inventory-search").value.trim(),
     cluster: document.getElementById("filter-cluster").value,
     type: document.getElementById("filter-type").value,
+    status: (document.getElementById("filter-status") || {}).value || "ALL",
+    installation:
+      (document.getElementById("filter-installation") || {}).value || "ALL",
     sort: inventoryState.sort,
     order: inventoryState.order,
     page: String(inventoryState.page),
@@ -782,63 +1062,241 @@ function renderInventoryTable() {
       inventoryState.pages = res.pages;
       inventoryState.total = res.total;
       updateInventoryPager();
+      renderInventoryChips();
+      renderInventorySummary(res);
       drawInventoryRows(res.items || [], tbody);
     })
     .catch((err) => {
       console.error("Gagal memuat inventory:", err);
-      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:20px; color:#ef4444;">Gagal memuat data: ${escapeHtml(err.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:20px; color:#ef4444;">Gagal memuat data: ${escapeHtml(err.message)}</td></tr>`;
     });
+}
+
+function isCableFilter(t) {
+  return t === "CABLE" || CABLE_TYPES.includes(t);
+}
+
+function setInventoryType(t) {
+  const sel = document.getElementById("filter-type");
+  if (sel) sel.value = t;
+  if (!isCableFilter(t)) {
+    const inst = document.getElementById("filter-installation");
+    if (inst) inst.value = "ALL";
+    if (
+      inventoryState.sort === "length" ||
+      inventoryState.sort === "installation"
+    ) {
+      inventoryState.sort = "name";
+      inventoryState.order = "asc";
+    }
+  }
+  inventoryState.page = 1;
+  renderInventoryChips();
+  renderInventoryTable();
+}
+
+function setInventoryInstall(v) {
+  const inst = document.getElementById("filter-installation");
+  if (inst) inst.value = v;
+  inventoryState.page = 1;
+  renderInventoryChips();
+  renderInventoryTable();
+}
+
+// Chip jenis aset (+ jumlah) dan, untuk kabel, chip jenis kabel & cara pemasangan
+function renderInventoryChips() {
+  const box = document.getElementById("inv-type-chips");
+  if (!box) return;
+  const cur = (document.getElementById("filter-type") || {}).value || "ALL";
+  const inst =
+    (document.getElementById("filter-installation") || {}).value || "ALL";
+  const d = lastSummary || {};
+  const bt = d.nodes_by_type || {};
+  const cab = d.cables || {};
+  const cnt = (n) =>
+    n === undefined || n === null ? "" : `<span class="n">${Number(n)}</span>`;
+  const chip = (label, value, count, active, fn) =>
+    `<button type="button" class="inv-chip${active ? " active" : ""}" onclick="${fn}('${value}')" role="tab" aria-selected="${active}">${label}${cnt(count)}</button>`;
+  const total = lastSummary
+    ? Number(d.total_nodes || 0) + Number(d.total_cables || 0)
+    : undefined;
+  let html = chip("Semua", "ALL", total, cur === "ALL", "setInventoryType");
+  ["POP", "CLOSURE", "ODP", "HH", "TIANG", "SLACK", "PELANGGAN"].forEach(
+    (t) => {
+      html += chip(
+        NODE_TYPE_META[t].label,
+        t,
+        lastSummary ? (bt[t] ? bt[t].total : 0) : undefined,
+        cur === t,
+        "setInventoryType",
+      );
+    },
+  );
+  html += chip(
+    "Kabel",
+    "CABLE",
+    lastSummary ? cab.total : undefined,
+    isCableFilter(cur),
+    "setInventoryType",
+  );
+  if ((bt.INCIDENT && bt.INCIDENT.total) || cur === "INCIDENT") {
+    html += chip(
+      "Titik Incident",
+      "INCIDENT",
+      bt.INCIDENT ? bt.INCIDENT.total : 0,
+      cur === "INCIDENT",
+      "setInventoryType",
+    );
+  }
+  box.innerHTML = html;
+
+  const sub = document.getElementById("inv-cable-filters");
+  if (sub) sub.style.display = isCableFilter(cur) ? "flex" : "none";
+  const types = document.getElementById("inv-cable-types");
+  if (types) {
+    let th = chip(
+      "Semua jenis",
+      "CABLE",
+      lastSummary ? cab.total : undefined,
+      cur === "CABLE",
+      "setInventoryType",
+    );
+    CABLE_TYPES.forEach((t) => {
+      th += chip(
+        t,
+        t,
+        lastSummary && cab.by_type
+          ? (cab.by_type[t] || { count: 0 }).count
+          : undefined,
+        cur === t,
+        "setInventoryType",
+      );
+    });
+    types.innerHTML = th;
+  }
+  const insts = document.getElementById("inv-install-chips");
+  if (insts) {
+    const bi = cab.by_installation || {};
+    const ic = (k) => (lastSummary ? (bi[k] || { count: 0 }).count : undefined);
+    insts.innerHTML =
+      chip("Semua", "ALL", undefined, inst === "ALL", "setInventoryInstall") +
+      chip(
+        "Udara",
+        "Udara",
+        ic("Udara"),
+        inst === "Udara",
+        "setInventoryInstall",
+      ) +
+      chip(
+        "Tanah",
+        "Tanah",
+        ic("Tanah"),
+        inst === "Tanah",
+        "setInventoryInstall",
+      ) +
+      chip(
+        "Belum diisi",
+        "NONE",
+        ic("Belum diisi"),
+        inst === "NONE",
+        "setInventoryInstall",
+      );
+  }
+  const table = document.getElementById("inventory-table");
+  if (table && table.classList)
+    table.classList.toggle("cable-mode", isCableFilter(cur));
+}
+
+function renderInventorySummary(res) {
+  const el = document.getElementById("inv-summary");
+  if (!el) return;
+  const sm = res.summary || {};
+  let html = `<span><b>${Number(res.total)}</b> aset ditemukan</span>`;
+  if (sm.cables)
+    html += `<span><b>${Number(sm.cables)}</b> kabel &middot; total panjang <b>${fmtLen(sm.length_m)}</b></span>`;
+  el.innerHTML = html;
 }
 
 function drawInventoryRows(items, tbody) {
   tbody.innerHTML = "";
 
   if (items.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 20px; color: #94a3b8;">Tidak ada data aset ditemukan</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="inv-empty"><i class="fa-regular fa-folder-open" style="font-size:22px;display:block;margin-bottom:8px;"></i>Tidak ada aset yang cocok dengan filter ini</td></tr>`;
     return;
   }
 
   items.forEach((item) => {
     const tr = document.createElement("tr");
-    tr.style.borderBottom = "1px solid #f1f5f9";
-
-    let badgeStatus = `#10b981`; // Active
-    if (item.status === "Maintenance") badgeStatus = `#f59e0b`;
-    if (item.status === "Cut/Broken") badgeStatus = `#ef4444`;
-
+    const isCable = item.category === "CABLE";
     const id = Number(item.id);
     const kind = item.category.toLowerCase(); // "node" / "cable"
-    const deleteCall =
-      item.category === "NODE" ? `deleteNode(${id})` : `deleteCable(${id})`;
+    const typeKey = (item.type || "").toUpperCase();
+    const meta = isCable
+      ? {
+          color: (
+            CABLE_TYPE_META[normalizeCableType(item.type)] || {
+              color: "#64748b",
+            }
+          ).color,
+          icon: "fa-route",
+        }
+      : NODE_TYPE_META[typeKey] || {
+          color: "#64748b",
+          icon: "fa-location-dot",
+        };
+    const st =
+      item.status === "Maintenance"
+        ? ["mt", "Maintenance"]
+        : item.status === "Cut/Broken"
+          ? ["bad", "Cut/Broken"]
+          : ["ok", item.status || "Active"];
+    const deleteCall = isCable ? `deleteCable(${id})` : `deleteNode(${id})`;
+    const editCall = isCable
+      ? `editCableProperties(${id})`
+      : `editNodeProperties(${id})`;
+    const inst = item.installation;
+    const instHtml =
+      inst === "Udara"
+        ? `<span class="inv-install udara">Kabel Udara</span>`
+        : inst === "Tanah"
+          ? `<span class="inv-install tanah">Kabel Tanah</span>`
+          : `<span class="inv-install none">Belum diisi</span>`;
+    const passive = !isCable && NO_PORT_TYPES.includes(typeKey);
+    const typeLabel = isCable
+      ? normalizeCableType(item.type)
+      : (NODE_TYPE_META[typeKey] || { label: item.type }).label;
 
     tr.innerHTML = `
-            <td style="padding: 10px; font-weight: 600;">${escapeHtml(item.name)}</td>
-            <td style="padding: 10px;"><span style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 11px;">${escapeHtml(item.type)}</span></td>
-            <td style="padding: 10px;">${escapeHtml(item.cluster || "-")} / ${escapeHtml(item.area || "-")}</td>
-            <td style="padding: 10px;">${escapeHtml(item.city || "-")}</td>
-            <td style="padding: 10px; font-weight: 600;">${escapeHtml(item.capacity || "-")}</td>
-            <td style="padding: 10px;">
-                <span style="color: white; background: ${badgeStatus}; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 500;">
-                    ${escapeHtml(item.status)}
-                </span>
-            </td>
-            <td style="padding: 10px; text-align: center; white-space: nowrap;">
-                <button onclick="zoomToAsset('${kind}', ${id})"
-                        style="background: #0891b2; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px;" title="Sorot di Peta">
-                    <i class="fa-solid fa-crosshairs"></i>
-                </button>
-                <button onclick="openCoreDetailModal(${id}, '${item.category}')"
-                        style="background: #2563eb; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-left: 4px;" title="Lihat Status Core / Port">
-                    <i class="fa-solid fa-diagram-project"></i> Core/Port
-                </button>
-                <button onclick="${deleteCall}"
-                        style="background: #ef4444; color: white; border: none; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-left: 4px;" title="Hapus Aset">
-                    <i class="fa-solid fa-trash"></i>
-                </button>
-            </td>
-        `;
+      <td><div class="inv-name"><span class="inv-ico" style="background:${meta.color}"><i class="fa-solid ${meta.icon}"></i></span>
+        <div><b>${escapeHtml(item.name)}</b><span class="inv-sub">${escapeHtml(typeLabel || "-")} &middot; ${escapeHtml(item.city || "-")}</span></div></div></td>
+      <td class="col-type"><span class="inv-tag">${escapeHtml(typeLabel || "-")}</span></td>
+      <td class="col-loc inv-loc"><b>${escapeHtml(item.city || "-")}</b><small>${escapeHtml(item.cluster || "-")} / ${escapeHtml(item.area || "-")}</small></td>
+      <td class="col-cap">${escapeHtml(item.capacity || "-")}</td>
+      <td class="col-cable"><b>${isCable ? fmtLen(item.length_m) : "-"}</b></td>
+      <td class="col-cable">${isCable ? instHtml : "-"}</td>
+      <td><span class="inv-status ${st[0]}">${escapeHtml(st[1])}</span></td>
+      <td><div class="inv-actions">
+        <button class="inv-btn" onclick="zoomToAsset('${kind}', ${id})" title="Sorot di Peta"><i class="fa-solid fa-crosshairs"></i></button>
+        ${passive ? "" : `<button class="inv-btn primary" onclick="openCoreDetailModal(${id}, '${item.category}')" title="Lihat Status Core / Port"><i class="fa-solid fa-diagram-project"></i><span class="lbl"> Core/Port</span></button>`}
+        ${can("asset.write") ? `<button class="inv-btn" onclick="${editCall}" title="Edit"><i class="fa-solid fa-pen"></i></button>` : ""}
+        ${can("asset.delete") ? `<button class="inv-btn danger" onclick="${deleteCall}" title="Hapus Aset"><i class="fa-solid fa-trash"></i></button>` : ""}
+      </div></td>`;
     tbody.appendChild(tr);
   });
+}
+
+// Pindah ke aset di peta dari mana pun (modal core, ringkasan, inventory)
+function focusAssetOnMap(kind, id) {
+  const item = allInventoryData.find(
+    (x) => x.category.toLowerCase() === kind && String(x.id) === String(id),
+  );
+  if (!item || !Number.isFinite(item.lat) || !Number.isFinite(item.lng))
+    return alert("Aset tidak ditemukan di peta (mungkin sudah dihapus).");
+  closeCoreDetailModal();
+  closeInventoryModal();
+  closeSummaryModal();
+  map.flyTo([item.lat, item.lng], 18, { duration: 1.5 });
+  setTimeout(() => openAssetPopup(`${kind}:${id}`), 1650);
 }
 
 function zoomToAsset(kind, id) {
@@ -924,6 +1382,7 @@ function populateTopologyOptions(category) {
     const el = document.getElementById(id);
     if (el) el.style.display = visible ? "block" : "none";
   };
+  show("installation-box", category === "CABLE");
   show("topo-node-box", category === "NODE");
   show("topo-cable-box", category === "CABLE");
 }
@@ -960,6 +1419,7 @@ function openAddAssetModal(
             <option value="CLOSURE">Joint Closure</option>
             <option value="PELANGGAN">Pelanggan</option>
             <option value="TIANG">Tiang</option>
+            <option value="HH">Handhole (HH)</option>
             <option value="SLACK">Slack Kabel</option>
             <option value="INCIDENT">Titik Incident</option>
         `;
@@ -1052,6 +1512,7 @@ function openEditAssetModal(category, id, props) {
       setVal("asset-parent-node", props.parent_node_id);
       setVal("asset-upstream-cable", props.upstream_cable_id);
     } else {
+      setVal("asset-installation", props.installation);
       setVal("asset-parent-cable", props.parent_cable_id);
       setVal("asset-from-node", props.from_node_id);
       setVal("asset-to-node", props.to_node_id);
@@ -1093,6 +1554,12 @@ function onAssetTypeChange() {
     capacitySelect.innerHTML = `
             <option value="Tiang 7m">Tiang 7m</option>
             <option value="Tiang 9m">Tiang 9m</option>
+        `;
+  } else if (selectedType === "HH") {
+    capacitySelect.innerHTML = `
+            <option value="HH Kecil">HH Kecil (30x30)</option>
+            <option value="HH Standar">HH Standar (50x50)</option>
+            <option value="HH Besar">HH Besar (80x80)</option>
         `;
   } else if (selectedType === "SLACK") {
     capacitySelect.innerHTML = `
@@ -1141,6 +1608,9 @@ function saveAssetData(e) {
   if (editId) {
     // MODE EDIT: PUT hanya field yang boleh berubah (posisi & status tidak ikut)
     const common = { name, type, cluster, area, capacity };
+    const installation = (
+      document.getElementById("asset-installation") || { value: "" }
+    ).value;
     if (categoryType === "NODE") {
       url = `/api/nodes/${Number(editId)}`;
       payload = {
@@ -1152,6 +1622,7 @@ function saveAssetData(e) {
       url = `/api/cables/${Number(editId)}`;
       payload = {
         ...common,
+        installation,
         parent_cable_id: val("asset-parent-cable"),
         from_node_id: val("asset-from-node"),
         to_node_id: val("asset-to-node"),
@@ -1199,6 +1670,9 @@ function saveAssetData(e) {
       area,
       city,
       capacity,
+      installation: (
+        document.getElementById("asset-installation") || { value: "Udara" }
+      ).value,
       core_data: "{}",
       parent_cable_id: val("asset-parent-cable"),
       from_node_id: val("asset-from-node"),
@@ -1239,7 +1713,10 @@ function parseOdpCapacity(capacity) {
 
 // Jumlah core/port sebuah aset (tiang tidak punya port)
 function getPortCount(item) {
-  if (item.category === "NODE" && (item.type || "").toUpperCase() === "TIANG")
+  if (
+    item.category === "NODE" &&
+    NO_PORT_TYPES.includes((item.type || "").toUpperCase())
+  )
     return 0;
   return parseInt(item.capacity) || 12;
 }
@@ -1314,7 +1791,55 @@ function resetCoreContainers() {
   }
 }
 
+// Riwayat navigasi antar-aset di modal core (klik tautan aset -> tombol "Kembali")
+const coreNav = [];
+function updateCoreBack() {
+  const btn = document.getElementById("core-back");
+  if (!btn) return;
+  const top = coreNav[coreNav.length - 1];
+  btn.style.display = top ? "inline-flex" : "none";
+  const lbl = document.getElementById("core-back-label");
+  if (lbl)
+    lbl.textContent = top
+      ? "Kembali ke " + (top.name || "aset sebelumnya")
+      : "Kembali";
+}
+function assetLinkHtml(type, id, name) {
+  const nid = Number(id);
+  const label = escapeHtml(name || `${type} #${id}`);
+  if (!Number.isFinite(nid) || !id) return label;
+  const cat = String(type).toUpperCase() === "CABLE" ? "CABLE" : "NODE";
+  return (
+    `<a class="asset-link" href="#" onclick="openLinkedAsset('${cat}', ${nid}); return false;" title="Buka detail core/port aset ini">${label}</a>` +
+    `<a class="asset-locate" href="#" onclick="focusAssetOnMap('${cat.toLowerCase()}', ${nid}); return false;" title="Tampilkan di peta"><i class="fa-solid fa-location-crosshairs"></i></a>`
+  );
+}
+function openLinkedAsset(category, id) {
+  const exists = allInventoryData.some(
+    (x) => String(x.id) === String(id) && x.category === category,
+  );
+  if (!exists) return alert("Aset tidak ditemukan (mungkin sudah dihapus).");
+  if (currentActiveAsset)
+    coreNav.push({
+      id: currentActiveAsset.id,
+      category: currentActiveAsset.category,
+      name: currentActiveAsset.name,
+    });
+  initCoreDetailLogic(id, category);
+  updateCoreBack();
+  const body = document.querySelector("#modal-core-detail .modal-body");
+  if (body) body.scrollTop = 0;
+}
+function coreNavBack() {
+  const prev = coreNav.pop();
+  if (!prev) return;
+  initCoreDetailLogic(prev.id, prev.category);
+  updateCoreBack();
+}
+
 function openCoreDetailModal(id, category) {
+  coreNav.length = 0;
+  updateCoreBack();
   document.getElementById("modal-core-detail").style.display = "flex";
   resetCoreContainers();
 
@@ -1597,10 +2122,10 @@ function renderActiveConnectionsTable(
       return f && f.name ? f.name : `${type} #${id}`;
     };
 
-    let localPort, targetAssetName, targetPort;
+    let localPort, targetAssetHtml, targetPort;
     if (isPassThrough) {
       localPort = conn.via_core || "-";
-      targetAssetName = `${assetName(conn.from_asset_type, conn.from_asset_id)} \u2192 ${assetName(conn.to_asset_type, conn.to_asset_id)}`;
+      targetAssetHtml = `${assetLinkHtml(conn.from_asset_type, conn.from_asset_id, assetName(conn.from_asset_type, conn.from_asset_id))} \u2192 ${assetLinkHtml(conn.to_asset_type, conn.to_asset_id, assetName(conn.to_asset_type, conn.to_asset_id))}`;
       targetPort = `${conn.from_port_core} \u2192 ${conn.to_port_core}`;
     } else {
       localPort = isFromHere ? conn.from_port_core : conn.to_port_core;
@@ -1609,7 +2134,11 @@ function renderActiveConnectionsTable(
         : conn.from_asset_type;
       const targetAssetId = isFromHere ? conn.to_asset_id : conn.from_asset_id;
       targetPort = isFromHere ? conn.to_port_core : conn.from_port_core;
-      targetAssetName = assetName(targetAssetType, targetAssetId);
+      targetAssetHtml = assetLinkHtml(
+        targetAssetType,
+        targetAssetId,
+        assetName(targetAssetType, targetAssetId),
+      );
     }
 
     const directionBadge = isPassThrough
@@ -1621,7 +2150,7 @@ function renderActiveConnectionsTable(
     const viaLabel = isPassThrough
       ? "Kabel ini"
       : conn.via_cable_name
-        ? escapeHtml(conn.via_cable_name) +
+        ? assetLinkHtml("CABLE", conn.via_cable_id, conn.via_cable_name) +
           (conn.via_core ? ` (${escapeHtml(conn.via_core)})` : "")
         : conn.via_cable_id
           ? "Kabel #" + Number(conn.via_cable_id)
@@ -1632,12 +2161,16 @@ function renderActiveConnectionsTable(
         <td style="padding: 8px; font-weight: 600; color: #1e293b;">${escapeHtml(localPort)}</td>
         <td style="padding: 8px; text-align: center;">${directionBadge}</td>
         <td style="padding: 8px; color: #0284c7; font-weight: 500;">${viaLabel}</td>
-        <td style="padding: 8px; font-weight: 500;">${escapeHtml(targetAssetName)}</td>
+        <td style="padding: 8px; font-weight: 500;">${targetAssetHtml}</td>
         <td style="padding: 8px; font-weight: 500;">${escapeHtml(targetPort)}</td>
         <td style="padding: 8px; text-align: center;">
-          <button onclick="disconnectCore(${Number(conn.id)})" style="background:#ef4444; color:white; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:11px;">
+          ${
+            can("connection.delete")
+              ? `<button onclick="disconnectCore(${Number(conn.id)})" style="background:#ef4444; color:white; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:11px;">
             <i class="fa-solid fa-trash"></i> Putus
-          </button>
+          </button>`
+              : ""
+          }
         </td>
       </tr>
     `;
@@ -1670,12 +2203,13 @@ function loadTracePanel(asset) {
 }
 
 function traceEndHtml(e) {
-  return `<b>${escapeHtml(e.name)}</b> <span style="color:#94a3b8;">[${escapeHtml(e.port || "-")}]</span>`;
+  const nm = e.id ? assetLinkHtml(e.type, e.id, e.name) : escapeHtml(e.name);
+  return `<b>${nm}</b> <span style="color:#94a3b8;">[${escapeHtml(e.port || "-")}]</span>`;
 }
 
 function traceHopHtml(h, showCustomers) {
   const via = h.via
-    ? `<span style="color:#0284c7;"> &mdash; ${escapeHtml(h.via.name || "Kabel #" + h.via.cable_id)}${h.via.core ? " &middot; " + escapeHtml(h.via.core) : ""} &rarr; </span>`
+    ? `<span style="color:#0284c7;"> &mdash; ${h.via.cable_id ? assetLinkHtml("CABLE", h.via.cable_id, h.via.name || "Kabel #" + h.via.cable_id) : escapeHtml(h.via.name || "Kabel")}${h.via.core ? " &middot; " + escapeHtml(h.via.core) : ""} &rarr; </span>`
     : `<span style="color:#94a3b8;"> &rarr; </span>`;
   const badge =
     showCustomers && h.customers_below
@@ -1747,6 +2281,8 @@ function disconnectCore(connectionId) {
 }
 
 function closeCoreDetailModal() {
+  coreNav.length = 0;
+  updateCoreBack();
   document.getElementById("modal-core-detail").style.display = "none";
 }
 
@@ -2293,8 +2829,19 @@ function renderIncidentDetail(d) {
               : "") +
             (r.technician ? ` &middot; ${escapeHtml(r.technician)}` : "") +
             ` <span style="color:#94a3b8;font-size:11px;">${timeHtml(r.created_at)}</span>` +
+            (r.undone_at
+              ? ` ${incChip("DIBATALKAN", "#fee2e2", "#b91c1c")}`
+              : "") +
             (r.notes
               ? `<div style="color:#64748b;">${escapeHtml(r.notes)}</div>`
+              : "") +
+            (r.undone_at
+              ? `<div style="color:#b91c1c;font-size:11px;">Dibatalkan ${timeHtml(r.undone_at)}${r.undone_by ? " oleh " + escapeHtml(r.undone_by) : ""}${r.undo_reason ? " &middot; " + escapeHtml(r.undo_reason) : ""}</div>`
+              : "") +
+            (can("repair.undo") && !r.undone_at
+              ? r.can_undo
+                ? `<div><button class="adm-btn bad" onclick="undoRepair(${Number(r.id)})"><i class="fa-solid fa-rotate-left"></i> Batalkan perbaikan</button></div>`
+                : `<div style="color:#94a3b8;font-size:11px;"><i class="fa-solid fa-circle-info"></i> Tidak bisa dibatalkan: ${escapeHtml(r.undo_reason || "-")}</div>`
               : "") +
             `</div>`
           );
@@ -2303,7 +2850,9 @@ function renderIncidentDetail(d) {
     : `<span style="color:#94a3b8;">Belum ada perbaikan tercatat.</span>`;
 
   const form = document.getElementById("incd-repair-form");
-  form.style.display = resolved ? "none" : "block";
+  form.style.display = resolved || !can("incident.write") ? "none" : "block";
+  const noteRow = document.getElementById("incd-note-row");
+  if (noteRow) noteRow.style.display = can("incident.write") ? "flex" : "none";
   const hasCable = !!loc.cable;
   ["ADD_CLOSURE", "EXTRA_JOINT"].forEach((v) => {
     const opt = [...document.getElementById("rep-action").options].find(
@@ -2320,6 +2869,7 @@ function renderIncidentDetail(d) {
     IMPACT_RELEASED: "fa-plug-circle-check",
     STATUS_CHANGED: "fa-arrows-rotate",
     REPAIR: "fa-screwdriver-wrench",
+    REPAIR_UNDONE: "fa-rotate-left",
     NOTE: "fa-note-sticky",
     DELETED: "fa-trash",
   };
@@ -2337,11 +2887,15 @@ function renderIncidentDetail(d) {
   // Aksi status
   const btn = (label, status, bg) =>
     `<button onclick="changeIncidentStatus('${status}')" style="background:${bg};color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">${label}</button>`;
-  document.getElementById("incd-status-actions").innerHTML = resolved
-    ? btn("Buka Kembali Tiket", "Open", "#f59e0b")
-    : (inc.status === "Open"
-        ? btn("Tandai In Progress", "In Progress", "#f59e0b")
-        : "") + btn("Selesaikan Tiket", "Resolved", "#16a34a");
+  document.getElementById("incd-status-actions").innerHTML = !can(
+    "incident.write",
+  )
+    ? ""
+    : resolved
+      ? btn("Buka Kembali Tiket", "Open", "#f59e0b")
+      : (inc.status === "Open"
+          ? btn("Tandai In Progress", "In Progress", "#f59e0b")
+          : "") + btn("Selesaikan Tiket", "Resolved", "#16a34a");
 }
 
 function submitIncidentRepair() {
@@ -2419,7 +2973,7 @@ function changeIncidentStatus(status) {
 }
 
 // Logika rendering warna jalur kabel berdasarkan status
-function getCableStyle(type, status) {
+function getCableStyle(type, status, installation) {
   let color = "#0891b2";
   let weight = 3;
   let dashArray = null;
@@ -2442,6 +2996,9 @@ function getCableStyle(type, status) {
       weight = 2;
       break;
   }
+
+  // Kabel tanah (duct/tanam langsung) digambar garis-titik; kabel udara garis penuh
+  if (installation === "Tanah") dashArray = "10, 5, 2, 5";
 
   if (status === "Cut/Broken") {
     color = "#ef4444";
@@ -2525,100 +3082,373 @@ function fetchNocIncidentsLog() {
 }
 
 // --- PENCARIAN PETA ---
-function showSearchHighlight(lat, lng, html) {
+// Satu kotak cari untuk: koordinat, aset NETGIS (instan, dari data lokal), dan nama tempat/alamat
+// (lewat /api/geocode, seperti kolom cari peta online). Saran bisa dipilih dengan panah + Enter.
+const SEARCH = {
+  remote: [],
+  local: [],
+  coord: null,
+  active: -1,
+  seq: 0,
+  timer: null,
+  loading: false,
+  error: null,
+  query: "",
+};
+const RECENT_KEY = "netgis_recent_searches";
+
+function showSearchHighlight(lat, lng, html, bbox, zoom = 18) {
   if (searchHighlightMarker) map.removeLayer(searchHighlightMarker);
-  map.flyTo([lat, lng], 18, { duration: 1.5 });
+  if (bbox && typeof map.flyToBounds === "function") {
+    map.flyToBounds(
+      [
+        [bbox[0], bbox[1]],
+        [bbox[2], bbox[3]],
+      ],
+      { maxZoom: 18, duration: 1.5 },
+    );
+  } else {
+    map.flyTo([lat, lng], zoom, { duration: 1.5 });
+  }
   searchHighlightMarker = L.marker([lat, lng])
     .addTo(map)
     .bindPopup(html)
     .openPopup();
 }
 
+function loadRecentSearches() {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+    return Array.isArray(v)
+      ? v.filter((x) => x && typeof x.text === "string").slice(0, 6)
+      : [];
+  } catch (_) {
+    return [];
+  }
+}
+function saveRecentSearch(text, lat, lng) {
+  try {
+    const list = loadRecentSearches().filter(
+      (x) => x.text.toLowerCase() !== text.toLowerCase(),
+    );
+    list.unshift({ text, lat, lng });
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 6)));
+  } catch (_) {
+    /* penyimpanan tidak tersedia: abaikan */
+  }
+}
+function clearRecentSearches() {
+  try {
+    localStorage.removeItem(RECENT_KEY);
+  } catch (_) {}
+  renderSearchDropdown();
+}
+
+function parseCoordinate(query) {
+  const m = query.match(
+    /^([-+]?\d+(?:\.\d+)?)\s*[,;\s]\s*([-+]?\d+(?:\.\d+)?)$/,
+  );
+  if (!m) return null;
+  const lat = parseFloat(m[1]),
+    lng = parseFloat(m[2]);
+  return { lat, lng, valid: Math.abs(lat) <= 90 && Math.abs(lng) <= 180 };
+}
+
+// Aset NETGIS terdekat dari sebuah titik (node saja; kabel dihitung dari titik pertama tidak akurat)
+function nearestAssets(lat, lng, n = 3, maxM = 500) {
+  const here = L.latLng(lat, lng);
+  return allInventoryData
+    .filter(
+      (x) =>
+        x.category === "NODE" &&
+        Number.isFinite(x.lat) &&
+        Number.isFinite(x.lng),
+    )
+    .map((x) => ({ x, d: here.distanceTo(L.latLng(x.lat, x.lng)) }))
+    .filter((r) => r.d <= maxM)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, n);
+}
+
+function placePopupHtml(r) {
+  const near = nearestAssets(r.lat, r.lng);
+  const nearHtml = near.length
+    ? `<div class="popup-row" style="margin-top:6px;"><span>Aset jaringan terdekat:</span></div>` +
+      near
+        .map(
+          (n) =>
+            `<div class="popup-row" style="margin:0;">&bull; ${escapeHtml(n.x.name)} <b>(${Math.round(n.d)} m)</b></div>`,
+        )
+        .join("")
+    : `<div class="popup-row" style="margin-top:6px;color:#b45309;">Tidak ada aset jaringan dalam radius 500 m.</div>`;
+  const acts =
+    (can("incident.write")
+      ? `<button class="btn-status btn-warning" onclick="createIncidentAtSearch()"><i class="fa-solid fa-triangle-exclamation"></i> Tiket di sini</button>`
+      : "") +
+    (can("asset.write")
+      ? `<button class="btn-status btn-success" onclick="addAssetAtSearch()"><i class="fa-solid fa-plus"></i> Aset di sini</button>`
+      : "");
+  return `<div class="popup-header">${escapeHtml(r.name)}</div>
+    ${r.label ? `<div class="popup-row">${escapeHtml(r.label)}</div>` : ""}
+    <div class="popup-row"><span>Koordinat:</span> <b>${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}</b></div>
+    ${nearHtml}${acts ? `<div class="popup-actions">${acts}</div>` : ""}`;
+}
+function createIncidentAtSearch() {
+  if (!searchHighlightMarker) return;
+  const ll = searchHighlightMarker.getLatLng();
+  map.closePopup();
+  openAddIncidentModal(ll.lat, ll.lng);
+}
+function addAssetAtSearch() {
+  if (!searchHighlightMarker) return;
+  const ll = searchHighlightMarker.getLatLng();
+  map.closePopup();
+  openAddAssetModal("NODE", ll.lat, ll.lng);
+}
+
+function hideSearchDropdown() {
+  const d = document.getElementById("search-autocomplete-results");
+  if (d) d.style.display = "none";
+  SEARCH.active = -1;
+}
+
+// Daftar item yang tampil, berurutan (dipakai juga untuk navigasi keyboard)
+function searchItems() {
+  const items = [];
+  if (SEARCH.coord && SEARCH.coord.valid)
+    items.push({ t: "coord", c: SEARCH.coord });
+  SEARCH.local.forEach((a) => items.push({ t: "asset", a }));
+  SEARCH.remote.forEach((r, i) => items.push({ t: "place", r, i }));
+  return items;
+}
+
+function renderSearchDropdown() {
+  const dd = document.getElementById("search-autocomplete-results");
+  if (!dd) return;
+  const q = (
+    document.getElementById("map-search-input") || { value: "" }
+  ).value.trim();
+  let html = "";
+  if (q.length < 2) {
+    const rec = loadRecentSearches();
+    if (!rec.length) return hideSearchDropdown();
+    html += `<div class="ac-section">Pencarian terakhir <a href="#" onclick="clearRecentSearches();return false;">hapus</a></div>`;
+    html += rec
+      .map(
+        (r, i) =>
+          `<div class="autocomplete-item" onclick="pickRecentSearch(${i})"><div><div class="item-title"><i class="fa-solid fa-clock-rotate-left" style="margin-right:6px;color:#94a3b8;"></i>${escapeHtml(r.text)}</div></div></div>`,
+      )
+      .join("");
+    dd.innerHTML = html;
+    dd.style.display = "block";
+    return;
+  }
+  const items = searchItems();
+  let idx = 0;
+  const cls = () =>
+    "autocomplete-item" + (idx === SEARCH.active ? " active" : "");
+  const coordItem = items.find((x) => x.t === "coord");
+  if (coordItem) {
+    html += `<div class="${cls()}" data-i="${idx}" onclick="chooseSearchItem(${idx})"><div><div class="item-title"><i class="fa-solid fa-crosshairs" style="margin-right:6px;"></i>Ke koordinat ${coordItem.c.lat}, ${coordItem.c.lng}</div></div></div>`;
+    idx++;
+  }
+  if (SEARCH.local.length) {
+    html += `<div class="ac-section">Aset NETGIS</div>`;
+    SEARCH.local.forEach((item) => {
+      html += `<div class="${cls()}" data-i="${idx}" onclick="chooseSearchItem(${idx})">
+        <div><div class="item-title"><i class="${getItemIconClass(item.type)}" style="margin-right: 6px;"></i>${escapeHtml(item.name)}</div>
+        <div class="item-subtitle">${escapeHtml(item.type)} • ${escapeHtml(item.cluster || "General")} (${escapeHtml(item.city || "Area")})</div></div>
+        <span class="item-badge">${escapeHtml(item.status || "Active")}</span></div>`;
+      idx++;
+    });
+  }
+  html += `<div class="ac-section">Tempat &amp; alamat${SEARCH.loading ? ` <span class="ac-spin">mencari...</span>` : ""}</div>`;
+  if (SEARCH.remote.length) {
+    SEARCH.remote.forEach((r) => {
+      html += `<div class="${cls()}" data-i="${idx}" onclick="chooseSearchItem(${idx})">
+        <div><div class="item-title"><i class="fa-solid fa-location-dot" style="margin-right:6px;color:#ef4444;"></i>${escapeHtml(r.name)}</div>
+        <div class="item-subtitle">${escapeHtml(r.label || r.kind || "")}</div></div></div>`;
+      idx++;
+    });
+  } else if (!SEARCH.loading) {
+    html += `<div class="ac-empty">${escapeHtml(q.length < 3 ? "Ketik minimal 3 huruf untuk mencari tempat" : SEARCH.error || "Tempat tidak ditemukan")}</div>`;
+  }
+  if (
+    !SEARCH.local.length &&
+    !SEARCH.remote.length &&
+    !SEARCH.loading &&
+    !coordItem
+  ) {
+    // tidak ada apa pun: pesan di atas sudah cukup
+  }
+  dd.innerHTML = html;
+  dd.style.display = "block";
+}
+
+function handleLiveSearch(query) {
+  const keyword = (query || "").trim().toLowerCase();
+  SEARCH.query = keyword;
+  SEARCH.coord = parseCoordinate(query || "");
+  SEARCH.active = -1;
+  const has = (v) => v && String(v).toLowerCase().includes(keyword);
+  SEARCH.local =
+    keyword.length < 2
+      ? []
+      : allInventoryData
+          .filter(
+            (i) => has(i.name) || has(i.type) || has(i.city) || has(i.cluster),
+          )
+          .slice(0, 5);
+  clearTimeout(SEARCH.timer);
+  SEARCH.remote = [];
+  SEARCH.error = null;
+  SEARCH.loading = false;
+  const myseq = ++SEARCH.seq;
+  if (keyword.length >= 3 && !SEARCH.coord) {
+    SEARCH.loading = true;
+    SEARCH.timer = setTimeout(() => runPlaceSearch(query.trim(), myseq), 350);
+  }
+  renderSearchDropdown();
+}
+
+function runPlaceSearch(q, seq) {
+  const c = map.getCenter ? map.getCenter() : null;
+  const bias = c ? `&lat=${c.lat.toFixed(4)}&lng=${c.lng.toFixed(4)}` : "";
+  return apiRequest(`/api/geocode?q=${encodeURIComponent(q)}${bias}&limit=6`)
+    .then((d) => {
+      if (seq !== SEARCH.seq) return; // jawaban usang (user sudah mengetik lagi)
+      SEARCH.remote = Array.isArray(d.results) ? d.results : [];
+      SEARCH.error = d.error || null;
+    })
+    .catch((err) => {
+      if (seq !== SEARCH.seq || err.status === 401) return;
+      SEARCH.remote = [];
+      SEARCH.error = "Pencarian tempat tidak tersedia saat ini";
+    })
+    .finally(() => {
+      if (seq !== SEARCH.seq) return;
+      SEARCH.loading = false;
+      renderSearchDropdown();
+    });
+}
+
+function selectPlace(r) {
+  hideSearchDropdown();
+  document.getElementById("map-search-input").value = r.name;
+  saveRecentSearch(r.name, r.lat, r.lng);
+  showSearchHighlight(r.lat, r.lng, placePopupHtml(r), r.bbox, 17);
+}
+
+function chooseSearchItem(i) {
+  const it = searchItems()[i];
+  if (!it) return;
+  if (it.t === "coord") return goToCoordinate(it.c);
+  if (it.t === "asset") {
+    document.getElementById("map-search-input").value = it.a.name;
+    saveRecentSearch(it.a.name);
+    return selectSearchRecommendation(it.a.category.toLowerCase(), it.a.id);
+  }
+  selectPlace(it.r);
+}
+
+function pickRecentSearch(i) {
+  const r = loadRecentSearches()[i];
+  if (!r) return;
+  const inp = document.getElementById("map-search-input");
+  inp.value = r.text;
+  if (Number.isFinite(r.lat) && Number.isFinite(r.lng)) {
+    hideSearchDropdown();
+    return showSearchHighlight(
+      r.lat,
+      r.lng,
+      placePopupHtml({ name: r.text, label: "", lat: r.lat, lng: r.lng }),
+    );
+  }
+  handleLiveSearch(r.text);
+}
+
+function goToCoordinate(c) {
+  hideSearchDropdown();
+  if (!c.valid)
+    return alert("Koordinat di luar jangkauan (lat -90..90, lng -180..180).");
+  showSearchHighlight(
+    c.lat,
+    c.lng,
+    placePopupHtml({
+      name: "Titik Koordinat",
+      label: "",
+      lat: c.lat,
+      lng: c.lng,
+    }),
+  );
+}
+
+function onMapSearchFocus() {
+  renderSearchDropdown();
+}
+
+function onMapSearchKey(ev) {
+  const k = ev.key;
+  const items = searchItems();
+  const dd = document.getElementById("search-autocomplete-results");
+  const open = dd && dd.style.display === "block";
+  if ((k === "ArrowDown" || k === "ArrowUp") && open && items.length) {
+    ev.preventDefault();
+    SEARCH.active =
+      k === "ArrowDown"
+        ? (SEARCH.active + 1) % items.length
+        : (SEARCH.active - 1 + items.length) % items.length;
+    renderSearchDropdown();
+    const el =
+      dd.querySelector && dd.querySelector(".autocomplete-item.active");
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
+  } else if (k === "Enter") {
+    ev.preventDefault();
+    if (SEARCH.active >= 0 && items[SEARCH.active])
+      chooseSearchItem(SEARCH.active);
+    else handleMapSearch();
+  } else if (k === "Escape") {
+    hideSearchDropdown();
+  }
+}
+
+// Tombol cari / Enter tanpa memilih saran: koordinat -> aset (cocok nama) -> tempat teratas
 function handleMapSearch() {
   const query = document.getElementById("map-search-input").value.trim();
   if (!query) return;
 
-  // 1. Input berupa koordinat "lat, lng"
-  const coord = query.match(
-    /^([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)$/,
-  );
-  if (coord) {
-    const lat = parseFloat(coord[1]);
-    const lng = parseFloat(coord[2]);
-    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) {
-      return alert("Koordinat di luar jangkauan (lat -90..90, lng -180..180).");
-    }
-    showSearchHighlight(
-      lat,
-      lng,
-      `<b>Titik Koordinat Cari:</b><br>${lat}, ${lng}`,
-    );
-    return;
-  }
-
-  // 2. Input berupa nama aset (cocok persis diprioritaskan)
-  if (!allInventoryData.length) {
-    return alert(
-      "Data inventaris belum dimuat sempurna, coba beberapa saat lagi.",
-    );
-  }
+  const coord = parseCoordinate(query);
+  if (coord) return goToCoordinate(coord);
 
   const q = query.toLowerCase();
   const asset =
     allInventoryData.find((i) => (i.name || "").toLowerCase() === q) ||
     allInventoryData.find((i) => (i.name || "").toLowerCase().includes(q));
+  if (asset) {
+    hideSearchDropdown();
+    saveRecentSearch(asset.name);
+    return selectSearchRecommendation(asset.category.toLowerCase(), asset.id);
+  }
 
-  if (!asset) return alert(`Aset atau koordinat "${query}" tidak ditemukan.`);
-
-  document.getElementById("search-autocomplete-results").style.display = "none";
-  selectSearchRecommendation(asset.category.toLowerCase(), asset.id);
+  // Bukan aset: pakai hasil tempat yang sudah ada, atau cari sekarang
+  if (SEARCH.remote.length && SEARCH.query === q)
+    return selectPlace(SEARCH.remote[0]);
+  if (q.length < 3)
+    return alert(`Aset atau koordinat "${query}" tidak ditemukan.`);
+  clearTimeout(SEARCH.timer);
+  const myseq = ++SEARCH.seq;
+  return runPlaceSearch(query, myseq).then(() => {
+    if (SEARCH.remote.length) selectPlace(SEARCH.remote[0]);
+    else
+      alert(
+        `"${query}" tidak ditemukan sebagai aset, koordinat, maupun tempat.${SEARCH.error ? "\n(" + SEARCH.error + ")" : ""}`,
+      );
+  });
 }
 
 // ==========================================
 // FITUR LIVE SEARCH & REKOMENDASI ASET
 // ==========================================
-function handleLiveSearch(query) {
-  const dropdown = document.getElementById("search-autocomplete-results");
-  if (!dropdown) return;
-
-  const keyword = query.trim().toLowerCase();
-  if (keyword.length < 2) {
-    dropdown.innerHTML = "";
-    dropdown.style.display = "none";
-    return;
-  }
-
-  const has = (v) => v && String(v).toLowerCase().includes(keyword);
-  const matches = allInventoryData
-    .filter((i) => has(i.name) || has(i.type) || has(i.city) || has(i.cluster))
-    .slice(0, 8);
-
-  if (matches.length === 0) {
-    dropdown.innerHTML = `
-      <div class="autocomplete-item" style="cursor: default; color: #94a3b8; padding: 10px 12px; font-size: 12px;">
-        <span>Aset tidak ditemukan</span>
-      </div>`;
-    dropdown.style.display = "block";
-    return;
-  }
-
-  dropdown.innerHTML = matches
-    .map(
-      (item) => `
-      <div class="autocomplete-item" onclick="selectSearchRecommendation('${item.category.toLowerCase()}', ${Number(item.id)})">
-        <div>
-          <div class="item-title"><i class="${getItemIconClass(item.type)}" style="margin-right: 6px;"></i>${escapeHtml(item.name)}</div>
-          <div class="item-subtitle">${escapeHtml(item.type)} • ${escapeHtml(item.cluster || "General")} (${escapeHtml(item.city || "Area")})</div>
-        </div>
-        <span class="item-badge">${escapeHtml(item.status || "Active")}</span>
-      </div>
-    `,
-    )
-    .join("");
-
-  dropdown.style.display = "block";
-}
-
 // Helper ikon berdasarkan tipe aset
 function getItemIconClass(type) {
   switch ((type || "").toUpperCase()) {
@@ -2630,6 +3460,8 @@ function getItemIconClass(type) {
       return "fa-solid fa-box";
     case "TIANG":
       return "fa-solid fa-archway";
+    case "HH":
+      return "fa-solid fa-square-h";
     case "SLACK":
       return "fa-solid fa-circle-nodes";
     case "CABLE":
@@ -2665,5 +3497,461 @@ document.addEventListener("click", function (e) {
   const dropdown = document.getElementById("search-autocomplete-results");
   if (searchContainer && !searchContainer.contains(e.target) && dropdown) {
     dropdown.style.display = "none";
+    SEARCH.active = -1;
   }
 });
+
+// =====================================================================
+// AUTENTIKASI, PERAN, ACCESS CONTROL, RIWAYAT PERUBAHAN
+// Server adalah penentu hak akses; pengecekan di sini hanya untuk menyembunyikan tombol
+// yang pasti ditolak agar antarmuka tidak membingungkan.
+// =====================================================================
+const AUTH = { user: null };
+
+function can(perm) {
+  return !!(
+    AUTH.user &&
+    Array.isArray(AUTH.user.permissions) &&
+    AUTH.user.permissions.includes(perm)
+  );
+}
+
+function $id(x) {
+  return document.getElementById(x);
+}
+
+function showAuthMsg(id, text, info) {
+  const el = $id(id);
+  if (!el) return;
+  el.className = "auth-msg" + (info ? " info" : "");
+  el.textContent = text || "";
+  el.style.display = text ? "block" : "none";
+}
+
+function showLogin(message) {
+  AUTH.user = null;
+  try {
+    clearAllLayers();
+    if (searchHighlightMarker) {
+      map.removeLayer(searchHighlightMarker);
+      searchHighlightMarker = null;
+    }
+  } catch (_) {
+    /* peta belum siap */
+  }
+  [
+    "modal-users",
+    "modal-audit",
+    "modal-password",
+    "modal-inventory",
+    "modal-noc-monitor",
+    "modal-incident-detail",
+    "modal-add-asset",
+    "modal-core-detail",
+    "modal-add-incident",
+  ].forEach((m) => {
+    if ($id(m)) $id(m).style.display = "none";
+  });
+  $id("user-box").style.display = "none";
+  $id("login-overlay").style.display = "flex";
+  $id("login-pass").value = "";
+  showAuthMsg("login-msg", message || "", !message);
+  setTimeout(() => {
+    try {
+      $id("login-user").focus();
+    } catch (_) {}
+  }, 50);
+}
+
+function configureDrawControl() {
+  try {
+    map.removeControl(drawControl);
+  } catch (_) {
+    /* belum terpasang */
+  }
+  const canAsset = can("asset.write");
+  if (!canAsset && !can("incident.write")) return; // viewer: tanpa toolbar gambar
+  drawControl = new L.Control.Draw({
+    draw: {
+      polygon: false,
+      circle: false,
+      rectangle: false,
+      circlemarker: false,
+      marker: true,
+      polyline: canAsset,
+    },
+    edit: canAsset ? { featureGroup: editableGroup, remove: false } : false,
+  });
+  map.addControl(drawControl);
+}
+
+function applyPermissions() {
+  const u = AUTH.user;
+  $id("user-box").style.display = u ? "flex" : "none";
+  if (!u) return;
+  $id("user-box-name").textContent = u.full_name || u.username;
+  $id("user-box-role").textContent = u.role_label || u.role;
+  $id("nav-audit").style.display = can("audit.view") ? "" : "none";
+  $id("nav-users").style.display = can("user.manage") ? "" : "none";
+  configureDrawControl();
+}
+
+function onLoggedIn(user) {
+  AUTH.user = user;
+  $id("login-overlay").style.display = "none";
+  applyPermissions();
+  if (user.must_change_password) {
+    openPasswordModal(true); // data dimuat setelah password diganti
+  } else {
+    loadData();
+  }
+}
+
+function bootAuth() {
+  apiRequest("/api/auth/me")
+    .then((d) => onLoggedIn(d.user))
+    .catch(() => showLogin(""));
+}
+
+function submitLogin(ev) {
+  if (ev && ev.preventDefault) ev.preventDefault();
+  const btn = $id("login-btn");
+  btn.disabled = true;
+  apiRequest("/api/auth/login", "POST", {
+    username: $id("login-user").value.trim(),
+    password: $id("login-pass").value,
+  })
+    .then((d) => {
+      showAuthMsg("login-msg", "");
+      onLoggedIn(d.user);
+    })
+    .catch((err) => {
+      $id("login-pass").value = "";
+      showAuthMsg("login-msg", err.message);
+    })
+    .finally(() => {
+      btn.disabled = false;
+    });
+}
+
+function doLogout() {
+  apiRequest("/api/auth/logout", "POST")
+    .catch(() => {})
+    .finally(() => showLogin("Anda sudah keluar."));
+}
+
+// ---- Ganti password ----
+let passwordForced = false;
+function openPasswordModal(forced) {
+  passwordForced = !!forced;
+  ["pw-old", "pw-new", "pw-new2"].forEach((i) => {
+    $id(i).value = "";
+  });
+  showAuthMsg("pw-msg", "");
+  $id("pw-cancel").style.display = passwordForced ? "none" : "";
+  $id("pw-sub").textContent = passwordForced
+    ? "Password Anda perlu diganti sebelum melanjutkan (minimal 8 karakter)."
+    : "Gunakan minimal 8 karakter.";
+  $id("modal-password").style.display = "flex";
+}
+
+function closePasswordModal() {
+  if (passwordForced) return; // tidak bisa ditutup sebelum diganti
+  $id("modal-password").style.display = "none";
+}
+
+function submitPasswordChange(ev) {
+  if (ev && ev.preventDefault) ev.preventDefault();
+  if ($id("pw-new").value !== $id("pw-new2").value)
+    return showAuthMsg("pw-msg", "Konfirmasi password baru tidak sama.");
+  apiRequest("/api/auth/password", "POST", {
+    current_password: $id("pw-old").value,
+    new_password: $id("pw-new").value,
+  })
+    .then(() => {
+      const wasForced = passwordForced;
+      passwordForced = false;
+      $id("modal-password").style.display = "none";
+      if (AUTH.user) AUTH.user.must_change_password = false;
+      alert("Password berhasil diganti.");
+      if (wasForced) loadData();
+    })
+    .catch((err) => showAuthMsg("pw-msg", err.message));
+}
+
+// ---- Access Control: kelola user (admin) ----
+function openUsersModal() {
+  if (!can("user.manage"))
+    return alert("Hanya Admin yang dapat mengelola user.");
+  $id("modal-users").style.display = "flex";
+  loadUsers();
+}
+function closeUsersModal() {
+  $id("modal-users").style.display = "none";
+}
+
+function loadUsers() {
+  apiRequest("/api/users")
+    .then((d) => {
+      const sel = $id("usr-role");
+      sel.innerHTML = d.roles
+        .map(
+          (r) =>
+            `<option value="${escapeHtml(r.value)}">${escapeHtml(r.label)}</option>`,
+        )
+        .join("");
+      const me = AUTH.user ? AUTH.user.id : null;
+      $id("users-tbody").innerHTML = d.users
+        .map((u) => {
+          const opts = d.roles
+            .map(
+              (r) =>
+                `<option value="${escapeHtml(r.value)}"${r.value === u.role ? " selected" : ""}>${escapeHtml(r.label)}</option>`,
+            )
+            .join("");
+          const status = !u.active
+            ? `<span class="chip red">Nonaktif</span>`
+            : u.locked
+              ? `<span class="chip amber">Terkunci</span>`
+              : u.must_change_password
+                ? `<span class="chip blue">Wajib ganti password</span>`
+                : `<span class="chip green">Aktif</span>`;
+          return `<tr>
+          <td><b>${escapeHtml(u.username)}</b>${u.id === me ? " (Anda)" : ""}<div style="color:#64748b">${escapeHtml(u.full_name)}</div></td>
+          <td><select onchange="changeUserRole(${Number(u.id)}, this.value)">${opts}</select></td>
+          <td>${status}</td>
+          <td>${u.last_login_at ? timeHtml(u.last_login_at) : "-"}</td>
+          <td>
+            <button class="adm-btn ${u.active ? "bad" : "ok"}" onclick="toggleUserActive(${Number(u.id)}, ${u.active ? "false" : "true"})">${u.active ? "Nonaktifkan" : "Aktifkan"}</button>
+            <button class="adm-btn warn" onclick="resetUserPassword(${Number(u.id)}, '${escapeHtml(u.username).replace(/'/g, "&#39;")}')">Reset password</button>
+          </td></tr>`;
+        })
+        .join("");
+    })
+    .catch((err) => alert("Gagal memuat user: " + err.message));
+}
+
+function submitNewUser() {
+  const payload = {
+    username: $id("usr-name").value.trim(),
+    full_name: $id("usr-full").value.trim() || null,
+    role: $id("usr-role").value,
+    password: $id("usr-pass").value,
+  };
+  if (!payload.username || !payload.password)
+    return alert("Username dan password awal wajib diisi.");
+  apiRequest("/api/users", "POST", payload)
+    .then((d) => {
+      alert(d.message || "User dibuat.");
+      ["usr-name", "usr-full", "usr-pass"].forEach((i) => {
+        $id(i).value = "";
+      });
+      loadUsers();
+    })
+    .catch((err) => alert("Gagal menambah user: " + err.message));
+}
+
+function changeUserRole(id, role) {
+  apiRequest(`/api/users/${id}`, "PUT", { role })
+    .then(loadUsers)
+    .catch((err) => {
+      alert("Gagal mengubah peran: " + err.message);
+      loadUsers();
+    });
+}
+
+function toggleUserActive(id, active) {
+  if (
+    !active &&
+    !confirm("Nonaktifkan user ini? Sesi aktifnya langsung berakhir.")
+  )
+    return;
+  apiRequest(`/api/users/${id}`, "PUT", { active })
+    .then(loadUsers)
+    .catch((err) => alert("Gagal: " + err.message));
+}
+
+function resetUserPassword(id, username) {
+  if (
+    !confirm(
+      `Reset password "${username}"? Password sementara dibuat otomatis dan hanya ditampilkan sekali.`,
+    )
+  )
+    return;
+  apiRequest(`/api/users/${id}/reset-password`, "POST", {})
+    .then((d) => {
+      alert(
+        `Password sementara untuk ${username}:\n\n${d.new_password}\n\nCatat sekarang, tidak akan ditampilkan lagi. User wajib menggantinya saat login.`,
+      );
+      loadUsers();
+    })
+    .catch((err) => alert("Gagal reset password: " + err.message));
+}
+
+// ---- Riwayat Perubahan ----
+const AUDIT = { offset: 0, limit: 25, total: 0, entityId: null };
+const AUDIT_ACTION = {
+  CREATE: ["Tambah", "green"],
+  UPDATE: ["Ubah", "blue"],
+  DELETE: ["Hapus", "red"],
+  STATUS: ["Status", "amber"],
+  CONNECT: ["Sambung", "green"],
+  DISCONNECT: ["Putus", "red"],
+  REPAIR: ["Perbaikan", "green"],
+  UNDO_REPAIR: ["Batal perbaikan", "amber"],
+  RESTORE: ["Pulihkan", "blue"],
+  LOGIN: ["Login", ""],
+  LOGIN_FAILED: ["Login gagal", "red"],
+  LOGOUT: ["Logout", ""],
+  USER_CREATED: ["User baru", "green"],
+  USER_UPDATED: ["Ubah user", "blue"],
+  PASSWORD_CHANGED: ["Ganti password", "amber"],
+  PASSWORD_RESET: ["Reset password", "amber"],
+};
+const AUDIT_TYPE = {
+  NODE: "Node",
+  CABLE: "Kabel",
+  CONNECTION: "Sambungan",
+  INCIDENT: "Tiket",
+  USER: "User",
+};
+
+function openAuditModal(entityType, entityId, entityName) {
+  if (!can("audit.view"))
+    return alert("Riwayat perubahan hanya untuk NOC dan Admin.");
+  try {
+    map.closePopup();
+  } catch (_) {}
+  $id("aud-q").value = "";
+  $id("aud-type").value = entityType || "ALL";
+  $id("aud-action").value = "ALL";
+  AUDIT.entityId = entityType && entityId != null ? Number(entityId) : null;
+  if (!entityName && AUDIT.entityId != null) {
+    const hit = allInventoryData.find(
+      (x) => x.category === entityType && Number(x.id) === AUDIT.entityId,
+    );
+    entityName = hit ? hit.name : null;
+  }
+  const scope = $id("aud-scope");
+  scope.style.display = AUDIT.entityId != null ? "block" : "none";
+  scope.innerHTML =
+    AUDIT.entityId != null
+      ? `Menampilkan riwayat satu objek: <b>${escapeHtml(entityName || "#" + AUDIT.entityId)}</b> &middot; <a href="#" onclick="clearAuditScope();return false;">tampilkan semua</a>`
+      : "";
+  $id("modal-audit").style.display = "flex";
+  loadAudit(0);
+}
+function closeAuditModal() {
+  $id("modal-audit").style.display = "none";
+}
+function clearAuditScope() {
+  AUDIT.entityId = null;
+  $id("aud-scope").style.display = "none";
+  loadAudit(0);
+}
+
+function loadAudit(dir, relative) {
+  AUDIT.offset = relative ? Math.max(0, AUDIT.offset + dir * AUDIT.limit) : 0;
+  const p = new URLSearchParams({ limit: AUDIT.limit, offset: AUDIT.offset });
+  const t = $id("aud-type").value,
+    a = $id("aud-action").value,
+    q = $id("aud-q").value.trim();
+  if (t !== "ALL") p.set("entity_type", t);
+  if (a !== "ALL") p.set("action", a);
+  if (q) p.set("q", q);
+  if (AUDIT.entityId != null) p.set("entity_id", AUDIT.entityId);
+  apiRequest("/api/audit?" + p.toString())
+    .then((d) => {
+      AUDIT.total = d.total;
+      const rows = d.items.map(renderAuditRow).join("");
+      $id("audit-tbody").innerHTML =
+        rows ||
+        `<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:16px;">Belum ada riwayat.</td></tr>`;
+      const from = d.total ? d.offset + 1 : 0,
+        to = Math.min(d.offset + d.limit, d.total);
+      $id("aud-page").textContent = `${from}-${to} dari ${d.total}`;
+      $id("aud-prev").disabled = d.offset <= 0;
+      $id("aud-next").disabled = d.offset + d.limit >= d.total;
+    })
+    .catch((err) => alert("Gagal memuat riwayat: " + err.message));
+}
+
+function auditChangesHtml(ch) {
+  if (!ch || typeof ch !== "object") return "";
+  const fmt = (v) =>
+    v === null || v === undefined || v === "" ? "—" : String(v);
+  const entries = Object.entries(ch).filter(
+    ([, v]) => Array.isArray(v) && v.length === 2,
+  );
+  if (!entries.length) return "";
+  return (
+    `<div class="aud-changes">` +
+    entries
+      .slice(0, 5)
+      .map(
+        ([k, v]) =>
+          `${escapeHtml(k)}: ${escapeHtml(fmt(v[0]))} &rarr; <b>${escapeHtml(fmt(v[1]))}</b>`,
+      )
+      .join("<br>") +
+    (entries.length > 5 ? `<br>+${entries.length - 5} perubahan lain` : "") +
+    `</div>`
+  );
+}
+
+function renderAuditRow(it) {
+  const a = AUDIT_ACTION[it.action] || [it.action, ""];
+  const restoreBtn =
+    it.restorable && can("audit.restore")
+      ? `<button class="adm-btn ok" onclick="restoreAudit(${Number(it.id)})"><i class="fa-solid fa-rotate-left"></i> Pulihkan</button>`
+      : it.restored_at
+        ? `<span class="chip">Sudah dipulihkan</span>`
+        : "";
+  return `<tr>
+    <td>${timeHtml(it.ts)}</td>
+    <td>${escapeHtml(it.username || "-")}<div style="color:#94a3b8;font-size:11px;">${escapeHtml(it.role || "")}</div></td>
+    <td><span class="chip ${a[1]}">${escapeHtml(a[0])}</span></td>
+    <td>${escapeHtml(AUDIT_TYPE[it.entity_type] || it.entity_type || "")}<div style="font-weight:600;">${escapeHtml(it.entity_name || "")}</div></td>
+    <td>${escapeHtml(it.summary || "")}${auditChangesHtml(it.changes)}</td>
+    <td>${restoreBtn}</td></tr>`;
+}
+
+function restoreAudit(id) {
+  if (
+    !confirm(
+      "Pulihkan objek ini beserta hubungan & sambungan core-nya (ID aslinya dipakai kembali)?",
+    )
+  )
+    return;
+  apiRequest(`/api/audit/${id}/restore`, "POST")
+    .then((d) => {
+      alert(
+        [d.message || "Berhasil dipulihkan."].concat(d.notes || []).join("\n"),
+      );
+      loadAudit(0);
+      loadData();
+    })
+    .catch((err) => alert("Gagal memulihkan: " + err.message));
+}
+
+// ---- Batalkan perbaikan ----
+function undoRepair(repairId) {
+  const id = currentIncidentId;
+  if (id == null) return;
+  const reason = prompt(
+    "Batalkan perbaikan ini?\nJika perbaikan memecah kabel, kedua segmen digabung kembali dan closure dihapus; tiket kembali ke status sebelumnya.\n\nAlasan pembatalan (opsional):",
+    "",
+  );
+  if (reason === null) return;
+  apiRequest(`/api/incidents/${id}/repairs/${repairId}/undo`, "POST", {
+    reason: reason.trim() || null,
+  })
+    .then((d) => {
+      alert(d.message || "Perbaikan dibatalkan.");
+      loadData();
+      openIncidentDetail(id);
+    })
+    .catch((err) => alert("Tidak dapat membatalkan: " + err.message));
+}
+
+initSidebarState();
+bootAuth();

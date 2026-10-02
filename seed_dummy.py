@@ -20,6 +20,9 @@ import argparse
 import json
 import math
 import sys
+import getpass
+import http.cookiejar
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -34,12 +37,17 @@ class ApiError(Exception):
         self.status, self.detail = status, detail
 
 
+# Sesi login disimpan di cookie jar (server memakai cookie HttpOnly)
+_JAR = http.cookiejar.CookieJar()
+_OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_JAR))
+
+
 def api(method, path, body=None):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(BASE + path, data=data, method=method,
                                  headers={"Content-Type": "application/json"} if data else {})
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with _OPENER.open(req, timeout=30) as r:
             raw = r.read()
             return json.loads(raw) if raw else None
     except urllib.error.HTTPError as e:
@@ -54,6 +62,22 @@ def api(method, path, body=None):
     except urllib.error.URLError as e:
         sys.exit(f"\n[X] Tidak bisa terhubung ke {BASE} ({e.reason}).\n"
                  f"    Jalankan server dulu di terminal lain:  uvicorn main:app --reload\n")
+
+
+def login(username, password):
+    """Masuk sebagai user yang sudah ada (butuh peran Admin agar reset/hapus berjalan penuh)."""
+    try:
+        d = api("POST", "/api/auth/login", {"username": username, "password": password})
+    except ApiError as e:
+        sys.exit(f"\n[X] Login gagal ({e}).\n"
+                 f"    Admin awal dibuat otomatis saat server pertama kali jalan; password-nya tercetak di terminal uvicorn\n"
+                 f"    (atau pakai NETGIS_ADMIN_PASSWORD). Beri kredensial lewat --user/--password atau env NETGIS_USER/NETGIS_PASSWORD.\n")
+    u = d["user"]
+    if u.get("must_change_password"):
+        sys.exit("\n[X] Akun ini wajib ganti password dulu. Login lewat browser, ganti password, lalu jalankan ulang.\n")
+    if u["role"] != "admin":
+        print(f"[!] Login sebagai {u['username']} ({u['role']}). Sebagian langkah (hapus aset, kelola data) butuh Admin.")
+    return u
 
 
 # ----------------------------------------------------------------------------- util
@@ -150,8 +174,9 @@ def cmd_seed():
             "capacity": cap, "spec_data": "{}", "parent_node_id": parent})
         return r["id"]
 
-    def cable(name, typ, coords, cap, frm, to, parent=None):
+    def cable(name, typ, coords, cap, frm, to, parent=None, inst="Udara"):
         r = api("POST", "/api/cables", {
+            "installation": inst,
             "name": PREFIX + name, "type": typ, "status": "Active", "coordinates": coords,
             "cluster": "EKO", "area": "BANJARMASIN", "city": "Kota Banjarmasin",
             "capacity": cap, "core_data": "{}", "parent_cable_id": parent,
@@ -180,15 +205,17 @@ def cmd_seed():
     for i, (la, ln) in enumerate([(LAT0 - 0.0006, LNG0 + 0.0030), (LAT0 - 0.0006, LNG0 + 0.0060)], start=1):
         node(f"TIANG-{i:02d}", "TIANG", la, ln, "Tiang 9m")
     node("SLACK-01", "SLACK", LAT0 - 0.0001, LNG0 + 0.0080, "Slack 20m")
+    node("HH-01", "HH", LAT0 - 0.0003, LNG0 + 0.0102, "HH Standar")   # handhole di dekat JC-01 (jalur kabel tanah)
+    node("HH-02", "HH", LAT0 - 0.0050, LNG0 + 0.0103, "HH Standar")
 
     print("Membuat kabel...")
     f1 = cable("FDR-01", "Feeder", [[LNG0, LAT0], [LNG0 + 0.0045, LAT0 - 0.0006], [LNG0 + 0.0100, LAT0]], "48C", pop, jc1)
     f2 = cable("FDR-02", "Feeder", [[LNG0 + 0.0100, LAT0], [LNG0 + 0.0104, LAT0 - 0.0046], [LNG0 + 0.0100, LAT0 - 0.0100]],
-               "24C", jc1, jc2, f1)
+               "24C", jc1, jc2, f1, inst="Tanah")
     dist = {}
     dist["ODP-001"] = cable("DIST-01", "Distribution", [[LNG0 + 0.0100, LAT0], [LNG0 + 0.0124, LAT0 + 0.0024]], "12C", jc1, odps["ODP-001"][0], f1)
     dist["ODP-002"] = cable("DIST-02", "Distribution", [[LNG0 + 0.0100, LAT0], [LNG0 + 0.0134, LAT0 - 0.0016]], "12C", jc1, odps["ODP-002"][0], f1)
-    dist["ODP-003"] = cable("DIST-03", "Distribution", [[LNG0 + 0.0100, LAT0 - 0.0100], [LNG0 + 0.0124, LAT0 - 0.0116]], "12C", jc2, odps["ODP-003"][0], f2)
+    dist["ODP-003"] = cable("DIST-03", "Distribution", [[LNG0 + 0.0100, LAT0 - 0.0100], [LNG0 + 0.0124, LAT0 - 0.0116]], "12C", jc2, odps["ODP-003"][0], f2, inst="Tanah")
     dist["ODP-004"] = cable("DIST-04", "Distribution", [[LNG0 + 0.0100, LAT0 - 0.0100], [LNG0 + 0.0074, LAT0 - 0.0126]], "12C", jc2, odps["ODP-004"][0], f2)
     drops = {}
     for cname, (cid, odp_id, la, ln) in custs.items():
@@ -373,8 +400,11 @@ def main():
     ap.add_argument("--base", default=BASE)
     ap.add_argument("--all", action="store_true", help="reset: hapus SEMUA data, bukan hanya DMY-*")
     ap.add_argument("--yes", action="store_true", help="lewati konfirmasi")
+    ap.add_argument("--user", default=os.environ.get("NETGIS_USER", "admin"), help="username (atau env NETGIS_USER)")
+    ap.add_argument("--password", default=os.environ.get("NETGIS_PASSWORD"), help="password (atau env NETGIS_PASSWORD; kosong = ditanya)")
     args = ap.parse_args()
     BASE = args.base.rstrip("/")
+    login(args.user, args.password or getpass.getpass(f"Password {args.user}: "))
 
     if args.command == "reset":
         cmd_reset(args.all, args.yes)
