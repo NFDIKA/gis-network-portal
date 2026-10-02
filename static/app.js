@@ -629,7 +629,7 @@ function zoomToAsset(lat, lng) {
 
 // Pemetaan Cluster -> Area
 const AREA_MAPPING = {
-  EKO: ["BALIKPAPAN", "SAMARINDA", "BANJARMASIN", "TANJUNG SELOR"],
+  EKO: ["BANJARMASIN", "SAMARINDA", "BALIKPAPAN", "TANJUNG SELOR"],
   WKO: ["PONTIANAK", "PALANGKARAYA"],
 };
 
@@ -1560,43 +1560,39 @@ function closeAddIncidentModal() {
   document.getElementById("modal-add-incident").style.display = "none";
 }
 
+// 1. Panggilan Analisis Dampak Setelah Tiket Dibuat
 function saveIncidentData(e) {
-  if (e && e.preventDefault) e.preventDefault();
-
-  const ticket = document.getElementById("inc-ticket")
-    ? document.getElementById("inc-ticket").value
-    : "";
-  const title = document.getElementById("inc-title")
-    ? document.getElementById("inc-title").value
-    : "";
-  const severity = document.getElementById("inc-severity")
-    ? document.getElementById("inc-severity").value
-    : "Medium";
-  const type = document.getElementById("inc-type")
-    ? document.getElementById("inc-type").value
-    : "Fiber Optic Cut";
-  const status = document.getElementById("inc-status")
-    ? document.getElementById("inc-status").value
-    : "Open";
-  const desc = document.getElementById("inc-description")
-    ? document.getElementById("inc-description").value
-    : "";
+  e.preventDefault();
 
   const latVal = parseFloat(document.getElementById("inc-lat").value);
   const lngVal = parseFloat(document.getElementById("inc-lng").value);
 
+  if (isNaN(latVal) || isNaN(lngVal)) {
+    alert("Koordinat Latitude dan Longitude harus diisi dengan angka!");
+    return;
+  }
+
   const payload = {
-    ticket_number: ticket || "INC-" + Date.now(),
-    title: title || "Insiden Baru",
-    severity: severity,
-    incident_type: type,
-    status: status,
-    description: desc,
+    ticket_number:
+      document.getElementById("inc-ticket").value || "INC-" + Date.now(),
+    title: document.getElementById("inc-title").value || "Gangguan Fiber Optic",
+    severity: document.getElementById("inc-severity")
+      ? document.getElementById("inc-severity").value
+      : "Critical",
+    incident_type: document.getElementById("inc-type")
+      ? document.getElementById("inc-type").value
+      : "FO Cut",
+    status: "Open",
+    description: document.getElementById("inc-description")
+      ? document.getElementById("inc-description").value
+      : "",
     latitude: latVal,
     longitude: lngVal,
     cluster: "EKO",
     area: "BANJARMASIN",
     city: "Kota Banjarmasin",
+    linked_cable_id: window.selectedCableId || null, // sertakan ID kabel jika ada
+    linked_node_id: window.selectedNodeId || null, // sertakan ID node jika ada
   };
 
   fetch("/api/incidents", {
@@ -1604,48 +1600,64 @@ function saveIncidentData(e) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   })
-    .then((res) => {
-      if (!res.ok) throw new Error("Gagal menyimpan insiden");
-      return res.json();
-    })
-    .then(async (data) => {
-      // PERBAIKAN: Cari kabel atau node terdekat dari koordinat insiden untuk di-Set ke 'Cut/Broken'
-      const incidentLatLng = L.latLng(latVal, lngVal);
-      const THRESHOLD_METERS = 30; // Radius toleransi insiden (30 meter)
-
-      // 1. Update Kabel yang terlewati titik insiden
-      if (allInventoryData && allInventoryData.length > 0) {
-        const cables = allInventoryData.filter((x) => x.category === "CABLE");
-        for (let cable of cables) {
-          // Kirim request update status kabel jika berdampak
-          updateCableStatus(cable.id, "Cut/Broken");
-        }
+    .then((r) => {
+      if (!r.ok) {
+        return r.json().then((errData) => {
+          throw new Error(errData.detail || "Gagal menyimpan tiket insiden");
+        });
       }
-
-      alert(
-        "Tiket Incident berhasil dicatat dan status aset/kabel terkait diset ke Cut/Down!",
-      );
-      if (typeof closeAddIncidentModal === "function") closeAddIncidentModal();
+      return r.json();
+    })
+    .then((res) => {
+      const incidentId = res.id;
+      return fetch(`/api/incidents/analyze-impact?incident_id=${incidentId}`, {
+        method: "POST",
+      });
+    })
+    .then(() => {
+      alert("Tiket insiden berhasil dicatat!");
+      closeAddIncidentModal();
       if (typeof loadData === "function") loadData();
     })
     .catch((err) => {
-      console.error("Error Detail:", err);
-      alert("Terjadi kesalahan saat menyimpan insiden.");
+      console.error("Gagal mencatat insiden:", err);
+      alert("Gagal mencatat insiden: " + err.message);
     });
 }
-function resolveIncident(id) {
-  if (confirm("Apakah tiket insiden ini sudah selesai ditangani?")) {
-    fetch(`/api/incidents/${id}/status`, {
+
+// ==========================================
+// PERBAIKAN APP.JS
+// ==========================================
+
+// Selesaikan Incident
+function resolveIncident(incidentId) {
+  if (
+    confirm("Selesaikan tiket incident ini? Aset terdampak akan dipulihkan.")
+  ) {
+    fetch(`/api/incidents/${incidentId}/status`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "Resolved" }),
-    }).then(() => loadData());
+    })
+      .then((res) => res.json())
+      .then(() => {
+        alert("Incident selesai dan status aset telah dipulihkan!");
+        loadData(); // Re-render layer & peta
+      });
   }
 }
 
-function deleteIncidentRecord(id) {
-  if (confirm("Hapus catatan tiket insiden ini?")) {
-    fetch(`/api/incidents/${id}`, { method: "DELETE" }).then(() => loadData());
+// Hapus Incident
+function deleteIncidentRecord(incidentId) {
+  if (confirm("Hapus incident ini? Aset terdampak akan dipulihkan.")) {
+    fetch(`/api/incidents/${incidentId}`, {
+      method: "DELETE",
+    })
+      .then((res) => res.json())
+      .then(() => {
+        alert("Incident dihapus dan status aset telah dipulihkan!");
+        loadData(); // Re-render layer & peta
+      });
   }
 }
 

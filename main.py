@@ -19,7 +19,7 @@ app.add_middleware(
 
 
 def init_db():
-    """Inisialisasi database dan membuat semua tabel otomatis saat startup server."""
+    """Inisialisasi database dan migrasi otomatis kolom yang kurang."""
     conn = sqlite3.connect('gis_network.db')
     cursor = conn.cursor()
     
@@ -72,26 +72,44 @@ def init_db():
         )
     ''')
 
-    # 4. Tabel Incidents
+    # 4. Tabel Incidents (Lengkap)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS incidents (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticket_number TEXT UNIQUE,
+            ticket_number TEXT,
             title TEXT,
-            severity TEXT,          -- Critical, Major, Minor
-            incident_type TEXT,     -- FO Cut, Power Outage, Equipment Failure, Cable Sagging
-            status TEXT,            -- Open, In Progress, Resolved
+            severity TEXT,
+            incident_type TEXT,
+            status TEXT DEFAULT 'Open',
             description TEXT,
             latitude REAL,
             longitude REAL,
             cluster TEXT,
             area TEXT,
             city TEXT,
-            reported_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            linked_cable_id INTEGER,
+            linked_node_id INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             resolved_at DATETIME
         )
     ''')
     
+    # --- AUTO MIGRATION (Penambahan Kolom Otomatis untuk DB Lama) ---
+    cursor.execute("PRAGMA table_info(incidents)")
+    columns = [row[1] for row in cursor.fetchall()]
+    
+    if "linked_cable_id" not in columns:
+        cursor.execute("ALTER TABLE incidents ADD COLUMN linked_cable_id INTEGER")
+        print("[MIGRATION] Kolom 'linked_cable_id' berhasil ditambahkan.")
+
+    if "linked_node_id" not in columns:
+        cursor.execute("ALTER TABLE incidents ADD COLUMN linked_node_id INTEGER")
+        print("[MIGRATION] Kolom 'linked_node_id' berhasil ditambahkan.")
+
+    if "resolved_at" not in columns:
+        cursor.execute("ALTER TABLE incidents ADD COLUMN resolved_at DATETIME")
+        print("[MIGRATION] Kolom 'resolved_at' berhasil ditambahkan.")
+
     conn.commit()
     conn.close()
     print("[INFO] Database gis_network.db dan seluruh tabel berhasil terinisialisasi.")
@@ -168,6 +186,7 @@ class CoreConnectionSchema(BaseModel):
 
 
 # 2. Model Pydantic khusus Incidents
+# Model Pydantic di main.py
 class IncidentCreate(BaseModel):
     ticket_number: str
     title: str
@@ -180,6 +199,8 @@ class IncidentCreate(BaseModel):
     cluster: Optional[str] = "EKO"
     area: Optional[str] = "BANJARMASIN"
     city: Optional[str] = "Kota Banjarmasin"
+    linked_cable_id: Optional[int] = None
+    linked_node_id: Optional[int] = None
 
 class IncidentStatusUpdate(BaseModel):
     status: str
@@ -621,6 +642,7 @@ def get_node_port_summary(node_id: int):
             conn.close()
 
 # 16. INCIDENTS MANAGEMENT
+
 @app.get("/api/incidents")
 def get_incidents():
     conn = None
@@ -644,7 +666,9 @@ def get_incidents():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if conn: conn.close()
+        if conn:
+            conn.close()
+
 
 @app.post("/api/incidents")
 def create_incident(inc: IncidentCreate):
@@ -653,7 +677,7 @@ def create_incident(inc: IncidentCreate):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Pastikan tabel incidents sudah ada
+        # 1. Pastikan tabel incidents memiliki struktur lengkap (termasuk link aset)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS incidents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -668,13 +692,21 @@ def create_incident(inc: IncidentCreate):
                 cluster TEXT,
                 area TEXT,
                 city TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                linked_cable_id INTEGER,
+                linked_node_id INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                resolved_at DATETIME
             )
         ''')
         
+        # 2. Insert data insiden beserta linked_cable_id & linked_node_id
         cursor.execute('''
-            INSERT INTO incidents (ticket_number, title, severity, incident_type, status, description, latitude, longitude, cluster, area, city)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO incidents (
+                ticket_number, title, severity, incident_type, status, 
+                description, latitude, longitude, cluster, area, city, 
+                linked_cable_id, linked_node_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             inc.ticket_number, 
             inc.title, 
@@ -686,7 +718,9 @@ def create_incident(inc: IncidentCreate):
             inc.longitude,
             inc.cluster or "EKO", 
             inc.area or "BANJARMASIN", 
-            inc.city or "Kota Banjarmasin"
+            inc.city or "Kota Banjarmasin",
+            getattr(inc, 'linked_cable_id', None),
+            getattr(inc, 'linked_node_id', None)
         ))
         
         conn.commit()
@@ -701,109 +735,114 @@ def create_incident(inc: IncidentCreate):
             conn.close()
 
 
-@app.put("/api/incidents/{incident_id}/status")
-def update_incident_status(incident_id: int, payload: IncidentStatusUpdate):
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
+def get_downstream_assets(cursor, start_cable_id):
+    """Mencari hanya kabel & node yang berada di downstream dari kabel insiden."""
+    if not start_cable_id:
+        return set(), set()
+
+    affected_cables = {start_cable_id}
+    affected_nodes = set()
+    queue = [start_cable_id]
+    
+    while queue:
+        curr_cable = queue.pop(0)
+        # Ambil koneksi downstream HANYA yang terhubung dari kabel ini (via_cable_id)
+        rows = cursor.execute("""
+            SELECT to_asset_type, to_asset_id 
+            FROM core_connections 
+            WHERE via_cable_id = ?
+        """, (curr_cable,)).fetchall()
         
-        resolved_at_clause = ""
-        if payload.status == "Resolved":
-            cursor.execute("UPDATE incidents SET status = ?, resolved_at = CURRENT_TIMESTAMP WHERE id = ?", (payload.status, incident_id))
-        else:
-            cursor.execute("UPDATE incidents SET status = ? WHERE id = ?", (payload.status, incident_id))
-            
-        conn.commit()
-        return {"message": "Status incident berhasil diperbarui"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn: conn.close()
-
-@app.delete("/api/incidents/{incident_id}")
-def delete_incident(incident_id: int):
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM incidents WHERE id = ?", (incident_id,))
-        conn.commit()
-        return {"message": "Incident berhasil dihapus"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn: conn.close()
-
-# class IncidentCreate(BaseModel):
-#     ticket_number: Optional[str] = None
-#     incident_type: str
-#     latitude: float
-#     longitude: float
-#     description: Optional[str] = None
-#     linked_asset_type: Optional[str] = None # 'NODE' atau 'CABLE'
-#     linked_asset_id: Optional[int] = None
-
-class IncidentResolve(BaseModel):
-    resolved_at: Optional[str] = None
+        for r in rows:
+            a_type, a_id = r["to_asset_type"], r["to_asset_id"]
+            if a_type == "NODE":
+                affected_nodes.add(a_id)
+            elif a_type == "CABLE" and a_id not in affected_cables:
+                affected_cables.add(a_id)
+                queue.append(a_id)
+                
+    return affected_cables, affected_nodes
 
 
-
-# 17. ANALYZE INCIDENT IMPACT
 @app.post("/api/incidents/analyze-impact")
 def analyze_incident_impact(incident_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. Ambil data insiden
     inc = cursor.execute("SELECT * FROM incidents WHERE id = ?", (incident_id,)).fetchone()
-    if not inc:
-        raise HTTPException(status_code=404, detail="Incident tidak ditemukan")
-        
-    inc_data = dict(inc)
-    linked_cable_id = inc_data.get("linked_cable_id") # ID Kabel tempat titik diletakkan
-    
-    if not linked_cable_id:
+    if not inc or not inc["linked_cable_id"]:
+        conn.close()
         return {"affected_nodes": [], "affected_cables": []}
 
-    # 2. Lakukan Breadth-First Search (BFS) dari kabel/node terdampak ke arah downstream
-    affected_nodes = set()
-    affected_cables = {linked_cable_id}
+    # Cari aset downstream
+    aff_cables, aff_nodes = get_downstream_assets(cursor, inc["linked_cable_id"])
     
-    queue = [linked_cable_id]
-    
-    while queue:
-        current_cable_id = queue.pop(0)
-        
-        # Cari semua node & kabel yang terhubung setelah kabel ini via core_connections
-        connections = cursor.execute("""
-            SELECT to_asset_type, to_asset_id 
-            FROM core_connections 
-            WHERE via_cable_id = ?
-        """, (current_cable_id,)).fetchall()
-        
-        for conn_item in connections:
-            asset_type, asset_id = conn_item["to_asset_type"], conn_item["to_asset_id"]
-            if asset_type == "NODE":
-                affected_nodes.add(asset_id)
-            elif asset_type == "CABLE" and asset_id not in affected_cables:
-                affected_cables.add(asset_id)
-                queue.append(asset_id)
-
-    # 3. Update status aset terdampak di database
-    if affected_nodes:
-        cursor.execute(f"UPDATE nodes SET status = 'Down' WHERE id IN ({','.join(map(str, affected_nodes))})")
-    if affected_cables:
-        cursor.execute(f"UPDATE cables SET status = 'Down' WHERE id IN ({','.join(map(str, affected_cables))})")
+    # Set status aset downstream menjadi 'Cut/Broken'
+    if aff_nodes:
+        cursor.execute(f"UPDATE nodes SET status = 'Cut/Broken' WHERE id IN ({','.join(map(str, aff_nodes))})")
+    if aff_cables:
+        cursor.execute(f"UPDATE cables SET status = 'Cut/Broken' WHERE id IN ({','.join(map(str, aff_cables))})")
         
     conn.commit()
     conn.close()
+    return {"affected_nodes": list(aff_nodes), "affected_cables": list(aff_cables)}
+
+
+def recalculate_all_asset_statuses(cursor):
+    """
+    Fungsi pemulihan: Mereset semua aset menjadi 'Active',
+    lalu menerapkan dampak dari incident yang MASIH AKTIF saja.
+    """
+    # 1. Reset seluruh node & cable menjadi Active
+    cursor.execute("UPDATE nodes SET status = 'Active'")
+    cursor.execute("UPDATE cables SET status = 'Active'")
     
-    return {
-        "incident_id": incident_id,
-        "affected_nodes": list(affected_nodes),
-        "affected_cables": list(affected_cables)
-    }
+    # 2. Ambil semua incident yang belum 'Resolved'
+    active_incidents = cursor.execute(
+        "SELECT linked_cable_id FROM incidents WHERE status != 'Resolved' AND linked_cable_id IS NOT NULL"
+    ).fetchall()
+    
+    # 3. Terapkan ulang dampak incident yang masih aktif
+    for inc in active_incidents:
+        aff_cables, aff_nodes = get_downstream_assets(cursor, inc["linked_cable_id"])
+        if aff_nodes:
+            cursor.execute(f"UPDATE nodes SET status = 'Cut/Broken' WHERE id IN ({','.join(map(str, aff_nodes))})")
+        if aff_cables:
+            cursor.execute(f"UPDATE cables SET status = 'Cut/Broken' WHERE id IN ({','.join(map(str, aff_cables))})")
+
+
+@app.put("/api/incidents/{incident_id}/status")
+def update_incident_status(incident_id: int, payload: IncidentStatusUpdate):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Update status incident dan waktu resolved jika selesai
+    if payload.status == "Resolved":
+        cursor.execute("UPDATE incidents SET status = ?, resolved_at = CURRENT_TIMESTAMP WHERE id = ?", (payload.status, incident_id))
+    else:
+        cursor.execute("UPDATE incidents SET status = ? WHERE id = ?", (payload.status, incident_id))
+    
+    # Hitung ulang status aset secara menyeluruh
+    recalculate_all_asset_statuses(cursor)
+    
+    conn.commit()
+    conn.close()
+    return {"message": "Status incident diperbarui dan status aset dipulihkan/disesuaikan"}
+
+
+@app.delete("/api/incidents/{incident_id}")
+def delete_incident(incident_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("DELETE FROM incidents WHERE id = ?", (incident_id,))
+    
+    # Hitung ulang status aset secara menyeluruh setelah incident dihapus
+    recalculate_all_asset_statuses(cursor)
+    
+    conn.commit()
+    conn.close()
+    return {"message": "Incident berhasil dihapus dan status aset dipulihkan"}
 
 # --- MOUNT STATIC FILES (HARUS PALING BAWAH) ---
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
