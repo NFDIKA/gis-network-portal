@@ -1,0 +1,2465 @@
+{
+  "source": "KHS_FO_REGIONAL_FINAL_2025.xlsx",
+  "items": [
+    {
+      "code": "001",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Kabel ADSS Fiber Optik Single Mode 12 core G 652 D pada duct / tanam",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [7400.0, 4200.0],
+        "WKO": [8300.0, 4700.0],
+        "SSO": [7600.0, 4300.0],
+        "CJDO": [7400.0, 4200.0],
+        "SMUO": [8200.0, 4600.0],
+        "MPO": [9300.0, 5200.0],
+        "CSO": [7600.0, 4300.0],
+        "EJO": [7400.0, 4200.0],
+        "NSO": [8100.0, 4600.0],
+        "BNO": [7900.0, 4500.0],
+        "EKO": [8700.0, 4900.0]
+      },
+      "key": "001"
+    },
+    {
+      "code": "002",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Kabel ADSS Fiber Optik Single Mode 24 core G 652 D pada duct / tanam",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [8800.0, 4200.0],
+        "WKO": [10000.0, 4700.0],
+        "SSO": [9100.0, 4300.0],
+        "CJDO": [8800.0, 4200.0],
+        "SMUO": [9800.0, 4600.0],
+        "MPO": [11100.0, 5200.0],
+        "CSO": [9100.0, 4300.0],
+        "EJO": [8800.0, 4200.0],
+        "NSO": [9700.0, 4600.0],
+        "BNO": [9500.0, 4500.0],
+        "EKO": [10400.0, 4900.0]
+      },
+      "key": "002"
+    },
+    {
+      "code": "003",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Kabel ADSS Fiber Optik Single Mode 48 core G 652 D pada duct / tanam",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [13800.0, 4200.0],
+        "WKO": [15500.0, 4700.0],
+        "SSO": [14200.0, 4300.0],
+        "CJDO": [13800.0, 4200.0],
+        "SMUO": [15300.0, 4600.0],
+        "MPO": [17300.0, 5200.0],
+        "CSO": [14200.0, 4300.0],
+        "EJO": [13800.0, 4200.0],
+        "NSO": [15100.0, 4600.0],
+        "BNO": [14900.0, 4500.0],
+        "EKO": [16200.0, 4900.0]
+      },
+      "key": "003"
+    },
+    {
+      "code": "004",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Kabel ADSS Fiber Optik Single Mode 96 core G 652 D pada duct / tanam",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [19700.0, 4200.0],
+        "WKO": [22200.0, 4700.0],
+        "SSO": [20200.0, 4300.0],
+        "CJDO": [19700.0, 4200.0],
+        "SMUO": [21800.0, 4600.0],
+        "MPO": [24800.0, 5200.0],
+        "CSO": [20300.0, 4300.0],
+        "EJO": [19700.0, 4200.0],
+        "NSO": [21600.0, 4600.0],
+        "BNO": [21200.0, 4500.0],
+        "EKO": [23200.0, 4900.0]
+      },
+      "key": "004"
+    },
+    {
+      "code": "005",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Kabel Udara Fiber Optik Single Mode 2 (dua) core G652D Drop Core",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [3500.0, 2700.0],
+        "WKO": [3900.0, 3100.0],
+        "SSO": [3600.0, 2800.0],
+        "CJDO": [3500.0, 2700.0],
+        "SMUO": [3800.0, 3000.0],
+        "MPO": [4400.0, 3400.0],
+        "CSO": [3600.0, 2800.0],
+        "EJO": [3500.0, 2700.0],
+        "NSO": [3800.0, 3000.0],
+        "BNO": [3700.0, 2900.0],
+        "EKO": [4100.0, 3200.0]
+      },
+      "key": "005"
+    },
+    {
+      "code": "006",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Kabel Udara Fiber Optik Single Mode 4 (empat) core G652D Drop Core",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [6000.0, 3100.0],
+        "WKO": [6700.0, 3500.0],
+        "SSO": [6100.0, 3100.0],
+        "CJDO": [6000.0, 3100.0],
+        "SMUO": [6600.0, 3400.0],
+        "MPO": [7500.0, 3900.0],
+        "CSO": [6200.0, 3100.0],
+        "EJO": [6000.0, 3100.0],
+        "NSO": [6600.0, 3400.0],
+        "BNO": [6400.0, 3300.0],
+        "EKO": [7000.0, 3600.0]
+      },
+      "key": "006"
+    },
+    {
+      "code": "007",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Kabel Udara Fiber Optik Single Mode 1 (satu) core G652D Drop Core",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [2300.0, 2700.0],
+        "WKO": [2600.0, 3100.0],
+        "SSO": [2400.0, 2800.0],
+        "CJDO": [2300.0, 2700.0],
+        "SMUO": [2600.0, 3000.0],
+        "MPO": [2900.0, 3400.0],
+        "CSO": [2400.0, 2800.0],
+        "EJO": [2300.0, 2700.0],
+        "NSO": [2500.0, 3000.0],
+        "BNO": [2500.0, 2900.0],
+        "EKO": [2700.0, 3200.0]
+      },
+      "key": "007"
+    },
+    {
+      "code": "008",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Kabel Udara Fiber Optik Single Mode 12 Core G 652 D (ADSS)",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [7400.0, 4200.0],
+        "WKO": [8300.0, 4700.0],
+        "SSO": [7600.0, 4300.0],
+        "CJDO": [7400.0, 4200.0],
+        "SMUO": [8200.0, 4600.0],
+        "MPO": [9300.0, 5200.0],
+        "CSO": [7600.0, 4300.0],
+        "EJO": [7400.0, 4200.0],
+        "NSO": [8100.0, 4600.0],
+        "BNO": [7900.0, 4500.0],
+        "EKO": [8700.0, 4900.0]
+      },
+      "key": "008"
+    },
+    {
+      "code": "009",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Kabel Udara Fiber Optik Single Mode 24 Core G 652 D (ADSS)",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [8800.0, 4200.0],
+        "WKO": [10000.0, 4700.0],
+        "SSO": [9100.0, 4300.0],
+        "CJDO": [8800.0, 4200.0],
+        "SMUO": [9800.0, 4600.0],
+        "MPO": [11100.0, 5200.0],
+        "CSO": [9100.0, 4300.0],
+        "EJO": [8800.0, 4200.0],
+        "NSO": [9700.0, 4600.0],
+        "BNO": [9500.0, 4500.0],
+        "EKO": [10400.0, 4900.0]
+      },
+      "key": "009"
+    },
+    {
+      "code": "010",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Kabel Udara Fiber Optik Single Mode 48 Core G652D (ADSS)",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [13800.0, 4200.0],
+        "WKO": [15500.0, 4700.0],
+        "SSO": [14200.0, 4300.0],
+        "CJDO": [13800.0, 4200.0],
+        "SMUO": [15300.0, 4600.0],
+        "MPO": [17300.0, 5200.0],
+        "CSO": [14200.0, 4300.0],
+        "EJO": [13800.0, 4200.0],
+        "NSO": [15100.0, 4600.0],
+        "BNO": [14900.0, 4500.0],
+        "EKO": [16200.0, 4900.0]
+      },
+      "key": "010"
+    },
+    {
+      "code": "011",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Kabel Udara Fiber Optik Single Mode 96 Core G652D (ADSS)",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [19700.0, 4200.0],
+        "WKO": [22200.0, 4700.0],
+        "SSO": [20200.0, 4300.0],
+        "CJDO": [19700.0, 4200.0],
+        "SMUO": [21800.0, 4600.0],
+        "MPO": [24800.0, 5200.0],
+        "CSO": [20300.0, 4300.0],
+        "EJO": [19700.0, 4200.0],
+        "NSO": [21600.0, 4600.0],
+        "BNO": [21200.0, 4500.0],
+        "EKO": [23200.0, 4900.0]
+      },
+      "key": "011"
+    },
+    {
+      "code": "012",
+      "jenis": "JASA",
+      "description": "Pembongkaran Kabel Udara Fiber 12-96 Core ADSS / Aerial",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 1500.0],
+        "WKO": [0.0, 1600.0],
+        "SSO": [0.0, 1500.0],
+        "CJDO": [0.0, 1500.0],
+        "SMUO": [0.0, 1600.0],
+        "MPO": [0.0, 1800.0],
+        "CSO": [0.0, 1500.0],
+        "EJO": [0.0, 1500.0],
+        "NSO": [0.0, 1600.0],
+        "BNO": [0.0, 1600.0],
+        "EKO": [0.0, 1700.0]
+      },
+      "key": "012"
+    },
+    {
+      "code": "013",
+      "jenis": "JASA",
+      "description": "Pekerjaan Pengukuran Dengan OTDR",
+      "unit": "Core",
+      "prices": {
+        "WJO": [0.0, 25500.0],
+        "WKO": [0.0, 28800.0],
+        "SSO": [0.0, 26200.0],
+        "CJDO": [0.0, 25500.0],
+        "SMUO": [0.0, 28300.0],
+        "MPO": [0.0, 32100.0],
+        "CSO": [0.0, 26200.0],
+        "EJO": [0.0, 25500.0],
+        "NSO": [0.0, 28000.0],
+        "BNO": [0.0, 27500.0],
+        "EKO": [0.0, 30000.0]
+      },
+      "key": "013"
+    },
+    {
+      "code": "014",
+      "jenis": "JASA",
+      "description": "Pekerjaan Cut Over Kabel Serat Optik",
+      "unit": "core",
+      "prices": {
+        "WJO": [0.0, 57000.0],
+        "WKO": [0.0, 64400.0],
+        "SSO": [0.0, 58700.0],
+        "CJDO": [0.0, 57000.0],
+        "SMUO": [0.0, 63200.0],
+        "MPO": [0.0, 71800.0],
+        "CSO": [0.0, 58700.0],
+        "EJO": [0.0, 57000.0],
+        "NSO": [0.0, 62700.0],
+        "BNO": [0.0, 61500.0],
+        "EKO": [0.0, 67200.0]
+      },
+      "key": "014"
+    },
+    {
+      "code": "015",
+      "jenis": "JASA",
+      "description": "Penyambungan Kabel Optik Single Mode kap 1 core dengan cara fusion splice",
+      "unit": "core",
+      "prices": {
+        "WJO": [0.0, 54500.0],
+        "WKO": [0.0, 61500.0],
+        "SSO": [0.0, 56100.0],
+        "CJDO": [0.0, 54500.0],
+        "SMUO": [0.0, 60400.0],
+        "MPO": [0.0, 68600.0],
+        "CSO": [0.0, 56100.0],
+        "EJO": [0.0, 54500.0],
+        "NSO": [0.0, 59900.0],
+        "BNO": [0.0, 58800.0],
+        "EKO": [0.0, 64300.0]
+      },
+      "key": "015"
+    },
+    {
+      "code": "017",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan alat sambung / Joint Closure untuk Fiber Optik kapasitas 12 core merk PAZ atau setara (Inculde accessories dan Exclude Splicing)",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [600000.0, 40000.0],
+        "WKO": [678000.0, 45200.0],
+        "SSO": [618000.0, 41200.0],
+        "CJDO": [600000.0, 40000.0],
+        "SMUO": [666000.0, 44400.0],
+        "MPO": [756000.0, 50400.0],
+        "CSO": [618000.0, 41200.0],
+        "EJO": [600000.0, 40000.0],
+        "NSO": [660000.0, 44000.0],
+        "BNO": [648000.0, 43200.0],
+        "EKO": [708000.0, 47200.0]
+      },
+      "key": "017.1"
+    },
+    {
+      "code": "017",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan alat sambung / Joint Closure untuk Fiber Optik kapasitas 24 core merk PAZ atau setara (Inculde accessories dan Exclude Splicing)",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [650000.0, 40000.0],
+        "WKO": [734500.0, 45200.0],
+        "SSO": [669500.0, 41200.0],
+        "CJDO": [650000.0, 40000.0],
+        "SMUO": [721500.0, 44400.0],
+        "MPO": [819000.0, 50400.0],
+        "CSO": [669500.0, 41200.0],
+        "EJO": [650000.0, 40000.0],
+        "NSO": [715000.0, 44000.0],
+        "BNO": [702000.0, 43200.0],
+        "EKO": [767000.0, 47200.0]
+      },
+      "key": "017.2"
+    },
+    {
+      "code": "017",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan alat sambung / Joint Closure untuk Fiber Optik kapasitas 48 core merk PAZ atau setara (Inculde accessories dan Exclude Splicing)",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [725000.0, 42500.0],
+        "WKO": [819200.0, 48000.0],
+        "SSO": [746700.0, 43700.0],
+        "CJDO": [725000.0, 42500.0],
+        "SMUO": [804700.0, 47100.0],
+        "MPO": [913500.0, 53500.0],
+        "CSO": [746800.0, 43700.0],
+        "EJO": [725000.0, 42500.0],
+        "NSO": [797500.0, 46700.0],
+        "BNO": [783000.0, 45900.0],
+        "EKO": [855500.0, 50100.0]
+      },
+      "key": "017.3"
+    },
+    {
+      "code": "017",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan alat sambung / Joint Closure untuk Fiber Optik kapasitas 96 core merk PAZ atau setara (Inculde accessories dan Exclude Splicing)",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [850000.0, 45000.0],
+        "WKO": [960500.0, 50800.0],
+        "SSO": [875500.0, 46300.0],
+        "CJDO": [850000.0, 45000.0],
+        "SMUO": [943500.0, 49900.0],
+        "MPO": [1071000.0, 56700.0],
+        "CSO": [875500.0, 46300.0],
+        "EJO": [850000.0, 45000.0],
+        "NSO": [935000.0, 49500.0],
+        "BNO": [918000.0, 48600.0],
+        "EKO": [1003000.0, 53100.0]
+      },
+      "key": "017.4"
+    },
+    {
+      "code": "021",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan ODC-Pole (Outdoor) Merk PAZ dengan space untuk spliter modular termasuk material adaptor LC kap 144 core, berikut pelabelan (exclude biaya splice)",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [11500000.0, 500000.0],
+        "WKO": [12995000.0, 565000.0],
+        "SSO": [11845000.0, 515000.0],
+        "CJDO": [11500000.0, 500000.0],
+        "SMUO": [12765000.0, 555000.0],
+        "MPO": [14490000.0, 630000.0],
+        "CSO": [11845000.0, 515000.0],
+        "EJO": [11500000.0, 500000.0],
+        "NSO": [12650000.0, 550000.0],
+        "BNO": [12420000.0, 540000.0],
+        "EKO": [13570000.0, 590000.0]
+      },
+      "key": "021"
+    },
+    {
+      "code": "022",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan kabinet ODC (Outdoor) Merk PAZ kap 144 core, 12 Base Tray dengan space untuk spliter modular termasuk material adaptor LC UPC, pigtail, pondasi berlapis keramik, lantai kerja keramik, patok pengaman (5 buah), berikut pelabelan",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [12750000.0, 5500000.0],
+        "WKO": [14407500.0, 6215000.0],
+        "SSO": [13132500.0, 5665000.0],
+        "CJDO": [12750000.0, 5500000.0],
+        "SMUO": [14152500.0, 6105000.0],
+        "MPO": [16065000.0, 6930000.0],
+        "CSO": [13132500.0, 5665000.0],
+        "EJO": [12750000.0, 5500000.0],
+        "NSO": [14025000.0, 6050000.0],
+        "BNO": [13770000.0, 5940000.0],
+        "EKO": [15045000.0, 6490000.0]
+      },
+      "key": "022"
+    },
+    {
+      "code": "023",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan kabinet ODC (Outdoor) Merk PAZ kap 288 core, 24 Base Tray dengan space untuk spliter modular termasuk material adaptor LC UPC, pigtail, pondasi berlapis keramik, lantai kerja keramik, patok pengaman (5 buah), berikut pelabelan",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [20650000.0, 5800000.0],
+        "WKO": [23334500.0, 6554000.0],
+        "SSO": [21269500.0, 5974000.0],
+        "CJDO": [20650000.0, 5800000.0],
+        "SMUO": [22921500.0, 6438000.0],
+        "MPO": [26019000.0, 7308000.0],
+        "CSO": [21269500.0, 5974000.0],
+        "EJO": [20650000.0, 5800000.0],
+        "NSO": [22715000.0, 6380000.0],
+        "BNO": [22302000.0, 6264000.0],
+        "EKO": [24367000.0, 6844000.0]
+      },
+      "key": "023"
+    },
+    {
+      "code": "024",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Base Tray 12 port merk PAZ untuk ODC beserta adapter LC 24 core dan Pigtail (Exclude Splicing)",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [525000.0, 100000.0],
+        "WKO": [593200.0, 113000.0],
+        "SSO": [540700.0, 103000.0],
+        "CJDO": [525000.0, 100000.0],
+        "SMUO": [582700.0, 111000.0],
+        "MPO": [661500.0, 126000.0],
+        "CSO": [540800.0, 103000.0],
+        "EJO": [525000.0, 100000.0],
+        "NSO": [577500.0, 110000.0],
+        "BNO": [567000.0, 108000.0],
+        "EKO": [619500.0, 118000.0]
+      },
+      "key": "024"
+    },
+    {
+      "code": "025",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan adapter merk PAZ LC beserta Pigtail",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [6000.0, 1000.0],
+        "WKO": [6700.0, 1100.0],
+        "SSO": [6100.0, 1000.0],
+        "CJDO": [6000.0, 1000.0],
+        "SMUO": [6600.0, 1100.0],
+        "MPO": [7500.0, 1200.0],
+        "CSO": [6200.0, 1000.0],
+        "EJO": [6000.0, 1000.0],
+        "NSO": [6600.0, 1100.0],
+        "BNO": [6400.0, 1000.0],
+        "EKO": [7000.0, 1100.0]
+      },
+      "key": "025"
+    },
+    {
+      "code": "026",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengaman ODC 144 (Besi siku 4cmx4cmx4mm, besi beton 10mm (jarak antar besi beton 10cm, engsel besar, baut ram set 14mm dan kunci gembok 50mm",
+      "unit": "unit",
+      "prices": {
+        "WJO": [1650000.0, 680000.0],
+        "WKO": [1864500.0, 768400.0],
+        "SSO": [1699500.0, 700400.0],
+        "CJDO": [1650000.0, 680000.0],
+        "SMUO": [1831500.0, 754800.0],
+        "MPO": [2079000.0, 856800.0],
+        "CSO": [1699500.0, 700400.0],
+        "EJO": [1650000.0, 680000.0],
+        "NSO": [1815000.0, 748000.0],
+        "BNO": [1782000.0, 734400.0],
+        "EKO": [1947000.0, 802400.0]
+      },
+      "key": "026"
+    },
+    {
+      "code": "027",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengaman ODC 288 (Besi siku 4cmx4cmx4mm, besi beton 10mm (jarak antar besi beton 10cm, engsel besar, baut ram set 14mm dan kunci gembok 50mm",
+      "unit": "unit",
+      "prices": {
+        "WJO": [1800000.0, 695000.0],
+        "WKO": [2034000.0, 785300.0],
+        "SSO": [1854000.0, 715800.0],
+        "CJDO": [1800000.0, 695000.0],
+        "SMUO": [1998000.0, 771400.0],
+        "MPO": [2268000.0, 875700.0],
+        "CSO": [1854000.0, 715800.0],
+        "EJO": [1800000.0, 695000.0],
+        "NSO": [1980000.0, 764500.0],
+        "BNO": [1944000.0, 750600.0],
+        "EKO": [2124000.0, 820100.0]
+      },
+      "key": "027"
+    },
+    {
+      "code": "028",
+      "jenis": "JASA",
+      "description": "Akuisisi Lahan SITAC ODC",
+      "unit": "Node",
+      "prices": {
+        "WJO": [0.0, 6500000.0],
+        "WKO": [0.0, 7345000.0],
+        "SSO": [0.0, 6695000.0],
+        "CJDO": [0.0, 6500000.0],
+        "SMUO": [0.0, 7215000.0],
+        "MPO": [0.0, 8190000.0],
+        "CSO": [0.0, 6695000.0],
+        "EJO": [0.0, 6500000.0],
+        "NSO": [0.0, 7150000.0],
+        "BNO": [0.0, 7020000.0],
+        "EKO": [0.0, 7670000.0]
+      },
+      "key": "028"
+    },
+    {
+      "code": "029",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan OTB kap 12 core rack mount serta Adapter (SC/LC Connector), pigtail dan protection sleeve pada cassette/box (Exclude Jasa Splice)",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [885000.0, 45000.0],
+        "WKO": [1000000.0, 50800.0],
+        "SSO": [911500.0, 46300.0],
+        "CJDO": [885000.0, 45000.0],
+        "SMUO": [982300.0, 49900.0],
+        "MPO": [1115100.0, 56700.0],
+        "CSO": [911600.0, 46300.0],
+        "EJO": [885000.0, 45000.0],
+        "NSO": [973500.0, 49500.0],
+        "BNO": [955800.0, 48600.0],
+        "EKO": [1044300.0, 53100.0]
+      },
+      "key": "029"
+    },
+    {
+      "code": "030",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan OTB kap 24 core rack mount serta Adapter (SC/LC Connector), pigtail dan protection sleeve pada cassette/box (Exclude Jasa Splice)",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [1300000.0, 45000.0],
+        "WKO": [1469000.0, 50800.0],
+        "SSO": [1339000.0, 46300.0],
+        "CJDO": [1300000.0, 45000.0],
+        "SMUO": [1443000.0, 49900.0],
+        "MPO": [1638000.0, 56700.0],
+        "CSO": [1339000.0, 46300.0],
+        "EJO": [1300000.0, 45000.0],
+        "NSO": [1430000.0, 49500.0],
+        "BNO": [1404000.0, 48600.0],
+        "EKO": [1534000.0, 53100.0]
+      },
+      "key": "030"
+    },
+    {
+      "code": "031",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan OTB Single mode kap 48 core serta Adapter (SC/LC Connector), pigtail dan protection sleeve pada cassette/box ()Exclude Jasa Splice",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [2575000.0, 45000.0],
+        "WKO": [2909700.0, 50800.0],
+        "SSO": [2652200.0, 46300.0],
+        "CJDO": [2575000.0, 45000.0],
+        "SMUO": [2858200.0, 49900.0],
+        "MPO": [3244500.0, 56700.0],
+        "CSO": [2652300.0, 46300.0],
+        "EJO": [2575000.0, 45000.0],
+        "NSO": [2832500.0, 49500.0],
+        "BNO": [2781000.0, 48600.0],
+        "EKO": [3038500.0, 53100.0]
+      },
+      "key": "031"
+    },
+    {
+      "code": "032",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan OTB Single mode kap 96 core serta Adapter (SC/LC Connector), pigtail dan protection sleeve pada cassette/box (Exclude Jasa Splice)",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [4630000.0, 45000.0],
+        "WKO": [5231900.0, 50800.0],
+        "SSO": [4768900.0, 46300.0],
+        "CJDO": [4630000.0, 45000.0],
+        "SMUO": [5139300.0, 49900.0],
+        "MPO": [5833800.0, 56700.0],
+        "CSO": [4768900.0, 46300.0],
+        "EJO": [4630000.0, 45000.0],
+        "NSO": [5093000.0, 49500.0],
+        "BNO": [5000400.0, 48600.0],
+        "EKO": [5463400.0, 53100.0]
+      },
+      "key": "032"
+    },
+    {
+      "code": "033",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Passive Splitter 1:8, type modular SC/UPC, for ODC, termasuk pigtail merk PAZ",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [300000.0, 32000.0],
+        "WKO": [339000.0, 36100.0],
+        "SSO": [309000.0, 32900.0],
+        "CJDO": [300000.0, 32000.0],
+        "SMUO": [333000.0, 35500.0],
+        "MPO": [378000.0, 40300.0],
+        "CSO": [309000.0, 32900.0],
+        "EJO": [300000.0, 32000.0],
+        "NSO": [330000.0, 35200.0],
+        "BNO": [324000.0, 34500.0],
+        "EKO": [354000.0, 37700.0]
+      },
+      "key": "033"
+    },
+    {
+      "code": "034",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Passive Splitter 1:8, type PLC SC/UPC, for ODP, termasuk pigtail",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [300000.0, 37000.0],
+        "WKO": [339000.0, 41800.0],
+        "SSO": [309000.0, 38100.0],
+        "CJDO": [300000.0, 37000.0],
+        "SMUO": [333000.0, 41000.0],
+        "MPO": [378000.0, 46600.0],
+        "CSO": [309000.0, 38100.0],
+        "EJO": [300000.0, 37000.0],
+        "NSO": [330000.0, 40700.0],
+        "BNO": [324000.0, 39900.0],
+        "EKO": [354000.0, 43600.0]
+      },
+      "key": "034"
+    },
+    {
+      "code": "035",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Passive Splitter 1:16, type modular SC/UPC, for ODC, termasuk pigtail",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [335000.0, 32000.0],
+        "WKO": [378500.0, 36100.0],
+        "SSO": [345000.0, 32900.0],
+        "CJDO": [335000.0, 32000.0],
+        "SMUO": [371800.0, 35500.0],
+        "MPO": [422100.0, 40300.0],
+        "CSO": [345100.0, 32900.0],
+        "EJO": [335000.0, 32000.0],
+        "NSO": [368500.0, 35200.0],
+        "BNO": [361800.0, 34500.0],
+        "EKO": [395300.0, 37700.0]
+      },
+      "key": "035"
+    },
+    {
+      "code": "036",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Passive Splitter 1:16, type PLC SC/UPC, for ODP, termasuk pigtail merk PAZ",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [335000.0, 40000.0],
+        "WKO": [378500.0, 45200.0],
+        "SSO": [345000.0, 41200.0],
+        "CJDO": [335000.0, 40000.0],
+        "SMUO": [371800.0, 44400.0],
+        "MPO": [422100.0, 50400.0],
+        "CSO": [345100.0, 41200.0],
+        "EJO": [335000.0, 40000.0],
+        "NSO": [368500.0, 44000.0],
+        "BNO": [361800.0, 43200.0],
+        "EKO": [395300.0, 47200.0]
+      },
+      "key": "036"
+    },
+    {
+      "code": "037",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan ODP Merk PAZ type tiang Kap 8 core berikut space pasive spliter (1:8), adapter SC,berikut pelabelan",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [800000.0, 50000.0],
+        "WKO": [904000.0, 56500.0],
+        "SSO": [824000.0, 51500.0],
+        "CJDO": [800000.0, 50000.0],
+        "SMUO": [888000.0, 55500.0],
+        "MPO": [1008000.0, 63000.0],
+        "CSO": [824000.0, 51500.0],
+        "EJO": [800000.0, 50000.0],
+        "NSO": [880000.0, 55000.0],
+        "BNO": [864000.0, 54000.0],
+        "EKO": [944000.0, 59000.0]
+      },
+      "key": "037"
+    },
+    {
+      "code": "038",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan ODP Merk PAZ type tiang Kap 16 core berikut space pasive spliter (1:16), adapter SC,berikut pelabelan",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [885000.0, 55000.0],
+        "WKO": [1000000.0, 62100.0],
+        "SSO": [911500.0, 56600.0],
+        "CJDO": [885000.0, 55000.0],
+        "SMUO": [982300.0, 61000.0],
+        "MPO": [1115100.0, 69300.0],
+        "CSO": [911600.0, 56600.0],
+        "EJO": [885000.0, 55000.0],
+        "NSO": [973500.0, 60500.0],
+        "BNO": [955800.0, 59400.0],
+        "EKO": [1044300.0, 64900.0]
+      },
+      "key": "038"
+    },
+    {
+      "code": "039",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan ODP (Pilar/Pedestal) kap 8 core termasuk pigtail, berikut space 1 splitter (2:8) dan pelabelan",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [1976000.0, 122000.0],
+        "WKO": [2232800.0, 137800.0],
+        "SSO": [2035200.0, 125600.0],
+        "CJDO": [1976000.0, 122000.0],
+        "SMUO": [2193300.0, 135400.0],
+        "MPO": [2489700.0, 153700.0],
+        "CSO": [2035300.0, 125600.0],
+        "EJO": [1976000.0, 122000.0],
+        "NSO": [2173600.0, 134200.0],
+        "BNO": [2134000.0, 131700.0],
+        "EKO": [2331600.0, 143900.0]
+      },
+      "key": "039"
+    },
+    {
+      "code": "040",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan ODP (Pilar/Pedestal) kap 16 core termasuk pigtail, berikut space 1 splitter (2:16) dan pelabelan",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [2248000.0, 122000.0],
+        "WKO": [2540200.0, 137800.0],
+        "SSO": [2315400.0, 125600.0],
+        "CJDO": [2248000.0, 122000.0],
+        "SMUO": [2495200.0, 135400.0],
+        "MPO": [2832400.0, 153700.0],
+        "CSO": [2315400.0, 125600.0],
+        "EJO": [2248000.0, 122000.0],
+        "NSO": [2472800.0, 134200.0],
+        "BNO": [2427800.0, 131700.0],
+        "EKO": [2652600.0, 143900.0]
+      },
+      "key": "040"
+    },
+    {
+      "code": "041",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pekeriaan Pembuatan HH Pit Portable ODP / Pedestal beserta aksesorisnya",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [2455000.0, 275000.0],
+        "WKO": [2774100.0, 310700.0],
+        "SSO": [2528600.0, 283200.0],
+        "CJDO": [2455000.0, 275000.0],
+        "SMUO": [2725000.0, 305200.0],
+        "MPO": [3093300.0, 346500.0],
+        "CSO": [2528700.0, 283200.0],
+        "EJO": [2455000.0, 275000.0],
+        "NSO": [2700500.0, 302500.0],
+        "BNO": [2651400.0, 297000.0],
+        "EKO": [2896900.0, 324500.0]
+      },
+      "key": "041"
+    },
+    {
+      "code": "042",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Patch cord 2 meter, (SIMPLEX FC/LC/SC-APC To FC/LC/SC-APC), G.652 D PAZ",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [52500.0, 3000.0],
+        "WKO": [59300.0, 3300.0],
+        "SSO": [54000.0, 3000.0],
+        "CJDO": [52500.0, 3000.0],
+        "SMUO": [58200.0, 3300.0],
+        "MPO": [66100.0, 3700.0],
+        "CSO": [54100.0, 3000.0],
+        "EJO": [52500.0, 3000.0],
+        "NSO": [57700.0, 3300.0],
+        "BNO": [56700.0, 3200.0],
+        "EKO": [61900.0, 3500.0]
+      },
+      "key": "042"
+    },
+    {
+      "code": "043",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Patch cord 2 meter, (SIMPLEX PC/LC/SC-UPC To FC/LC/SC-UPC), G.652D PAZ",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [52500.0, 3000.0],
+        "WKO": [59300.0, 3300.0],
+        "SSO": [54000.0, 3000.0],
+        "CJDO": [52500.0, 3000.0],
+        "SMUO": [58200.0, 3300.0],
+        "MPO": [66100.0, 3700.0],
+        "CSO": [54100.0, 3000.0],
+        "EJO": [52500.0, 3000.0],
+        "NSO": [57700.0, 3300.0],
+        "BNO": [56700.0, 3200.0],
+        "EKO": [61900.0, 3500.0]
+      },
+      "key": "043"
+    },
+    {
+      "code": "044",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Additional patch cord SIMPLEX, G.652D",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [5200.0, 1500.0],
+        "WKO": [5800.0, 1600.0],
+        "SSO": [5300.0, 1500.0],
+        "CJDO": [5200.0, 1500.0],
+        "SMUO": [5700.0, 1600.0],
+        "MPO": [6500.0, 1800.0],
+        "CSO": [5400.0, 1500.0],
+        "EJO": [5200.0, 1500.0],
+        "NSO": [5700.0, 1600.0],
+        "BNO": [5600.0, 1600.0],
+        "EKO": [6100.0, 1700.0]
+      },
+      "key": "044"
+    },
+    {
+      "code": "045",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Patch cord 2 meter, (DUPLEX FC/LC/SC-APC To FC/LC/SC-APC), G.652 D PAZ",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [105000.0, 5000.0],
+        "WKO": [118600.0, 5600.0],
+        "SSO": [108100.0, 5100.0],
+        "CJDO": [105000.0, 5000.0],
+        "SMUO": [116500.0, 5500.0],
+        "MPO": [132300.0, 6300.0],
+        "CSO": [108200.0, 5100.0],
+        "EJO": [105000.0, 5000.0],
+        "NSO": [115500.0, 5500.0],
+        "BNO": [113400.0, 5400.0],
+        "EKO": [123900.0, 5900.0]
+      },
+      "key": "045"
+    },
+    {
+      "code": "046",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Patch cord 2 meter, (DUPLEX PC/LC/SC-UPC To FC/LC/SC-UPC), G.652D PAZ",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [105000.0, 4000.0],
+        "WKO": [118600.0, 4500.0],
+        "SSO": [108100.0, 4100.0],
+        "CJDO": [105000.0, 4000.0],
+        "SMUO": [116500.0, 4400.0],
+        "MPO": [132300.0, 5000.0],
+        "CSO": [108200.0, 4100.0],
+        "EJO": [105000.0, 4000.0],
+        "NSO": [115500.0, 4400.0],
+        "BNO": [113400.0, 4300.0],
+        "EKO": [123900.0, 4700.0]
+      },
+      "key": "046"
+    },
+    {
+      "code": "047",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Additional patch cord DUPLEX, G.652D",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [10400.0, 2000.0],
+        "WKO": [11700.0, 2200.0],
+        "SSO": [10700.0, 2000.0],
+        "CJDO": [10400.0, 2000.0],
+        "SMUO": [11500.0, 2200.0],
+        "MPO": [13100.0, 2500.0],
+        "CSO": [10700.0, 2000.0],
+        "EJO": [10400.0, 2000.0],
+        "NSO": [11400.0, 2200.0],
+        "BNO": [11200.0, 2100.0],
+        "EKO": [12200.0, 2300.0]
+      },
+      "key": "047"
+    },
+    {
+      "code": "048",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Roset/lndoor Optical Outlet with SC Adaptor - kap 1 port untuk kabel DW berikut pigtail (Exclude Jasa Splice)",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [35000.0, 15000.0],
+        "WKO": [39500.0, 16900.0],
+        "SSO": [36000.0, 15400.0],
+        "CJDO": [35000.0, 15000.0],
+        "SMUO": [38800.0, 16600.0],
+        "MPO": [44100.0, 18900.0],
+        "CSO": [36100.0, 15400.0],
+        "EJO": [35000.0, 15000.0],
+        "NSO": [38500.0, 16500.0],
+        "BNO": [37800.0, 16200.0],
+        "EKO": [41300.0, 17700.0]
+      },
+      "key": "048"
+    },
+    {
+      "code": "049",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Roset/lndoor Optical Outlet with SC Adaptor - kap 2 port untuk kabel DW berikut pigtail (Exclude Jasa Splice)",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [45000.0, 15000.0],
+        "WKO": [50800.0, 16900.0],
+        "SSO": [46300.0, 15400.0],
+        "CJDO": [45000.0, 15000.0],
+        "SMUO": [49900.0, 16600.0],
+        "MPO": [56700.0, 18900.0],
+        "CSO": [46400.0, 15400.0],
+        "EJO": [45000.0, 15000.0],
+        "NSO": [49500.0, 16500.0],
+        "BNO": [48600.0, 16200.0],
+        "EKO": [53100.0, 17700.0]
+      },
+      "key": "049"
+    },
+    {
+      "code": "050",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Roset/lndoor Optical Outlet with SC Adaptor - kap 4 port untuk kabel ADSS berikut pigtail (Exclude Jasa Splice)",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [200000.0, 15000.0],
+        "WKO": [226000.0, 16900.0],
+        "SSO": [206000.0, 15400.0],
+        "CJDO": [200000.0, 15000.0],
+        "SMUO": [222000.0, 16600.0],
+        "MPO": [252000.0, 18900.0],
+        "CSO": [206000.0, 15400.0],
+        "EJO": [200000.0, 15000.0],
+        "NSO": [220000.0, 16500.0],
+        "BNO": [216000.0, 16200.0],
+        "EKO": [236000.0, 17700.0]
+      },
+      "key": "050"
+    },
+    {
+      "code": "051",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Roset/lndoor Optical Outlet with SC Adaptor - kap 8 port untuk kabel ADSS berikut pigtail (Exclude Jasa Splice)",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [250000.0, 15000.0],
+        "WKO": [282500.0, 16900.0],
+        "SSO": [257500.0, 15400.0],
+        "CJDO": [250000.0, 15000.0],
+        "SMUO": [277500.0, 16600.0],
+        "MPO": [315000.0, 18900.0],
+        "CSO": [257500.0, 15400.0],
+        "EJO": [250000.0, 15000.0],
+        "NSO": [275000.0, 16500.0],
+        "BNO": [270000.0, 16200.0],
+        "EKO": [295000.0, 17700.0]
+      },
+      "key": "051"
+    },
+    {
+      "code": "052",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Tiang Besi 7 meter, berikut cat & cor pondasi dan assesories dengan kekuatan tarik 140 kg",
+      "unit": "Unit",
+      "prices": {
+        "WJO": [1625000.0, 245000.0],
+        "WKO": [1836200.0, 276800.0],
+        "SSO": [1673700.0, 252300.0],
+        "CJDO": [1625000.0, 245000.0],
+        "SMUO": [1803700.0, 271900.0],
+        "MPO": [2047500.0, 308700.0],
+        "CSO": [1673800.0, 252300.0],
+        "EJO": [1625000.0, 245000.0],
+        "NSO": [1787500.0, 269500.0],
+        "BNO": [1755000.0, 264600.0],
+        "EKO": [1917500.0, 289100.0]
+      },
+      "key": "052"
+    },
+    {
+      "code": "053",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Tiang Besi 9 meter, berikut cat & cor dan assesories dengan kekuatan tarik 140 kg",
+      "unit": "Unit",
+      "prices": {
+        "WJO": [2683000.0, 263000.0],
+        "WKO": [3031700.0, 297100.0],
+        "SSO": [2763400.0, 270800.0],
+        "CJDO": [2683000.0, 263000.0],
+        "SMUO": [2978100.0, 291900.0],
+        "MPO": [3380500.0, 331300.0],
+        "CSO": [2763500.0, 270800.0],
+        "EJO": [2683000.0, 263000.0],
+        "NSO": [2951300.0, 289300.0],
+        "BNO": [2897600.0, 284000.0],
+        "EKO": [3165900.0, 310300.0]
+      },
+      "key": "053"
+    },
+    {
+      "code": "054",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Temberang Tarik",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [473000.0, 62500.0],
+        "WKO": [534400.0, 70600.0],
+        "SSO": [487100.0, 64300.0],
+        "CJDO": [473000.0, 62500.0],
+        "SMUO": [525000.0, 69300.0],
+        "MPO": [595900.0, 78700.0],
+        "CSO": [487200.0, 64300.0],
+        "EJO": [473000.0, 62500.0],
+        "NSO": [520300.0, 68700.0],
+        "BNO": [510800.0, 67500.0],
+        "EKO": [558100.0, 73700.0]
+      },
+      "key": "054"
+    },
+    {
+      "code": "055",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Asesoris tiang eksisting untuk kabel ADSS",
+      "unit": "set",
+      "prices": {
+        "WJO": [29000.0, 16500.0],
+        "WKO": [32700.0, 18600.0],
+        "SSO": [29800.0, 16900.0],
+        "CJDO": [29000.0, 16500.0],
+        "SMUO": [32100.0, 18300.0],
+        "MPO": [36500.0, 20700.0],
+        "CSO": [29900.0, 16900.0],
+        "EJO": [29000.0, 16500.0],
+        "NSO": [31900.0, 18100.0],
+        "BNO": [31300.0, 17800.0],
+        "EKO": [34200.0, 19400.0]
+      },
+      "key": "055"
+    },
+    {
+      "code": "056",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Tiang Beton 7 meter spek WIKA, berikut cor pondasi dan assesories",
+      "unit": "unit",
+      "prices": {
+        "WJO": [2950000.0, 533000.0],
+        "WKO": [3333500.0, 602200.0],
+        "SSO": [3038500.0, 548900.0],
+        "CJDO": [2950000.0, 533000.0],
+        "SMUO": [3274500.0, 591600.0],
+        "MPO": [3717000.0, 671500.0],
+        "CSO": [3038500.0, 548900.0],
+        "EJO": [2950000.0, 533000.0],
+        "NSO": [3245000.0, 586300.0],
+        "BNO": [3186000.0, 575600.0],
+        "EKO": [3481000.0, 628900.0]
+      },
+      "key": "056"
+    },
+    {
+      "code": "057",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Tiang Beton 9 meter spek WIKA, berikut cor pondasi dan assesories",
+      "unit": "unit",
+      "prices": {
+        "WJO": [3596000.0, 700000.0],
+        "WKO": [4063400.0, 791000.0],
+        "SSO": [3703800.0, 721000.0],
+        "CJDO": [3596000.0, 700000.0],
+        "SMUO": [3991500.0, 777000.0],
+        "MPO": [4530900.0, 882000.0],
+        "CSO": [3703900.0, 721000.0],
+        "EJO": [3596000.0, 700000.0],
+        "NSO": [3955600.0, 770000.0],
+        "BNO": [3883600.0, 756000.0],
+        "EKO": [4243200.0, 826000.0]
+      },
+      "key": "057"
+    },
+    {
+      "code": "058",
+      "jenis": "JASA",
+      "description": "Biaya Pembongkaran Tiang Besi Ukuran 7 Meter",
+      "unit": "set",
+      "prices": {
+        "WJO": [0.0, 90000.0],
+        "WKO": [0.0, 101700.0],
+        "SSO": [0.0, 92700.0],
+        "CJDO": [0.0, 90000.0],
+        "SMUO": [0.0, 99900.0],
+        "MPO": [0.0, 113400.0],
+        "CSO": [0.0, 92700.0],
+        "EJO": [0.0, 90000.0],
+        "NSO": [0.0, 99000.0],
+        "BNO": [0.0, 97200.0],
+        "EKO": [0.0, 106200.0]
+      },
+      "key": "058"
+    },
+    {
+      "code": "059",
+      "jenis": "JASA",
+      "description": "Biaya Pembongkaran Tiang Besi Ukuran 9 Meter",
+      "unit": "set",
+      "prices": {
+        "WJO": [0.0, 90000.0],
+        "WKO": [0.0, 101700.0],
+        "SSO": [0.0, 92700.0],
+        "CJDO": [0.0, 90000.0],
+        "SMUO": [0.0, 99900.0],
+        "MPO": [0.0, 113400.0],
+        "CSO": [0.0, 92700.0],
+        "EJO": [0.0, 90000.0],
+        "NSO": [0.0, 99000.0],
+        "BNO": [0.0, 97200.0],
+        "EKO": [0.0, 106200.0]
+      },
+      "key": "059"
+    },
+    {
+      "code": "060",
+      "jenis": "JASA",
+      "description": "Biaya Pembongkaran Tiang Beton Ukuran 7 Meter",
+      "unit": "set",
+      "prices": {
+        "WJO": [0.0, 987000.0],
+        "WKO": [0.0, 1115300.0],
+        "SSO": [0.0, 1016600.0],
+        "CJDO": [0.0, 987000.0],
+        "SMUO": [0.0, 1095500.0],
+        "MPO": [0.0, 1243600.0],
+        "CSO": [0.0, 1016600.0],
+        "EJO": [0.0, 987000.0],
+        "NSO": [0.0, 1085700.0],
+        "BNO": [0.0, 1065900.0],
+        "EKO": [0.0, 1164600.0]
+      },
+      "key": "060"
+    },
+    {
+      "code": "061",
+      "jenis": "JASA",
+      "description": "Biaya Pembongkaran Tiang Beton Ukuran 9 Meter",
+      "unit": "set",
+      "prices": {
+        "WJO": [0.0, 987000.0],
+        "WKO": [0.0, 1115300.0],
+        "SSO": [0.0, 1016600.0],
+        "CJDO": [0.0, 987000.0],
+        "SMUO": [0.0, 1095500.0],
+        "MPO": [0.0, 1243600.0],
+        "CSO": [0.0, 1016600.0],
+        "EJO": [0.0, 987000.0],
+        "NSO": [0.0, 1085700.0],
+        "BNO": [0.0, 1065900.0],
+        "EKO": [0.0, 1164600.0]
+      },
+      "key": "061"
+    },
+    {
+      "code": "062",
+      "jenis": "JASA",
+      "description": "Biaya Relokasi (Pembongkaran dan pemasangan kembali, include pengecoran) Tiang Besi Ukuran 7 Meter",
+      "unit": "unit",
+      "prices": {
+        "WJO": [0.0, 330000.0],
+        "WKO": [0.0, 372900.0],
+        "SSO": [0.0, 339900.0],
+        "CJDO": [0.0, 330000.0],
+        "SMUO": [0.0, 366300.0],
+        "MPO": [0.0, 415800.0],
+        "CSO": [0.0, 339900.0],
+        "EJO": [0.0, 330000.0],
+        "NSO": [0.0, 363000.0],
+        "BNO": [0.0, 356400.0],
+        "EKO": [0.0, 389400.0]
+      },
+      "key": "062"
+    },
+    {
+      "code": "063",
+      "jenis": "JASA",
+      "description": "Biaya Relokasi (Pembongkaran dan pemasangan kembali, include pengecoran) Tiang Besi ukuran 9 meter",
+      "unit": "unit",
+      "prices": {
+        "WJO": [0.0, 330000.0],
+        "WKO": [0.0, 372900.0],
+        "SSO": [0.0, 339900.0],
+        "CJDO": [0.0, 330000.0],
+        "SMUO": [0.0, 366300.0],
+        "MPO": [0.0, 415800.0],
+        "CSO": [0.0, 339900.0],
+        "EJO": [0.0, 330000.0],
+        "NSO": [0.0, 363000.0],
+        "BNO": [0.0, 356400.0],
+        "EKO": [0.0, 389400.0]
+      },
+      "key": "063"
+    },
+    {
+      "code": "064",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Riser Pipe galvanis untuk pengaman kabel optik ke ODC Pole/ titik naik KU diamater 2 inch panjang 3 meter",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [225000.0, 55000.0],
+        "WKO": [254200.0, 62100.0],
+        "SSO": [231700.0, 56600.0],
+        "CJDO": [225000.0, 55000.0],
+        "SMUO": [249700.0, 61000.0],
+        "MPO": [283500.0, 69300.0],
+        "CSO": [231800.0, 56600.0],
+        "EJO": [225000.0, 55000.0],
+        "NSO": [247500.0, 60500.0],
+        "BNO": [243000.0, 59400.0],
+        "EKO": [265500.0, 64900.0]
+      },
+      "key": "064"
+    },
+    {
+      "code": "065",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Pipa PVC Conduit 20 mm",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [10000.0, 4000.0],
+        "WKO": [11300.0, 4500.0],
+        "SSO": [10300.0, 4100.0],
+        "CJDO": [10000.0, 4000.0],
+        "SMUO": [11100.0, 4400.0],
+        "MPO": [12600.0, 5000.0],
+        "CSO": [10300.0, 4100.0],
+        "EJO": [10000.0, 4000.0],
+        "NSO": [11000.0, 4400.0],
+        "BNO": [10800.0, 4300.0],
+        "EKO": [11800.0, 4700.0]
+      },
+      "key": "065.1"
+    },
+    {
+      "code": "065",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Fleksibel Conduit 20 mm",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [10000.0, 4000.0],
+        "WKO": [11300.0, 4500.0],
+        "SSO": [10300.0, 4100.0],
+        "CJDO": [10000.0, 4000.0],
+        "SMUO": [11100.0, 4400.0],
+        "MPO": [12600.0, 5000.0],
+        "CSO": [10300.0, 4100.0],
+        "EJO": [10000.0, 4000.0],
+        "NSO": [11000.0, 4400.0],
+        "BNO": [10800.0, 4300.0],
+        "EKO": [11800.0, 4700.0]
+      },
+      "key": "065.2"
+    },
+    {
+      "code": "067",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan Pipa Besi Diameter 100 mm dan ketebalan pipa 3,65 mm untuk crossing 1 pipa bentang < = 6 meter",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [306000.0, 54000.0],
+        "WKO": [345700.0, 61000.0],
+        "SSO": [315100.0, 55600.0],
+        "CJDO": [306000.0, 54000.0],
+        "SMUO": [339600.0, 59900.0],
+        "MPO": [385500.0, 68000.0],
+        "CSO": [315200.0, 55600.0],
+        "EJO": [306000.0, 54000.0],
+        "NSO": [336600.0, 59400.0],
+        "BNO": [330400.0, 58300.0],
+        "EKO": [361000.0, 63700.0]
+      },
+      "key": "067"
+    },
+    {
+      "code": "068",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Pipa Duct PVC diameter dalam 100 mm, ketebalan 4 mm, 1 pipa termasuk pengecoran",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [58000.0, 54000.0],
+        "WKO": [65500.0, 61000.0],
+        "SSO": [59700.0, 55600.0],
+        "CJDO": [58000.0, 54000.0],
+        "SMUO": [64300.0, 59900.0],
+        "MPO": [73000.0, 68000.0],
+        "CSO": [59700.0, 55600.0],
+        "EJO": [58000.0, 54000.0],
+        "NSO": [63800.0, 59400.0],
+        "BNO": [62600.0, 58300.0],
+        "EKO": [68400.0, 63700.0]
+      },
+      "key": "068"
+    },
+    {
+      "code": "069",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Pipa Duct dengan selubung pasir dia 100 mm dengan ketebalan 5,5 mm, 1 pipa ( crossing )",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [56000.0, 54000.0],
+        "WKO": [63200.0, 61000.0],
+        "SSO": [57600.0, 55600.0],
+        "CJDO": [56000.0, 54000.0],
+        "SMUO": [62100.0, 59900.0],
+        "MPO": [70500.0, 68000.0],
+        "CSO": [57700.0, 55600.0],
+        "EJO": [56000.0, 54000.0],
+        "NSO": [61600.0, 59400.0],
+        "BNO": [60400.0, 58300.0],
+        "EKO": [66000.0, 63700.0]
+      },
+      "key": "069"
+    },
+    {
+      "code": "070",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan pipa Duct menempel pada jembatan (support existing) menggunakan Pipa Galvanis diamenter 2 inch, tebal 1.8 mm, 1 pipa 6 mtr",
+      "unit": "Lonjor / 6 mtr",
+      "prices": {
+        "WJO": [400000.0, 120000.0],
+        "WKO": [452000.0, 135600.0],
+        "SSO": [412000.0, 123600.0],
+        "CJDO": [400000.0, 120000.0],
+        "SMUO": [444000.0, 133200.0],
+        "MPO": [504000.0, 151200.0],
+        "CSO": [412000.0, 123600.0],
+        "EJO": [400000.0, 120000.0],
+        "NSO": [440000.0, 132000.0],
+        "BNO": [432000.0, 129600.0],
+        "EKO": [472000.0, 141600.0]
+      },
+      "key": "070"
+    },
+    {
+      "code": "071",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan pipa Duct pada jembatan dengan self support berpenguatan menggunakan Pipa Galvanis diamenter 2 inch, tebal 1.8 mm, 1 pipa 6 mtr",
+      "unit": "Lonjor / 6 mtr",
+      "prices": {
+        "WJO": [400000.0, 300000.0],
+        "WKO": [452000.0, 339000.0],
+        "SSO": [412000.0, 309000.0],
+        "CJDO": [400000.0, 300000.0],
+        "SMUO": [444000.0, 333000.0],
+        "MPO": [504000.0, 378000.0],
+        "CSO": [412000.0, 309000.0],
+        "EJO": [400000.0, 300000.0],
+        "NSO": [440000.0, 330000.0],
+        "BNO": [432000.0, 324000.0],
+        "EKO": [472000.0, 354000.0]
+      },
+      "key": "071"
+    },
+    {
+      "code": "072",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan pipa Duct menempel di jembatan menggunakan Pipa Galvanis diamenter 2 inch, tebal 1.8 mm, 1 pipa 6 mtr",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [400000.0, 150000.0],
+        "WKO": [452000.0, 169500.0],
+        "SSO": [412000.0, 154500.0],
+        "CJDO": [400000.0, 150000.0],
+        "SMUO": [444000.0, 166500.0],
+        "MPO": [504000.0, 189000.0],
+        "CSO": [412000.0, 154500.0],
+        "EJO": [400000.0, 150000.0],
+        "NSO": [440000.0, 165000.0],
+        "BNO": [432000.0, 162000.0],
+        "EKO": [472000.0, 177000.0]
+      },
+      "key": "072"
+    },
+    {
+      "code": "076",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Accessories Tiang untuk kabel drop core (s-klem)",
+      "unit": "track",
+      "prices": {
+        "WJO": [6000.0, 4000.0],
+        "WKO": [6700.0, 4500.0],
+        "SSO": [6100.0, 4100.0],
+        "CJDO": [6000.0, 4000.0],
+        "SMUO": [6600.0, 4400.0],
+        "MPO": [7500.0, 5000.0],
+        "CSO": [6200.0, 4100.0],
+        "EJO": [6000.0, 4000.0],
+        "NSO": [6600.0, 4400.0],
+        "BNO": [6400.0, 4300.0],
+        "EKO": [7000.0, 4700.0]
+      },
+      "key": "076"
+    },
+    {
+      "code": "077",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan 1 Subduct 28/32 mm pada polongan route Duct",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [8800.0, 1700.0],
+        "WKO": [9900.0, 1900.0],
+        "SSO": [9000.0, 1700.0],
+        "CJDO": [8800.0, 1700.0],
+        "SMUO": [9700.0, 1800.0],
+        "MPO": [11000.0, 2100.0],
+        "CSO": [9100.0, 1700.0],
+        "EJO": [8800.0, 1700.0],
+        "NSO": [9600.0, 1800.0],
+        "BNO": [9500.0, 1800.0],
+        "EKO": [10300.0, 2000.0]
+      },
+      "key": "077"
+    },
+    {
+      "code": "081",
+      "jenis": "JASA",
+      "description": "Pekerjaan Boring manual (rojok) HDPE 40/33 mm 1 pipa dengan kedalaman 1,5 meter",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 45000.0],
+        "WKO": [0.0, 50800.0],
+        "SSO": [0.0, 46300.0],
+        "CJDO": [0.0, 45000.0],
+        "SMUO": [0.0, 49900.0],
+        "MPO": [0.0, 56700.0],
+        "CSO": [0.0, 46300.0],
+        "EJO": [0.0, 45000.0],
+        "NSO": [0.0, 49500.0],
+        "BNO": [0.0, 48600.0],
+        "EKO": [0.0, 53100.0]
+      },
+      "key": "081"
+    },
+    {
+      "code": "082",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan pemasangan pipa HDPE 40/33 mm",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [12000.0, 2000.0],
+        "WKO": [13500.0, 2200.0],
+        "SSO": [12300.0, 2000.0],
+        "CJDO": [12000.0, 2000.0],
+        "SMUO": [13300.0, 2200.0],
+        "MPO": [15100.0, 2500.0],
+        "CSO": [12400.0, 2000.0],
+        "EJO": [12000.0, 2000.0],
+        "NSO": [13200.0, 2200.0],
+        "BNO": [12900.0, 2100.0],
+        "EKO": [14100.0, 2300.0]
+      },
+      "key": "082"
+    },
+    {
+      "code": "084",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengkleman HDPE di dinding beton / Box Culvert dengan klem ketebalan 2mm lebar 2,5 cm menggunakan dynabolt termasuk rekondisi atau perbaikan kerusakan",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [12500.0, 6200.0],
+        "WKO": [14100.0, 7000.0],
+        "SSO": [12800.0, 6400.0],
+        "CJDO": [12500.0, 6200.0],
+        "SMUO": [13800.0, 6900.0],
+        "MPO": [15700.0, 7800.0],
+        "CSO": [12900.0, 6400.0],
+        "EJO": [12500.0, 6200.0],
+        "NSO": [13700.0, 6800.0],
+        "BNO": [13500.0, 6700.0],
+        "EKO": [14700.0, 7300.0]
+      },
+      "key": "084"
+    },
+    {
+      "code": "085",
+      "jenis": "JASA",
+      "description": "Pekerjaan Galian, Pengurugan kembali dan perbaikan kembali, pengisian pasir, warning tape dan tanda rute kabel serta tempat sambung kedalaman 0.4 meter",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 23000.0],
+        "WKO": [0.0, 25900.0],
+        "SSO": [0.0, 23600.0],
+        "CJDO": [0.0, 23000.0],
+        "SMUO": [0.0, 25500.0],
+        "MPO": [0.0, 28900.0],
+        "CSO": [0.0, 23600.0],
+        "EJO": [0.0, 23000.0],
+        "NSO": [0.0, 25300.0],
+        "BNO": [0.0, 24800.0],
+        "EKO": [0.0, 27100.0]
+      },
+      "key": "085"
+    },
+    {
+      "code": "086",
+      "jenis": "JASA",
+      "description": "Pekerjaan Galian, Pengurugan kembali dan perbaikan kembali, pengisian pasir, warning tape dan tanda rute kabel serta tempat sambung, kedalaman 0,6 meter",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 27000.0],
+        "WKO": [0.0, 30500.0],
+        "SSO": [0.0, 27800.0],
+        "CJDO": [0.0, 27000.0],
+        "SMUO": [0.0, 29900.0],
+        "MPO": [0.0, 34000.0],
+        "CSO": [0.0, 27800.0],
+        "EJO": [0.0, 27000.0],
+        "NSO": [0.0, 29700.0],
+        "BNO": [0.0, 29100.0],
+        "EKO": [0.0, 31800.0]
+      },
+      "key": "086"
+    },
+    {
+      "code": "087",
+      "jenis": "JASA",
+      "description": "Pekerjaan Galian, Pengurogan kembali dan perbaikan kembali, pengisian pasir, warning tape dan tanda rote kabel serta tempat sambung, kedalaman 1 meter",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 32500.0],
+        "WKO": [0.0, 36700.0],
+        "SSO": [0.0, 33400.0],
+        "CJDO": [0.0, 32500.0],
+        "SMUO": [0.0, 36000.0],
+        "MPO": [0.0, 40900.0],
+        "CSO": [0.0, 33400.0],
+        "EJO": [0.0, 32500.0],
+        "NSO": [0.0, 35700.0],
+        "BNO": [0.0, 35100.0],
+        "EKO": [0.0, 38300.0]
+      },
+      "key": "087"
+    },
+    {
+      "code": "088",
+      "jenis": "JASA",
+      "description": "Pekerjaan Galian, Pengurugan kembali dan perbaikan kembali, pengisian pasir, warning tape dan tanda rute kabel serta tempat sambung, kedalaman 1,2 meter",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 37000.0],
+        "WKO": [0.0, 41800.0],
+        "SSO": [0.0, 38100.0],
+        "CJDO": [0.0, 37000.0],
+        "SMUO": [0.0, 41000.0],
+        "MPO": [0.0, 46600.0],
+        "CSO": [0.0, 38100.0],
+        "EJO": [0.0, 37000.0],
+        "NSO": [0.0, 40700.0],
+        "BNO": [0.0, 39900.0],
+        "EKO": [0.0, 43600.0]
+      },
+      "key": "088"
+    },
+    {
+      "code": "089",
+      "jenis": "JASA",
+      "description": "Pekerjaan Galian, Pengurugan kembali dan perbaikan kembali, pengisian pasir, warning tape dan tanda rute kabel serta tempat sambung, kedalaman 1,3 meter",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 39000.0],
+        "WKO": [0.0, 44000.0],
+        "SSO": [0.0, 40100.0],
+        "CJDO": [0.0, 39000.0],
+        "SMUO": [0.0, 43200.0],
+        "MPO": [0.0, 49100.0],
+        "CSO": [0.0, 40100.0],
+        "EJO": [0.0, 39000.0],
+        "NSO": [0.0, 42900.0],
+        "BNO": [0.0, 42100.0],
+        "EKO": [0.0, 46000.0]
+      },
+      "key": "089"
+    },
+    {
+      "code": "090",
+      "jenis": "JASA",
+      "description": "Pekerjaan Galian, Pengurugan kembali dan perbaikan kembali, pengisian pasir, warning tape dan tanda rute kabel serta tempat sambung, kedalaman 1,4 meter",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 42000.0],
+        "WKO": [0.0, 47400.0],
+        "SSO": [0.0, 43200.0],
+        "CJDO": [0.0, 42000.0],
+        "SMUO": [0.0, 46600.0],
+        "MPO": [0.0, 52900.0],
+        "CSO": [0.0, 43200.0],
+        "EJO": [0.0, 42000.0],
+        "NSO": [0.0, 46200.0],
+        "BNO": [0.0, 45300.0],
+        "EKO": [0.0, 49500.0]
+      },
+      "key": "090"
+    },
+    {
+      "code": "091",
+      "jenis": "JASA",
+      "description": "Pekerjaan Galian, Pengurugan kembali dan perbaikan kembali, pengisian pasir, warning tape dan tanda rote kabel serta tempat sambung kedalaman 1,5 meter",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 44000.0],
+        "WKO": [0.0, 49700.0],
+        "SSO": [0.0, 45300.0],
+        "CJDO": [0.0, 44000.0],
+        "SMUO": [0.0, 48800.0],
+        "MPO": [0.0, 55400.0],
+        "CSO": [0.0, 45300.0],
+        "EJO": [0.0, 44000.0],
+        "NSO": [0.0, 48400.0],
+        "BNO": [0.0, 47500.0],
+        "EKO": [0.0, 51900.0]
+      },
+      "key": "091"
+    },
+    {
+      "code": "092",
+      "jenis": "JASA",
+      "description": "Pengadaan galian batu masif kedalaman 1,5 meter, panjang minimum 5 m, termasuk pengadaan marking post",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 192000.0],
+        "WKO": [0.0, 216900.0],
+        "SSO": [0.0, 197700.0],
+        "CJDO": [0.0, 192000.0],
+        "SMUO": [0.0, 213100.0],
+        "MPO": [0.0, 241900.0],
+        "CSO": [0.0, 197700.0],
+        "EJO": [0.0, 192000.0],
+        "NSO": [0.0, 211200.0],
+        "BNO": [0.0, 207300.0],
+        "EKO": [0.0, 226500.0]
+      },
+      "key": "092"
+    },
+    {
+      "code": "094",
+      "jenis": "JASA",
+      "description": "Pekerjaan Galian Pada Lahan Asphalt, Pengurugan kembali dan perbaikan kembali dengan Asphalt pengisian pasir, warning tape dan tanda rute kabel serta tempat sambung kedalaman 0.4 meter",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 165000.0],
+        "WKO": [0.0, 186400.0],
+        "SSO": [0.0, 169900.0],
+        "CJDO": [0.0, 165000.0],
+        "SMUO": [0.0, 183100.0],
+        "MPO": [0.0, 207900.0],
+        "CSO": [0.0, 169900.0],
+        "EJO": [0.0, 165000.0],
+        "NSO": [0.0, 181500.0],
+        "BNO": [0.0, 178200.0],
+        "EKO": [0.0, 194700.0]
+      },
+      "key": "094"
+    },
+    {
+      "code": "095",
+      "jenis": "JASA",
+      "description": "Pekerjaan Galian Pada Lahan Paving, Pengurugan kembali dan perbaikan kembali, pengisian pasir, warning tape dan tanda rute kabel serta tempat sambung kedalaman 0.4 meter",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 147000.0],
+        "WKO": [0.0, 166100.0],
+        "SSO": [0.0, 151400.0],
+        "CJDO": [0.0, 147000.0],
+        "SMUO": [0.0, 163100.0],
+        "MPO": [0.0, 185200.0],
+        "CSO": [0.0, 151400.0],
+        "EJO": [0.0, 147000.0],
+        "NSO": [0.0, 161700.0],
+        "BNO": [0.0, 158700.0],
+        "EKO": [0.0, 173400.0]
+      },
+      "key": "095"
+    },
+    {
+      "code": "097",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Penggalian dengan kondisi tanah Padas/Cadas termasuk pengurugan dan perbaikan kembali bekas galian dengan permukaan cor beton 1:2:3 (lebar30cm, ketebalan 40cm) dengan kedalaman minimal 80 cm",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [166500.0, 99200.0],
+        "WKO": [188100.0, 112000.0],
+        "SSO": [171400.0, 102100.0],
+        "CJDO": [166500.0, 99200.0],
+        "SMUO": [184800.0, 110100.0],
+        "MPO": [209700.0, 124900.0],
+        "CSO": [171500.0, 102100.0],
+        "EJO": [166500.0, 99200.0],
+        "NSO": [183100.0, 109100.0],
+        "BNO": [179800.0, 107100.0],
+        "EKO": [196400.0, 117000.0]
+      },
+      "key": "097"
+    },
+    {
+      "code": "098",
+      "jenis": "JASA",
+      "description": "Penggalian dengan kondisi tanah Padas/Cadas termasuk pengurugan dan perbaikan kembali bekas galian dengan kedalaman minimal 100 cm",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 122700.0],
+        "WKO": [0.0, 138600.0],
+        "SSO": [0.0, 126300.0],
+        "CJDO": [0.0, 122700.0],
+        "SMUO": [0.0, 136200.0],
+        "MPO": [0.0, 154600.0],
+        "CSO": [0.0, 126300.0],
+        "EJO": [0.0, 122700.0],
+        "NSO": [0.0, 134900.0],
+        "BNO": [0.0, 132500.0],
+        "EKO": [0.0, 144700.0]
+      },
+      "key": "098"
+    },
+    {
+      "code": "099",
+      "jenis": "JASA",
+      "description": "Penggalian dengan kondisi tanah Padas/Cadas termasuk pengurugan dv perbaikan kembali bekas galian dengan kedalaman minimal 120 cm",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 139900.0],
+        "WKO": [0.0, 158100.0],
+        "SSO": [0.0, 144100.0],
+        "CJDO": [0.0, 139900.0],
+        "SMUO": [0.0, 155300.0],
+        "MPO": [0.0, 176300.0],
+        "CSO": [0.0, 144100.0],
+        "EJO": [0.0, 139900.0],
+        "NSO": [0.0, 153900.0],
+        "BNO": [0.0, 151100.0],
+        "EKO": [0.0, 165100.0]
+      },
+      "key": "099"
+    },
+    {
+      "code": "100",
+      "jenis": "JASA",
+      "description": "Penggalian dengan kondisi tanah Padas/Cadas termasuk pengurugan dv perbaikan kembali bekas galian dengan kedalaman minimal 130 cm",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 146900.0],
+        "WKO": [0.0, 166000.0],
+        "SSO": [0.0, 151300.0],
+        "CJDO": [0.0, 146900.0],
+        "SMUO": [0.0, 163000.0],
+        "MPO": [0.0, 185100.0],
+        "CSO": [0.0, 151300.0],
+        "EJO": [0.0, 146900.0],
+        "NSO": [0.0, 161600.0],
+        "BNO": [0.0, 158600.0],
+        "EKO": [0.0, 173300.0]
+      },
+      "key": "100"
+    },
+    {
+      "code": "101",
+      "jenis": "JASA",
+      "description": "Penggalian dengan kondisi tanah Padas/Cadas termasuk pengurugan dv perbaikan kembali bekas galian dengan kedalaman minimal 140 cm",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 146900.0],
+        "WKO": [0.0, 166000.0],
+        "SSO": [0.0, 151300.0],
+        "CJDO": [0.0, 146900.0],
+        "SMUO": [0.0, 163000.0],
+        "MPO": [0.0, 185100.0],
+        "CSO": [0.0, 151300.0],
+        "EJO": [0.0, 146900.0],
+        "NSO": [0.0, 161600.0],
+        "BNO": [0.0, 158600.0],
+        "EKO": [0.0, 173300.0]
+      },
+      "key": "101"
+    },
+    {
+      "code": "102",
+      "jenis": "JASA",
+      "description": "Penggalian dengan kondisi tanah Padas/Cadas termasuk pengurugan dv perbaikan kembali bekas galian dengan kedalaman minimal 150 cm",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 146900.0],
+        "WKO": [0.0, 166000.0],
+        "SSO": [0.0, 151300.0],
+        "CJDO": [0.0, 146900.0],
+        "SMUO": [0.0, 163000.0],
+        "MPO": [0.0, 185100.0],
+        "CSO": [0.0, 151300.0],
+        "EJO": [0.0, 146900.0],
+        "NSO": [0.0, 161600.0],
+        "BNO": [0.0, 158600.0],
+        "EKO": [0.0, 173300.0]
+      },
+      "key": "102"
+    },
+    {
+      "code": "103",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Tiang Besi Galvanls 6m tanpa sambungan, berlkut cat dan cor pondesl (1:2:3) dengan kekuetan tank 35 kg",
+      "unit": "unit",
+      "prices": {
+        "WJO": [1198600.0, 162500.0],
+        "WKO": [1354500.0, 183600.0],
+        "SSO": [1234600.0, 167400.0],
+        "CJDO": [1198600.0, 162500.0],
+        "SMUO": [1330500.0, 180400.0],
+        "MPO": [1510300.0, 204800.0],
+        "CSO": [1234700.0, 167400.0],
+        "EJO": [1198600.0, 162500.0],
+        "NSO": [1318500.0, 178800.0],
+        "BNO": [1294500.0, 175500.0],
+        "EKO": [1414400.0, 191800.0]
+      },
+      "key": "103"
+    },
+    {
+      "code": "104",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Sistem Gantung pada tiang eksisting menggunaken kawat sling baja dan klem dua lubang",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [26100.0, 9300.0],
+        "WKO": [29500.0, 10600.0],
+        "SSO": [26900.0, 9600.0],
+        "CJDO": [26100.0, 9300.0],
+        "SMUO": [29000.0, 10400.0],
+        "MPO": [32900.0, 11800.0],
+        "CSO": [27000.0, 9600.0],
+        "EJO": [26100.0, 9300.0],
+        "NSO": [28800.0, 10300.0],
+        "BNO": [28200.0, 10100.0],
+        "EKO": [30900.0, 11000.0]
+      },
+      "key": "104"
+    },
+    {
+      "code": "105",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pekerjaan bobokan tembok untuk lubang sparing kabel",
+      "unit": "Titik",
+      "prices": {
+        "WJO": [25000.0, 40000.0],
+        "WKO": [28200.0, 45200.0],
+        "SSO": [25700.0, 41200.0],
+        "CJDO": [25000.0, 40000.0],
+        "SMUO": [27700.0, 44400.0],
+        "MPO": [31500.0, 50400.0],
+        "CSO": [25800.0, 41200.0],
+        "EJO": [25000.0, 40000.0],
+        "NSO": [27500.0, 44000.0],
+        "BNO": [27000.0, 43200.0],
+        "EKO": [29500.0, 47200.0]
+      },
+      "key": "105"
+    },
+    {
+      "code": "106",
+      "jenis": "JASA",
+      "description": "Pekerjaan bobokan Box Culvert untuk lubang sparing kabel",
+      "unit": "Titik",
+      "prices": {
+        "WJO": [0.0, 72200.0],
+        "WKO": [0.0, 81600.0],
+        "SSO": [0.0, 74400.0],
+        "CJDO": [0.0, 72200.0],
+        "SMUO": [0.0, 80100.0],
+        "MPO": [0.0, 91000.0],
+        "CSO": [0.0, 74400.0],
+        "EJO": [0.0, 72200.0],
+        "NSO": [0.0, 79400.0],
+        "BNO": [0.0, 78000.0],
+        "EKO": [0.0, 85200.0]
+      },
+      "key": "106"
+    },
+    {
+      "code": "107",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pekerjaan bobokan dan perbaikan Dinding HH/ Chamber/ BTS untuk lubang Sparing Kabel",
+      "unit": "Titik",
+      "prices": {
+        "WJO": [49200.0, 50000.0],
+        "WKO": [55600.0, 56500.0],
+        "SSO": [50700.0, 51500.0],
+        "CJDO": [49200.0, 50000.0],
+        "SMUO": [54600.0, 55500.0],
+        "MPO": [62000.0, 63000.0],
+        "CSO": [50700.0, 51500.0],
+        "EJO": [49200.0, 50000.0],
+        "NSO": [54100.0, 55000.0],
+        "BNO": [53100.0, 54000.0],
+        "EKO": [58000.0, 59000.0]
+      },
+      "key": "107"
+    },
+    {
+      "code": "108",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pembuatan Handhole ukuran dimensi bersih P x L x T = 80cm x 80cm x 80cm cor beton Ketebalan dinding 15cm, ketebalan tutup 20cm Beton K225 tutup 2 pintu dengan tulisan \"LINTASARTA\"",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [2506800.0, 705800.0],
+        "WKO": [2832700.0, 797600.0],
+        "SSO": [2582000.0, 727000.0],
+        "CJDO": [2506800.0, 705800.0],
+        "SMUO": [2782600.0, 783500.0],
+        "MPO": [3158600.0, 889300.0],
+        "CSO": [2582100.0, 727000.0],
+        "EJO": [2506800.0, 705800.0],
+        "NSO": [2757500.0, 776400.0],
+        "BNO": [2707400.0, 762300.0],
+        "EKO": [2958100.0, 832900.0]
+      },
+      "key": "108"
+    },
+    {
+      "code": "109",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Slack pada tiang include sabuk/klem ukuran dimensi dalam (P x L = 80cm x 80cm)",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [132000.0, 35000.0],
+        "WKO": [149100.0, 39500.0],
+        "SSO": [135900.0, 36000.0],
+        "CJDO": [132000.0, 35000.0],
+        "SMUO": [146500.0, 38800.0],
+        "MPO": [166300.0, 44100.0],
+        "CSO": [136000.0, 36000.0],
+        "EJO": [132000.0, 35000.0],
+        "NSO": [145200.0, 38500.0],
+        "BNO": [142500.0, 37800.0],
+        "EKO": [155700.0, 41300.0]
+      },
+      "key": "109"
+    },
+    {
+      "code": "110",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pekeriaan Peninggian Tutup Manhole/Handhole",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [830000.0, 640000.0],
+        "WKO": [937900.0, 723200.0],
+        "SSO": [854900.0, 659200.0],
+        "CJDO": [830000.0, 640000.0],
+        "SMUO": [921300.0, 710400.0],
+        "MPO": [1045800.0, 806400.0],
+        "CSO": [854900.0, 659200.0],
+        "EJO": [830000.0, 640000.0],
+        "NSO": [913000.0, 704000.0],
+        "BNO": [896400.0, 691200.0],
+        "EKO": [979400.0, 755200.0]
+      },
+      "key": "110"
+    },
+    {
+      "code": "113",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Wire mesh cable tray 20 x 10 cm, dengan supporting material",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [120000.0, 42100.0],
+        "WKO": [135600.0, 47500.0],
+        "SSO": [123600.0, 43300.0],
+        "CJDO": [120000.0, 42100.0],
+        "SMUO": [133200.0, 46700.0],
+        "MPO": [151200.0, 53000.0],
+        "CSO": [123600.0, 43300.0],
+        "EJO": [120000.0, 42100.0],
+        "NSO": [132000.0, 46300.0],
+        "BNO": [129600.0, 45400.0],
+        "EKO": [141600.0, 49600.0]
+      },
+      "key": "113"
+    },
+    {
+      "code": "114",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Wire mesh cable tray 30 x 10 cm, dengan supporting material",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [155000.0, 42100.0],
+        "WKO": [175100.0, 47500.0],
+        "SSO": [159600.0, 43300.0],
+        "CJDO": [155000.0, 42100.0],
+        "SMUO": [172000.0, 46700.0],
+        "MPO": [195300.0, 53000.0],
+        "CSO": [159700.0, 43300.0],
+        "EJO": [155000.0, 42100.0],
+        "NSO": [170500.0, 46300.0],
+        "BNO": [167400.0, 45400.0],
+        "EKO": [182900.0, 49600.0]
+      },
+      "key": "114"
+    },
+    {
+      "code": "115",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pekerjaan Plafon",
+      "unit": "m2",
+      "prices": {
+        "WJO": [172000.0, 77200.0],
+        "WKO": [194300.0, 87200.0],
+        "SSO": [177100.0, 79500.0],
+        "CJDO": [172000.0, 77200.0],
+        "SMUO": [190900.0, 85600.0],
+        "MPO": [216700.0, 97200.0],
+        "CSO": [177200.0, 79500.0],
+        "EJO": [172000.0, 77200.0],
+        "NSO": [189200.0, 84900.0],
+        "BNO": [185700.0, 83300.0],
+        "EKO": [202900.0, 91000.0]
+      },
+      "key": "115"
+    },
+    {
+      "code": "116",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan material Grounding di lokasi gedung eksisting dengan cara integrasi",
+      "unit": "pcs",
+      "prices": {
+        "WJO": [246000.0, 147000.0],
+        "WKO": [277900.0, 166100.0],
+        "SSO": [253300.0, 151400.0],
+        "CJDO": [246000.0, 147000.0],
+        "SMUO": [273000.0, 163100.0],
+        "MPO": [309900.0, 185200.0],
+        "CSO": [253400.0, 151400.0],
+        "EJO": [246000.0, 147000.0],
+        "NSO": [270600.0, 161700.0],
+        "BNO": [265600.0, 158700.0],
+        "EKO": [290200.0, 173400.0]
+      },
+      "key": "116"
+    },
+    {
+      "code": "117",
+      "jenis": "PERIZINAN",
+      "description": "Biaya-biaya yang timbul dalam rangka untuk perizinan, kompensasi dan Supervisi dari Building Management HRB atau pengelola kawasan khusus atau lingkungan",
+      "unit": "Lumpsump",
+      "prices": {
+        "WJO": [0.0, null],
+        "WKO": [0.0, null],
+        "SSO": [0.0, null],
+        "CJDO": [0.0, null],
+        "SMUO": [0.0, null],
+        "MPO": [0.0, null],
+        "CSO": [0.0, null],
+        "EJO": [0.0, null],
+        "NSO": [0.0, null],
+        "BNO": [0.0, null],
+        "EKO": [0.0, null]
+      },
+      "key": "117"
+    },
+    {
+      "code": "118",
+      "jenis": "JASA",
+      "description": "Biaya Mover Material dari Outlet Lintasarta ke lokasi PSB atau Gangguan untuk 1 rit Pickup",
+      "unit": "50 km pertama",
+      "prices": {
+        "WJO": [0.0, 446000.0],
+        "WKO": [0.0, 503900.0],
+        "SSO": [0.0, 459300.0],
+        "CJDO": [0.0, 446000.0],
+        "SMUO": [0.0, 495000.0],
+        "MPO": [0.0, 561900.0],
+        "CSO": [0.0, 459300.0],
+        "EJO": [0.0, 446000.0],
+        "NSO": [0.0, 490600.0],
+        "BNO": [0.0, 481600.0],
+        "EKO": [0.0, 526200.0]
+      },
+      "key": "118"
+    },
+    {
+      "code": "119",
+      "jenis": "JASA",
+      "description": "Additional Biaya Mover Material dari Outlet Lintasarta ke lokasi PSB atau Gangguan untuk 1 rit Pickup",
+      "unit": "/10km",
+      "prices": {
+        "WJO": [0.0, 85000.0],
+        "WKO": [0.0, 96000.0],
+        "SSO": [0.0, 87500.0],
+        "CJDO": [0.0, 85000.0],
+        "SMUO": [0.0, 94300.0],
+        "MPO": [0.0, 107100.0],
+        "CSO": [0.0, 87500.0],
+        "EJO": [0.0, 85000.0],
+        "NSO": [0.0, 93500.0],
+        "BNO": [0.0, 91800.0],
+        "EKO": [0.0, 100300.0]
+      },
+      "key": "119"
+    },
+    {
+      "code": "120",
+      "jenis": "JASA",
+      "description": "Biaya - Biaya mover diluar transportasi darat yang timbul dalam rangka pengiriman material dari outlet LA ke lokasi pekerjaan (Tiket Kapal penyebrangan) menggunakan mekanisme reimbursment",
+      "unit": "Lumpsump",
+      "prices": {
+        "WJO": [0.0, null],
+        "WKO": [0.0, null],
+        "SSO": [0.0, null],
+        "CJDO": [0.0, null],
+        "SMUO": [0.0, null],
+        "MPO": [0.0, null],
+        "CSO": [0.0, null],
+        "EJO": [0.0, null],
+        "NSO": [0.0, null],
+        "BNO": [0.0, null],
+        "EKO": [0.0, null]
+      },
+      "key": "120"
+    },
+    {
+      "code": "121",
+      "jenis": "JASA",
+      "description": "Biaya Survey lokasi 0 - 500 mtr dengan hasil berupa KMZ, SPH, dokumentasi dan info perijinan (Include Transport)",
+      "unit": "Paket",
+      "prices": {
+        "WJO": [0.0, 500000.0],
+        "WKO": [0.0, 565000.0],
+        "SSO": [0.0, 515000.0],
+        "CJDO": [0.0, 500000.0],
+        "SMUO": [0.0, 555000.0],
+        "MPO": [0.0, 630000.0],
+        "CSO": [0.0, 515000.0],
+        "EJO": [0.0, 500000.0],
+        "NSO": [0.0, 550000.0],
+        "BNO": [0.0, 540000.0],
+        "EKO": [0.0, 590000.0]
+      },
+      "key": "121"
+    },
+    {
+      "code": "122",
+      "jenis": "JASA",
+      "description": "Biaya Survey lokasi 500 - 1000 mtr dengan hasil berupa KMZ, SPH , dokumentasi dan info perijinan (Include Transport)",
+      "unit": "Paket",
+      "prices": {
+        "WJO": [0.0, 850000.0],
+        "WKO": [0.0, 960500.0],
+        "SSO": [0.0, 875500.0],
+        "CJDO": [0.0, 850000.0],
+        "SMUO": [0.0, 943500.0],
+        "MPO": [0.0, 1071000.0],
+        "CSO": [0.0, 875500.0],
+        "EJO": [0.0, 850000.0],
+        "NSO": [0.0, 935000.0],
+        "BNO": [0.0, 918000.0],
+        "EKO": [0.0, 1003000.0]
+      },
+      "key": "122"
+    },
+    {
+      "code": "123",
+      "jenis": "JASA",
+      "description": "Biaya Survey lokasi > 1000 mtr dengan hasil berupa KMZ, SPH, dokumentasi dan info perijinan (Include Transport)",
+      "unit": "Paket",
+      "prices": {
+        "WJO": [0.0, 1486700.0],
+        "WKO": [0.0, 1680000.0],
+        "SSO": [0.0, 1531400.0],
+        "CJDO": [0.0, 1486700.0],
+        "SMUO": [0.0, 1650300.0],
+        "MPO": [0.0, 1873300.0],
+        "CSO": [0.0, 1531400.0],
+        "EJO": [0.0, 1486700.0],
+        "NSO": [0.0, 1635400.0],
+        "BNO": [0.0, 1605700.0],
+        "EKO": [0.0, 1754400.0]
+      },
+      "key": "123"
+    },
+    {
+      "code": "124",
+      "jenis": "JASA",
+      "description": "Buka tutup handhole",
+      "unit": "Unit",
+      "prices": {
+        "WJO": [0.0, 200000.0],
+        "WKO": [0.0, 226000.0],
+        "SSO": [0.0, 206000.0],
+        "CJDO": [0.0, 200000.0],
+        "SMUO": [0.0, 222000.0],
+        "MPO": [0.0, 252000.0],
+        "CSO": [0.0, 206000.0],
+        "EJO": [0.0, 200000.0],
+        "NSO": [0.0, 220000.0],
+        "BNO": [0.0, 216000.0],
+        "EKO": [0.0, 236000.0]
+      },
+      "key": "124"
+    },
+    {
+      "code": "125",
+      "jenis": "JASA",
+      "description": "Pasang/Replace/Cabut/aktivasi Modem / ONT",
+      "unit": "Unit",
+      "prices": {
+        "WJO": [0.0, 50000.0],
+        "WKO": [0.0, 56500.0],
+        "SSO": [0.0, 51500.0],
+        "CJDO": [0.0, 50000.0],
+        "SMUO": [0.0, 55500.0],
+        "MPO": [0.0, 63000.0],
+        "CSO": [0.0, 51500.0],
+        "EJO": [0.0, 50000.0],
+        "NSO": [0.0, 55000.0],
+        "BNO": [0.0, 54000.0],
+        "EKO": [0.0, 59000.0]
+      },
+      "key": "125"
+    },
+    {
+      "code": "126",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Slack Support dalam HH",
+      "unit": "Unit",
+      "prices": {
+        "WJO": [134800.0, 34000.0],
+        "WKO": [152400.0, 38400.0],
+        "SSO": [138900.0, 35000.0],
+        "CJDO": [134800.0, 34000.0],
+        "SMUO": [149700.0, 37800.0],
+        "MPO": [169900.0, 42900.0],
+        "CSO": [138900.0, 35000.0],
+        "EJO": [134800.0, 34000.0],
+        "NSO": [148300.0, 37400.0],
+        "BNO": [145600.0, 36700.0],
+        "EKO": [159100.0, 40100.0]
+      },
+      "key": "126"
+    },
+    {
+      "code": "127",
+      "jenis": "JASA",
+      "description": "Biaya transportasi (tanpa adanya biaya mover) <= 30 Km",
+      "unit": "Paket",
+      "prices": {
+        "WJO": [0.0, 138300.0],
+        "WKO": [0.0, 156200.0],
+        "SSO": [0.0, 142400.0],
+        "CJDO": [0.0, 138300.0],
+        "SMUO": [0.0, 153500.0],
+        "MPO": [0.0, 174200.0],
+        "CSO": [0.0, 142400.0],
+        "EJO": [0.0, 138300.0],
+        "NSO": [0.0, 152100.0],
+        "BNO": [0.0, 149300.0],
+        "EKO": [0.0, 163100.0]
+      },
+      "key": "127.1"
+    },
+    {
+      "code": "127",
+      "jenis": "JASA",
+      "description": "Penambahan Biaya transportasi (tanpa adanya biaya mover) per 5Km",
+      "unit": "Paket",
+      "prices": {
+        "WJO": [0.0, 20000.0],
+        "WKO": [0.0, 22600.0],
+        "SSO": [0.0, 20600.0],
+        "CJDO": [0.0, 20000.0],
+        "SMUO": [0.0, 22200.0],
+        "MPO": [0.0, 25200.0],
+        "CSO": [0.0, 20600.0],
+        "EJO": [0.0, 20000.0],
+        "NSO": [0.0, 22000.0],
+        "BNO": [0.0, 21600.0],
+        "EKO": [0.0, 23600.0]
+      },
+      "key": "127.2"
+    },
+    {
+      "code": "129",
+      "jenis": "JASA",
+      "description": "Pekerjaan Pengecekan Kelistrikan POP",
+      "unit": "Paket",
+      "prices": {
+        "WJO": [0.0, 150000.0],
+        "WKO": [0.0, 169500.0],
+        "SSO": [0.0, 154500.0],
+        "CJDO": [0.0, 150000.0],
+        "SMUO": [0.0, 166500.0],
+        "MPO": [0.0, 189000.0],
+        "CSO": [0.0, 154500.0],
+        "EJO": [0.0, 150000.0],
+        "NSO": [0.0, 165000.0],
+        "BNO": [0.0, 162000.0],
+        "EKO": [0.0, 177000.0]
+      },
+      "key": "129"
+    },
+    {
+      "code": "130",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengkleman HDPE di dinding beton / Box Culvert dengan klem ketebalan 2mm lebar 2,5 cm menggunakan paku termasuk rekondisi atau perbaikan kerusakan",
+      "unit": "Titik",
+      "prices": {
+        "WJO": [6500.0, 2500.0],
+        "WKO": [7300.0, 2800.0],
+        "SSO": [6600.0, 2500.0],
+        "CJDO": [6500.0, 2500.0],
+        "SMUO": [7200.0, 2700.0],
+        "MPO": [8100.0, 3100.0],
+        "CSO": [6700.0, 2500.0],
+        "EJO": [6500.0, 2500.0],
+        "NSO": [7100.0, 2700.0],
+        "BNO": [7000.0, 2700.0],
+        "EKO": [7600.0, 2900.0]
+      },
+      "key": "130"
+    },
+    {
+      "code": "131",
+      "jenis": "JASA",
+      "description": "Perbaikan atau pemindahan kebel existing (diantara 2 tiang)",
+      "unit": "Paket",
+      "prices": {
+        "WJO": [0.0, 50000.0],
+        "WKO": [0.0, 56500.0],
+        "SSO": [0.0, 51500.0],
+        "CJDO": [0.0, 50000.0],
+        "SMUO": [0.0, 55500.0],
+        "MPO": [0.0, 63000.0],
+        "CSO": [0.0, 51500.0],
+        "EJO": [0.0, 50000.0],
+        "NSO": [0.0, 55000.0],
+        "BNO": [0.0, 54000.0],
+        "EKO": [0.0, 59000.0]
+      },
+      "key": "131"
+    },
+    {
+      "code": "132",
+      "jenis": "MATERIAL DAN JASA",
+      "description": "Pengadaan dan Pemasangan Pipa galvanis conduit E19 dengan ukuran diameter 20 mm panjang 3,6M termasuk aksesoris pemasangan (klem dll)",
+      "unit": "Paket",
+      "prices": {
+        "WJO": [175000.0, 15000.0],
+        "WKO": [197700.0, 16900.0],
+        "SSO": [180200.0, 15400.0],
+        "CJDO": [175000.0, 15000.0],
+        "SMUO": [194200.0, 16600.0],
+        "MPO": [220500.0, 18900.0],
+        "CSO": [180300.0, 15400.0],
+        "EJO": [175000.0, 15000.0],
+        "NSO": [192500.0, 16500.0],
+        "BNO": [189000.0, 16200.0],
+        "EKO": [206500.0, 17700.0]
+      },
+      "key": "132"
+    },
+    {
+      "code": "133",
+      "jenis": "JASA",
+      "description": "Penarikan HDPE di gorong gorong / box culvert",
+      "unit": "Meter",
+      "prices": {
+        "WJO": [0.0, 3700.0],
+        "WKO": [0.0, 4200.0],
+        "SSO": [0.0, 3800.0],
+        "CJDO": [0.0, 3700.0],
+        "SMUO": [0.0, 4100.0],
+        "MPO": [0.0, 4700.0],
+        "CSO": [0.0, 3800.0],
+        "EJO": [0.0, 3700.0],
+        "NSO": [0.0, 4100.0],
+        "BNO": [0.0, 4000.0],
+        "EKO": [0.0, 4400.0]
+      },
+      "key": "133"
+    },
+    {
+      "code": "134",
+      "jenis": "JASA",
+      "description": "Instalasi VSAT Starlink",
+      "unit": "Paket",
+      "prices": {
+        "WJO": [0.0, 243400.0],
+        "WKO": [0.0, 275000.0],
+        "SSO": [0.0, 250700.0],
+        "CJDO": [0.0, 243400.0],
+        "SMUO": [0.0, 270200.0],
+        "MPO": [0.0, 306700.0],
+        "CSO": [0.0, 250700.0],
+        "EJO": [0.0, 243400.0],
+        "NSO": [0.0, 267700.0],
+        "BNO": [0.0, 262900.0],
+        "EKO": [0.0, 287200.0]
+      },
+      "key": "134"
+    },
+    {
+      "code": "135",
+      "jenis": "PERIZINAN",
+      "description": "Biaya-biaya yang timbul dalam rangka untuk perizinan jalur crossing dan atau sejajar jalur kereta api ke Dirjen Perketa Apian dan atau KAI",
+      "unit": "",
+      "prices": {
+        "WJO": [0.0, null],
+        "WKO": [0.0, null],
+        "SSO": [0.0, null],
+        "CJDO": [0.0, null],
+        "SMUO": [0.0, null],
+        "MPO": [0.0, null],
+        "CSO": [0.0, null],
+        "EJO": [0.0, null],
+        "NSO": [0.0, null],
+        "BNO": [0.0, null],
+        "EKO": [0.0, null]
+      },
+      "key": "135"
+    }
+  ]
+}

@@ -55,9 +55,19 @@
             <span>NOC Monitor</span>
           </a>
           <div class="nav-section-title">Sales & System</div>
-          <a class="nav-item" onclick="alert('Modul Coverage Checker')"
-            ><i class="fa-solid fa-user-plus"></i
-            ><span>Coverage Checker</span></a
+          <a class="nav-item" id="nav-coverage" onclick="openCoveragePanel()"
+            ><i class="fa-solid fa-signal"></i><span>Cek Coverage</span></a
+          >
+          <a
+            class="nav-item"
+            id="nav-plan"
+            onclick="openPlanPanel()"
+            style="display: none"
+            ><i class="fa-solid fa-route"></i><span>Pasang Baru</span></a
+          >
+          <a class="nav-item" id="nav-data" onclick="openDataModal()"
+            ><i class="fa-solid fa-file-arrow-up"></i
+            ><span>Import / Export</span></a
           >
           <a
             class="nav-item"
@@ -113,11 +123,72 @@
               <p>Area Coverage: Banjarmasin & Regional Backbone</p>
             </div>
           </div>
+          <div class="header-tools">
+            <button
+              type="button"
+              id="blink-toggle"
+              class="hdr-btn"
+              onclick="toggleBlink()"
+              title="Matikan animasi berkedip"
+              aria-pressed="true"
+            >
+              <i class="fa-solid fa-bolt"></i><span>Kedip</span>
+            </button>
+            <button
+              type="button"
+              id="theme-toggle"
+              class="hdr-btn"
+              onclick="toggleTheme()"
+              title="Ganti ke tema gelap"
+              aria-pressed="false"
+            >
+              <i class="fa-solid fa-moon"></i><span>Gelap</span>
+            </button>
+          </div>
           <div class="status-badge">
             <div class="status-pulse"></div>
             <span>GIS Database: Connected</span>
           </div>
         </header>
+
+        <!-- Filter wilayah global: berlaku untuk peta, kartu, ringkasan, inventory, NOC monitor & ekspor -->
+        <div
+          class="scope-strip"
+          id="scope-strip"
+          role="group"
+          aria-label="Filter wilayah"
+        >
+          <span class="scope-title"
+            ><i class="fa-solid fa-filter"></i><span>Wilayah</span></span
+          >
+          <select
+            id="scope-cluster"
+            onchange="onScopeSelect('cluster')"
+            aria-label="Filter cluster"
+            title="Cluster"
+          >
+            <option value="ALL">Semua cluster</option>
+          </select>
+          <select
+            id="scope-area"
+            onchange="onScopeSelect('area')"
+            aria-label="Filter area"
+            title="Area"
+          >
+            <option value="ALL">Semua area</option>
+          </select>
+          <button
+            type="button"
+            id="scope-reset"
+            class="scope-reset"
+            onclick="resetScope()"
+            style="display: none"
+            title="Tampilkan semua wilayah"
+          >
+            <i class="fa-solid fa-xmark"></i><span>Reset</span>
+          </button>
+          <span class="scope-count" id="scope-count"></span>
+        </div>
 
         <div class="map-viewport">
           <div class="map-search-overlay">
@@ -212,6 +283,500 @@
           </div>
 
           <div id="map"></div>
+          <!-- Mode Hubungkan aset: tombol, banner petunjuk, dan panel pilihan core -->
+          <button
+            type="button"
+            id="connect-btn"
+            class="connect-fab"
+            style="display: none"
+            onclick="toggleConnect()"
+            title="Hubungkan dua aset: klik aset awal lalu aset akhir, rute mengikuti jalan"
+          >
+            <i class="fa-solid fa-link"></i> Hubungkan aset
+          </button>
+          <div
+            id="connect-banner"
+            class="connect-banner"
+            style="display: none"
+          ></div>
+          <div
+            id="connect-panel"
+            class="connect-panel"
+            style="display: none"
+          ></div>
+
+          <!-- Panel alat peta: Cek Coverage & Pasang Baru -->
+          <div id="tool-panel" class="tool-panel" style="display: none">
+            <div class="tp-head">
+              <h4 id="tp-title">
+                <i class="fa-solid fa-signal"></i> Cek Coverage
+              </h4>
+              <button
+                type="button"
+                class="tp-btn"
+                id="tp-collapse"
+                onclick="toggleToolPanelCollapse()"
+                title="Ciutkan / buka panel"
+                aria-label="Ciutkan atau buka panel"
+              >
+                <i class="fa-solid fa-chevron-down"></i>
+              </button>
+              <button
+                type="button"
+                class="tp-btn"
+                onclick="closeToolPanel()"
+                title="Tutup"
+                aria-label="Tutup panel"
+              >
+                &times;
+              </button>
+            </div>
+            <div class="tp-body" id="tp-body">
+              <!-- ===== Cek Coverage ===== -->
+              <section id="tp-coverage" style="display: none">
+                <p class="tp-hint">
+                  Klik peta atau cari alamat di kotak pencarian, lalu pilih
+                  <b>Cek Coverage di sini</b>. Titik sambung yang dinilai:
+                  <b>ODP</b> (port OUT kosong), <b>Closure</b> dan
+                  <b>Slack</b> (core kosong pada kabel yang berujung di sana).
+                </p>
+                <div class="tp-row">
+                  <button
+                    type="button"
+                    class="tp-primary"
+                    id="cov-pick-btn"
+                    onclick="startPick('cov-point')"
+                  >
+                    <i class="fa-solid fa-location-crosshairs"></i> Pilih titik
+                    di peta
+                  </button>
+                  <select
+                    id="cov-radius"
+                    onchange="rerunCoverage()"
+                    title="Radius jangkauan"
+                  >
+                    <option value="200">Radius 200 m</option>
+                    <option value="300">Radius 300 m</option>
+                    <option value="500" selected>Radius 500 m</option>
+                    <option value="1000">Radius 1 km</option>
+                    <option value="2000">Radius 2 km</option>
+                  </select>
+                </div>
+                <div id="cov-point" class="tp-point">
+                  Belum ada titik dipilih
+                </div>
+                <div
+                  id="cov-verdict"
+                  class="tp-verdict"
+                  style="display: none"
+                ></div>
+                <div id="cov-list" class="cov-list"></div>
+              </section>
+
+              <!-- ===== Pasang Baru ===== -->
+              <section id="tp-plan" style="display: none">
+                <p class="tp-hint">
+                  Pilih aset asal dan lokasi pelanggan. Sistem menggambar jalur
+                  di jalan, memilih jenis kabel menurut panjang, dan menghitung
+                  tiang, slack, serta total kabel.
+                </p>
+
+                <div class="tp-field">
+                  <label for="plan-origin-input"
+                    >1. Aset asal (ODP / Closure / Slack / POP)</label
+                  >
+                  <div class="tp-row">
+                    <input
+                      type="text"
+                      id="plan-origin-input"
+                      list="plan-origin-list"
+                      placeholder="Ketik nama aset..."
+                      oninput="onPlanOriginInput()"
+                      autocomplete="off"
+                    />
+                    <button
+                      type="button"
+                      class="tp-ghost"
+                      onclick="startPick('plan-origin')"
+                      title="Klik aset di peta"
+                    >
+                      <i class="fa-solid fa-hand-pointer"></i>
+                    </button>
+                  </div>
+                  <datalist id="plan-origin-list"></datalist>
+                  <div id="plan-origin-chip" class="tp-point">
+                    Belum dipilih
+                  </div>
+                </div>
+
+                <div class="tp-field">
+                  <label>2. Lokasi pelanggan</label>
+                  <div class="tp-row">
+                    <input
+                      type="text"
+                      id="plan-dest-name"
+                      placeholder="Nama pelanggan (opsional)"
+                      oninput="planDirty()"
+                    />
+                    <button
+                      type="button"
+                      class="tp-ghost"
+                      onclick="startPick('plan-dest')"
+                      title="Klik lokasi di peta"
+                    >
+                      <i class="fa-solid fa-location-dot"></i>
+                    </button>
+                  </div>
+                  <div id="plan-dest-chip" class="tp-point">Belum dipilih</div>
+                </div>
+
+                <div class="tp-field">
+                  <label>3. Pemasangan</label>
+                  <div
+                    class="tp-seg"
+                    role="radiogroup"
+                    aria-label="Pemasangan kabel"
+                  >
+                    <label
+                      ><input
+                        type="radio"
+                        name="plan-inst"
+                        value="Udara"
+                        checked
+                        onchange="planDirty()"
+                      />
+                      <span
+                        ><i class="fa-solid fa-tower-cell"></i> Udara
+                        (tiang)</span
+                      ></label
+                    >
+                    <label
+                      ><input
+                        type="radio"
+                        name="plan-inst"
+                        value="Tanah"
+                        onchange="planDirty()"
+                      />
+                      <span
+                        ><i class="fa-solid fa-road"></i> Tanah (handhole)</span
+                      ></label
+                    >
+                  </div>
+                  <label class="tp-check"
+                    ><input
+                      type="checkbox"
+                      id="plan-poles"
+                      checked
+                      onchange="planDirty()"
+                    />
+                    Pasang tiang / handhole baru di sepanjang jalur</label
+                  >
+                  <label class="tp-check"
+                    ><input
+                      type="checkbox"
+                      id="plan-slack"
+                      checked
+                      onchange="planDirty()"
+                    />
+                    Pasang slack kabel</label
+                  >
+                  <label class="tp-check"
+                    ><input
+                      type="checkbox"
+                      id="plan-customer"
+                      checked
+                      onchange="planDirty()"
+                    />
+                    Buat juga titik pelanggan saat diwujudkan</label
+                  >
+                </div>
+
+                <div class="tp-field" id="plan-service-box">
+                  <label>4. Layanan &amp; terminasi pelanggan</label>
+                  <div class="tp-rules-grid">
+                    <label
+                      >Kebutuhan core
+                      <select id="plan-cores" onchange="onPlanServiceChange()">
+                        <option value="1">1 core</option>
+                        <option value="2">2 core (Tx-Rx dedicated)</option>
+                        <option value="4">4 core</option>
+                        <option value="6">6 core</option>
+                        <option value="8">8 core</option>
+                        <option value="12">12 core</option>
+                      </select>
+                    </label>
+                    <label
+                      >Skenario
+                      <select id="plan-scen" onchange="onPlanServiceChange()">
+                        <option value="AUTO">Otomatis (batas dropcore)</option>
+                        <option value="DIRECT">Langsung dari aset asal</option>
+                        <option value="HUB">Distribusi baru + closure</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div
+                    class="tp-seg"
+                    role="radiogroup"
+                    aria-label="Terminasi pelanggan"
+                    style="margin-top: 6px"
+                  >
+                    <label
+                      ><input
+                        type="radio"
+                        name="plan-term"
+                        value="DROPCORE_ROSET"
+                        checked
+                        onchange="onPlanServiceChange()"
+                      />
+                      <span>Dropcore + roset</span></label
+                    >
+                    <label
+                      ><input
+                        type="radio"
+                        name="plan-term"
+                        value="UDARA_OTB"
+                        onchange="onPlanServiceChange()"
+                      />
+                      <span>Kabel udara + OTB</span></label
+                    >
+                  </div>
+                  <div id="plan-hub-box" style="display: none; margin-top: 6px">
+                    <div
+                      class="tp-seg"
+                      role="radiogroup"
+                      aria-label="Penempatan hub"
+                    >
+                      <label
+                        ><input
+                          type="radio"
+                          name="plan-hubmode"
+                          value="NEAREST"
+                          checked
+                          onchange="onPlanServiceChange()"
+                        />
+                        <span>Hub sedekat mungkin ke pelanggan</span></label
+                      >
+                      <label
+                        ><input
+                          type="radio"
+                          name="plan-hubmode"
+                          value="MAP"
+                          onchange="onPlanServiceChange()"
+                        />
+                        <span>Pilih hub di peta</span></label
+                      >
+                    </div>
+                    <div id="plan-hub-pick" style="display: none">
+                      <button
+                        type="button"
+                        class="tp-ghost wide"
+                        onclick="startPick('plan-hub')"
+                      >
+                        <i class="fa-solid fa-location-crosshairs"></i> Tentukan
+                        lokasi closure/ODP hub di peta
+                      </button>
+                      <div class="cov-meta" id="plan-hub-chip">
+                        Hub belum dipilih
+                      </div>
+                    </div>
+                    <label
+                      id="plan-splitter-row"
+                      style="display: block; margin-top: 6px"
+                      >Splitter ODP baru (layanan 1 core)
+                      <select id="plan-splitter" onchange="planDirty()">
+                        <option value="1:4">1:4</option>
+                        <option value="1:8" selected>1:8</option>
+                        <option value="2:8">2:8</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="cov-meta" id="plan-service-hint">
+                    ODP hanya 1 core. Layanan 2 core selalu dedicated dan
+                    diambil dari closure.
+                  </div>
+                </div>
+
+                <div class="tp-field">
+                  <label
+                    >Titik singgah
+                    <small>(opsional, untuk mengarahkan jalur)</small></label
+                  >
+                  <div id="plan-via-list" class="tp-vias"></div>
+                  <button
+                    type="button"
+                    class="tp-ghost wide"
+                    onclick="startPick('plan-via')"
+                  >
+                    <i class="fa-solid fa-plus"></i> Tambah titik singgah di
+                    peta
+                  </button>
+                </div>
+
+                <details class="tp-rules" id="plan-rules-box">
+                  <summary>
+                    <i class="fa-solid fa-sliders"></i> Aturan perencanaan
+                  </summary>
+                  <div class="tp-rules-grid">
+                    <label
+                      >Tiang tiap (m)<input
+                        type="number"
+                        id="rule-pole"
+                        min="10"
+                        max="500"
+                        step="5"
+                        oninput="planDirty()"
+                    /></label>
+                    <label
+                      >Handhole tiap (m)<input
+                        type="number"
+                        id="rule-hh"
+                        min="20"
+                        max="1000"
+                        step="10"
+                        oninput="planDirty()"
+                    /></label>
+                    <label
+                      >Slack (m)<input
+                        type="number"
+                        id="rule-slack-len"
+                        min="0"
+                        max="200"
+                        step="1"
+                        oninput="planDirty()"
+                    /></label>
+                    <label
+                      >Jumlah slack<input
+                        type="number"
+                        id="rule-slack-n"
+                        min="0"
+                        max="10"
+                        step="1"
+                        oninput="planDirty()"
+                    /></label>
+                  </div>
+                  <div class="tp-tier-title">
+                    Jenis kabel menurut panjang rute
+                  </div>
+                  <div id="rule-tiers" class="tp-tiers"></div>
+                  <div class="tp-row" id="plan-rules-actions">
+                    <button
+                      type="button"
+                      class="tp-ghost"
+                      onclick="resetPlanRules()"
+                    >
+                      <i class="fa-solid fa-rotate-left"></i> Kembalikan bawaan
+                    </button>
+                    <button
+                      type="button"
+                      class="tp-ghost"
+                      id="plan-rules-save"
+                      onclick="savePlanRulesDefault()"
+                      style="display: none"
+                    >
+                      <i class="fa-solid fa-floppy-disk"></i> Simpan sebagai
+                      bawaan
+                    </button>
+                  </div>
+                </details>
+
+                <details class="plan-legend" id="plan-legend" open>
+                  <summary>
+                    <i class="fa-solid fa-circle-info"></i> Legenda peta
+                    perencanaan
+                  </summary>
+                  <div class="pl-grid">
+                    <span class="pl-it"
+                      ><span class="tool-pin pin-origin"><span>A</span></span
+                      >Titik asal (ODP / closure / slack / POP)</span
+                    >
+                    <span class="pl-it"
+                      ><span class="tool-pin pin-dest"><span>B</span></span
+                      >Lokasi pelanggan (tujuan)</span
+                    >
+                    <span class="pl-it"
+                      ><span class="tool-pin pin-via"><span>1</span></span
+                      >Titik singgah 1, 2, &hellip; (seret untuk memindah)</span
+                    >
+                    <span class="pl-it"
+                      ><span class="tool-pin pin-slack"><span>S</span></span
+                      >Slack kabel (sisa kabel, jarak &amp; panjang di
+                      BOQ)</span
+                    >
+                    <span class="pl-it"
+                      ><span class="tool-pin pin-hub"><span>O</span></span
+                      >Hub: closure + ODP baru (rute &gt; 1 km)</span
+                    >
+                    <span class="pl-it"
+                      ><span class="tool-pin pin-hub"><span>C</span></span
+                      >Hub: closure baru saja</span
+                    >
+                    <span class="pl-it"
+                      ><i class="pl-dot old"></i>Tiang / handhole yang sudah ada
+                      (dipakai ulang)</span
+                    >
+                    <span class="pl-it"
+                      ><i class="pl-dot new"></i>Tiang / handhole baru yang akan
+                      dibangun</span
+                    >
+                    <span class="pl-it"
+                      ><i class="pl-line seg1"></i>Jalur kabel segmen 1 (dari
+                      titik asal)</span
+                    >
+                    <span class="pl-it"
+                      ><i class="pl-line seg2"></i>Segmen berikutnya (distribusi
+                      / drop)</span
+                    >
+                    <span class="pl-it"
+                      ><i class="pl-line road"></i>Putus-putus = rute mengikuti
+                      jalan &middot; titik-titik = garis lurus</span
+                    >
+                  </div>
+                </details>
+
+                <div class="tp-row">
+                  <button
+                    type="button"
+                    class="tp-primary"
+                    id="plan-calc-btn"
+                    onclick="runPlanPreview()"
+                  >
+                    <i class="fa-solid fa-route"></i> Hitung &amp; gambar rute
+                  </button>
+                </div>
+                <div
+                  id="plan-msg"
+                  class="tp-verdict"
+                  style="display: none"
+                ></div>
+                <div id="plan-result"></div>
+                <div id="plan-boq"></div>
+                <div class="tp-row" id="plan-actions" style="display: none">
+                  <button
+                    type="button"
+                    class="tp-ghost"
+                    id="plan-save-btn"
+                    onclick="savePlanDraft()"
+                  >
+                    <i class="fa-solid fa-bookmark"></i> Simpan rencana
+                  </button>
+                  <button
+                    type="button"
+                    class="tp-primary green"
+                    id="plan-realize-btn"
+                    onclick="realizeCurrentPlan()"
+                    style="display: none"
+                  >
+                    <i class="fa-solid fa-hammer"></i> Wujudkan
+                  </button>
+                </div>
+
+                <div class="tp-tier-title" style="margin-top: 14px">
+                  Rencana tersimpan
+                </div>
+                <div id="plan-saved" class="plan-saved"></div>
+              </section>
+            </div>
+          </div>
         </div>
       </main>
     </div>
@@ -226,9 +791,11 @@
           </button>
         </div>
         <div class="modal-body sum-body">
+          <div id="summary-scope" class="sum-scope" style="display: none"></div>
           <div class="sum-hint">Klik kartu untuk melihat daftar asetnya.</div>
           <div id="summary-nodes" class="sum-grid"></div>
           <div id="summary-cables"></div>
+          <div id="summary-breakdown"></div>
         </div>
       </div>
     </div>
@@ -281,12 +848,19 @@
             </div>
             <select
               id="filter-cluster"
-              onchange="onInventoryFilterChange()"
+              onchange="onInventoryScopeChange()"
               title="Cluster"
             >
               <option value="ALL">Semua Cluster</option>
               <option value="EKO">Cluster EKO</option>
               <option value="WKO">Cluster WKO</option>
+            </select>
+            <select
+              id="filter-area"
+              onchange="onInventoryScopeChange()"
+              title="Area"
+            >
+              <option value="ALL">Semua Area</option>
             </select>
             <select
               id="filter-status"
@@ -298,6 +872,14 @@
               <option value="Maintenance">Maintenance</option>
               <option value="Cut/Broken">Cut/Broken</option>
             </select>
+            <button
+              type="button"
+              class="inv-export-btn"
+              onclick="openDataModal('export', true)"
+              title="Unduh hasil filter ini"
+            >
+              <i class="fa-solid fa-file-arrow-down"></i> <span>Ekspor</span>
+            </button>
             <!-- penyimpan state filter (diatur lewat chip di atas) -->
             <select id="filter-type" style="display: none">
               <option value="ALL">Semua</option>
@@ -404,6 +986,17 @@
       </div>
     </div>
 
+    <!-- Modal Pratinjau Auto-Sambung -->
+    <div id="modal-ac" class="modal-overlay" style="display: none">
+      <div class="modal-container" style="max-width: 560px; height: auto">
+        <div class="modal-header">
+          <h3><i class="fa-solid fa-bolt"></i> Sambungan core otomatis</h3>
+          <button class="btn-close" onclick="acClose()">&times;</button>
+        </div>
+        <div class="modal-body" id="ac-body"></div>
+      </div>
+    </div>
+
     <!-- Modal Form Input Asset Baru -->
     <div id="modal-add-asset" class="modal-overlay" style="display: none">
       <div class="modal-container" style="max-width: 550px; height: auto">
@@ -494,7 +1087,7 @@
               <label style="font-weight: 600; font-size: 12px">Cluster:</label>
               <select
                 id="asset-cluster"
-                onchange="updateAreaOptions()"
+                onchange="onAssetClusterChange()"
                 style="
                   width: 100%;
                   padding: 8px;
@@ -510,6 +1103,7 @@
               <label style="font-weight: 600; font-size: 12px">Area:</label>
               <select
                 id="asset-area"
+                onchange="onAssetAreaChange()"
                 style="
                   width: 100%;
                   padding: 8px;
@@ -568,6 +1162,42 @@
             </div>
           </div>
 
+          <!-- OTB POP: satu POP bisa punya lebih dari satu OTB -->
+          <div
+            id="otb-editor"
+            style="
+              display: none;
+              margin-bottom: 12px;
+              padding: 10px;
+              border: 1px solid #c7d2fe;
+              border-radius: 6px;
+              background: #f8faff;
+            "
+          >
+            <div
+              style="
+                font-weight: 700;
+                font-size: 12px;
+                color: #3730a3;
+                margin-bottom: 4px;
+              "
+            >
+              OTB pada POP ini
+            </div>
+            <div style="font-size: 11px; color: #64748b; margin-bottom: 8px">
+              Port diberi nama OTB-1 / P01, OTB-2 / P01, dst. Detail posisi
+              fisik bersifat opsional.
+            </div>
+            <div id="otb-rows"></div>
+            <button type="button" class="btn-mini" onclick="otbAdd()">
+              <i class="fa-solid fa-plus"></i> Tambah OTB
+            </button>
+            <span
+              id="otb-total"
+              style="font-size: 11px; color: #475569; margin-left: 8px"
+            ></span>
+          </div>
+
           <!-- Cara pemasangan: khusus kabel -->
           <div id="installation-box" style="display: none; margin-bottom: 12px">
             <label style="font-weight: 600; font-size: 12px"
@@ -586,6 +1216,13 @@
               <option value="Tanah">Kabel Tanah (duct / tanam langsung)</option>
               <option value="">Belum diisi</option>
             </select>
+            <!-- Jenis serat tidak lagi ditampilkan: SM/MM mengikuti kebutuhan pelanggan, bukan aset kabel -->
+            <div style="display: none">
+              <select id="asset-fiber-mode">
+                <option value="SM">SM</option>
+                <option value="MM">MM</option>
+              </select>
+            </div>
           </div>
 
           <!-- Topologi (opsional): dasar analisis dampak downstream -->
@@ -636,6 +1273,57 @@
                   border-radius: 4px;
                 "
               ></select>
+            </div>
+          </div>
+          <div
+            id="ac-box"
+            style="
+              display: none;
+              margin-bottom: 12px;
+              padding: 10px;
+              border: 1px solid #bae6fd;
+              background: #f0f9ff;
+              border-radius: 6px;
+            "
+          >
+            <div
+              style="
+                font-weight: 700;
+                font-size: 12px;
+                color: #0369a1;
+                margin-bottom: 6px;
+              "
+            >
+              <i class="fa-solid fa-bolt"></i> Sambungan core kabel ini
+            </div>
+            <label style="font-size: 12px; display: block; margin-bottom: 4px"
+              ><input type="radio" name="ac-mode" value="auto" checked />
+              Otomatis dari peta (hulu &rarr; kabel &rarr; hilir memakai core
+              tersedia)</label
+            >
+            <label style="font-size: 12px; display: block; margin-bottom: 6px"
+              ><input type="radio" name="ac-mode" value="manual" /> Manual
+              (diisi nanti di modal aset)</label
+            >
+            <label style="font-size: 12px; font-weight: 600"
+              >Jumlah core:</label
+            >
+            <select
+              id="ac-cores"
+              style="padding: 4px; border: 1px solid #ccc; border-radius: 4px"
+            >
+              <option value="1">1 core</option>
+              <option value="2">2 core (dedicated)</option>
+              <option value="4">4 core</option>
+              <option value="6">6 core</option>
+              <option value="12">12 core</option>
+              <option value="full">
+                Penuh &mdash; semua core sesuai kapasitas
+              </option>
+            </select>
+            <div style="font-size: 11px; color: #64748b; margin-top: 4px">
+              Ujung kabel harus berada di node (ODP/POP/Closure/Pelanggan).
+              Hasil ditampilkan dulu untuk dikonfirmasi.
             </div>
           </div>
           <div
@@ -906,6 +1594,7 @@
                   </label>
                   <select
                     id="splice-via-core"
+                    onchange="autoPickJoint()"
                     style="
                       width: 100%;
                       padding: 6px;
@@ -1068,6 +1757,13 @@
               </tbody>
             </table>
           </div>
+
+          <!-- Redaman & daya optik per aset -->
+          <div
+            id="asset-loss-box"
+            class="core-loss-box"
+            style="margin-top: 16px"
+          ></div>
 
           <!-- Jalur & dampak (hulu / hilir) -->
           <div id="trace-panel" style="margin-top: 16px">
@@ -1348,6 +2044,82 @@
             height: calc(100% - 60px);
           "
         >
+          <div class="noc-toolbar" id="noc-toolbar">
+            <span class="noc-scope" id="noc-scope" style="display: none"></span>
+            <span class="noc-hint"
+              ><i class="fa-solid fa-eye-slash"></i> Insiden yang
+              <b>tidak mengubah status aset</b> boleh disembunyikan dari
+              peta.</span
+            >
+            <span id="noc-hide-actions">
+              <button
+                type="button"
+                class="noc-btn"
+                onclick="bulkIncidentVisibility(true)"
+              >
+                <i class="fa-solid fa-eye-slash"></i> Sembunyikan semua tanpa
+                dampak
+              </button>
+              <button
+                type="button"
+                class="noc-btn"
+                onclick="bulkIncidentVisibility(false)"
+              >
+                <i class="fa-solid fa-eye"></i> Tampilkan semua
+              </button>
+            </span>
+          </div>
+          <div id="noc-summary" class="noc-summary"></div>
+          <div class="noc-filters" id="noc-filters">
+            <label
+              >Cluster<select
+                id="noc-f-cluster"
+                onchange="onNocFilter('cluster')"
+              >
+                <option value="ALL">Semua</option>
+              </select></label
+            >
+            <label
+              >Area<select id="noc-f-area" onchange="onNocFilter('area')">
+                <option value="ALL">Semua</option>
+              </select></label
+            >
+            <label
+              >Kota<select id="noc-f-city" onchange="onNocFilter('city')">
+                <option value="ALL">Semua</option>
+              </select></label
+            >
+            <label
+              >Status<select id="noc-f-status" onchange="onNocFilter('status')">
+                <option value="ALL">Semua</option>
+                <option value="Open">Open</option>
+                <option value="Temporary Fix">Temporary Fix</option>
+                <option value="Resolved">Resolved</option>
+              </select></label
+            >
+            <label
+              >Severity<select
+                id="noc-f-sev"
+                onchange="onNocFilter('severity')"
+              >
+                <option value="ALL">Semua</option>
+                <option value="Critical">Critical</option>
+                <option value="Major">Major</option>
+                <option value="Minor">Minor</option>
+              </select></label
+            >
+            <label class="noc-q"
+              >Cari<input
+                type="search"
+                id="noc-f-q"
+                placeholder="No. tiket / judul / aset"
+                oninput="onNocFilter('q')"
+            /></label>
+            <button type="button" class="noc-btn" onclick="resetNocFilters()">
+              <i class="fa-solid fa-rotate-left"></i> Reset
+            </button>
+            <span class="noc-count" id="noc-count"></span>
+          </div>
           <div
             style="
               flex: 1;
@@ -1376,6 +2148,7 @@
                 <tr>
                   <th style="padding: 10px">No. Tiket</th>
                   <th style="padding: 10px">Judul Insiden</th>
+                  <th style="padding: 10px">Wilayah</th>
                   <th style="padding: 10px">Kategori</th>
                   <th style="padding: 10px">Severity</th>
                   <th style="padding: 10px">Status</th>
@@ -1570,6 +2343,14 @@
                   />
                 </div>
               </div>
+              <label
+                id="rep-full-wrap"
+                style="display: block; margin-top: 8px; font-size: 12px"
+                ><input type="checkbox" id="rep-full" />
+                <b>Sambung penuh</b> &mdash; semua core kabel (sesuai kapasitas)
+                disambung di closure/joint baru, bukan hanya yang sudah
+                terpakai</label
+              >
               <div style="margin-top: 8px">
                 <label style="font-size: 11px; font-weight: 600"
                   >Catatan perbaikan</label
@@ -1735,6 +2516,106 @@
       </form>
     </div>
 
+    <!-- ===== KATALOG HARGA KHS / BOQ ===== -->
+    <div id="modal-khs" class="modal-overlay" style="display: none">
+      <div class="modal-container khs-container">
+        <div class="modal-header" style="background: #6d28d9; color: white">
+          <h3>
+            <i class="fa-solid fa-file-invoice-dollar"></i>
+            <span id="khs-title">Katalog Harga KHS</span>
+          </h3>
+          <button
+            class="btn-close"
+            onclick="closeKhsModal()"
+            style="color: white"
+            aria-label="Tutup"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="khs-body">
+          <div id="khs-pickbar" class="tp-verdict" style="display: none"></div>
+          <div class="khs-tools">
+            <input
+              type="search"
+              id="khs-q"
+              placeholder="Cari kode / uraian (mis. tiang, ADSS 24, handhole)"
+              oninput="khsFilterChanged()"
+              autocomplete="off"
+            />
+            <select
+              id="khs-jenis"
+              onchange="khsFilterChanged()"
+              aria-label="Jenis pekerjaan"
+            ></select>
+            <select
+              id="khs-region"
+              onchange="khsFilterChanged()"
+              aria-label="Wilayah harga"
+            ></select>
+          </div>
+          <div id="khs-meta" class="adm-hint"></div>
+          <div class="adm-scroll khs-scroll">
+            <table class="adm-table khs-table">
+              <thead>
+                <tr>
+                  <th>Kode</th>
+                  <th>Uraian pekerjaan</th>
+                  <th>Sat.</th>
+                  <th class="num">Material</th>
+                  <th class="num">Jasa</th>
+                  <th class="num">Total</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="khs-rows"></tbody>
+            </table>
+          </div>
+          <div id="khs-msg" class="tp-verdict" style="display: none"></div>
+          <div class="khs-foot">
+            <button type="button" class="tp-ghost" onclick="khsExport()">
+              <i class="fa-solid fa-file-arrow-down"></i> Unduh katalog (.xlsx)
+            </button>
+          </div>
+          <div id="khs-admin" style="display: none">
+            <details class="tp-rules">
+              <summary>
+                <i class="fa-solid fa-file-import"></i> Impor KHS baru (Excel)
+              </summary>
+              <div class="khs-imp">
+                <input type="file" id="khs-file" accept=".xlsx,.xlsm" />
+                <select id="khs-imp-mode" aria-label="Mode impor">
+                  <option value="merge">
+                    Perbarui harga &amp; tambah item baru
+                  </option>
+                  <option value="replace">Ganti seluruh katalog</option>
+                </select>
+                <button type="button" class="tp-primary" onclick="khsImport()">
+                  <i class="fa-solid fa-upload"></i> Impor
+                </button>
+                <div class="adm-hint">
+                  Format sama dengan berkas KHS (baris wilayah NSO...MPO untuk
+                  Material lalu Jasa) atau hasil unduhan katalog ini.
+                </div>
+              </div>
+            </details>
+            <details class="tp-rules" id="khs-map-box">
+              <summary>
+                <i class="fa-solid fa-diagram-project"></i> Pemetaan komponen
+                &amp; PPN
+              </summary>
+              <div id="khs-map" class="khs-map"></div>
+              <div class="tp-row">
+                <button type="button" class="tp-primary" onclick="khsSaveMap()">
+                  <i class="fa-solid fa-floppy-disk"></i> Simpan pemetaan
+                </button>
+              </div>
+            </details>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ===== ACCESS CONTROL (kelola user) ===== -->
     <div id="modal-users" class="modal-overlay" style="display: none">
       <div class="modal-container" style="max-width: 900px">
@@ -1825,6 +2706,8 @@
               <option value="CONNECTION">Sambungan</option>
               <option value="INCIDENT">Tiket</option>
               <option value="USER">User</option>
+              <option value="PLAN">Rencana</option>
+              <option value="DATA">Data (impor/ekspor)</option>
             </select>
             <select id="aud-action" onchange="loadAudit(0)">
               <option value="ALL">Semua aksi</option>
@@ -1842,6 +2725,8 @@
               <option value="USER_CREATED">User baru</option>
               <option value="USER_UPDATED">Ubah user</option>
               <option value="PASSWORD_RESET">Reset password</option>
+              <option value="IMPORT">Impor data</option>
+              <option value="EXPORT">Ekspor data</option>
             </select>
             <button class="auth-btn" onclick="loadAudit(0)">
               <i class="fa-solid fa-magnifying-glass"></i>
@@ -1871,6 +2756,446 @@
             <button id="aud-next" onclick="loadAudit(1, true)">
               Berikutnya &raquo;
             </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Import / Export data -->
+    <div id="modal-data" class="modal-overlay" style="display: none">
+      <div class="modal-container data-container">
+        <div class="modal-header" style="background: #0f766e; color: white">
+          <h3>
+            <i class="fa-solid fa-file-arrow-up"></i> Import / Export Data
+          </h3>
+          <button
+            class="btn-close"
+            onclick="closeDataModal()"
+            style="color: white"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="data-tabs" role="tablist">
+          <button
+            type="button"
+            id="dtab-export"
+            role="tab"
+            onclick="setDataTab('export')"
+          >
+            <i class="fa-solid fa-file-arrow-down"></i> Export
+          </button>
+          <button
+            type="button"
+            id="dtab-import"
+            role="tab"
+            onclick="setDataTab('import')"
+          >
+            <i class="fa-solid fa-file-arrow-up"></i> Import
+          </button>
+          <button
+            type="button"
+            id="dtab-otdr"
+            role="tab"
+            onclick="setDataTab('otdr')"
+          >
+            <i class="fa-solid fa-wave-square"></i> OTDR &amp; Redaman
+          </button>
+        </div>
+        <div class="modal-body data-body">
+          <!-- ===== EXPORT ===== -->
+          <div id="data-export">
+            <div class="data-grid">
+              <label
+                >Format
+                <select id="exp-format" onchange="onExportFormatChange()">
+                  <option value="geojson">
+                    GeoJSON (.geojson) - QGIS / web
+                  </option>
+                  <option value="kml">
+                    KML (.kml) - Google Earth / My Maps
+                  </option>
+                  <option value="xlsx">Excel (.xlsx) - banyak sheet</option>
+                  <option value="csv">
+                    CSV (.csv) - ringan, Excel / Google Sheets
+                  </option>
+                </select>
+              </label>
+              <label
+                >Cakupan
+                <select id="exp-scope" onchange="onExportScopeChange()">
+                  <option value="all">Semua data</option>
+                  <option value="nodes">
+                    Node saja (ODP, POP, Closure, ...)
+                  </option>
+                  <option value="cables">Kabel saja</option>
+                  <option value="incidents" id="exp-scope-inc">
+                    Incident / tiket gangguan
+                  </option>
+                  <option value="connections" id="exp-scope-conn">
+                    Sambungan core (CSV / Excel)
+                  </option>
+                </select>
+              </label>
+              <label
+                >Jenis aset
+                <select id="exp-type">
+                  <option value="ALL">Semua jenis</option>
+                  <option value="POP">POP</option>
+                  <option value="CLOSURE">Closure</option>
+                  <option value="ODP">ODP</option>
+                  <option value="HH">Handhole</option>
+                  <option value="TIANG">Tiang</option>
+                  <option value="SLACK">Slack</option>
+                  <option value="PELANGGAN">Pelanggan</option>
+                  <option value="CABLE">Semua kabel</option>
+                  <option value="Backbone">Kabel Backbone</option>
+                  <option value="Feeder">Kabel Feeder</option>
+                  <option value="Distribution">Kabel Distribution</option>
+                  <option value="Drop">Kabel Drop</option>
+                </select>
+              </label>
+              <label
+                ><span id="exp-status-label">Status</span>
+                <select id="exp-status">
+                  <option value="ALL">Semua status</option>
+                  <option value="Active">Active</option>
+                  <option value="Maintenance">Maintenance</option>
+                  <option value="Cut/Broken">Cut/Broken</option>
+                </select>
+              </label>
+              <label
+                >Pemasangan kabel
+                <select id="exp-install">
+                  <option value="ALL">Semua</option>
+                  <option value="Udara">Udara</option>
+                  <option value="Tanah">Tanah</option>
+                  <option value="NONE">Belum diisi</option>
+                </select>
+              </label>
+              <label
+                >Cluster
+                <select id="exp-cluster" onchange="onExportClusterChange()">
+                  <option value="ALL">Semua cluster</option>
+                  <option value="EKO">EKO</option>
+                  <option value="WKO">WKO</option>
+                </select>
+              </label>
+              <label
+                >Area
+                <select id="exp-area">
+                  <option value="ALL">Semua area</option>
+                </select>
+              </label>
+              <label class="data-wide"
+                >Cari nama / kota (opsional)
+                <input type="text" id="exp-q" placeholder="mis. ODP-BJM" />
+              </label>
+              <label id="exp-delim-wrap"
+                >Pemisah kolom CSV
+                <select id="exp-delim">
+                  <option value=";">; (Excel versi Indonesia)</option>
+                  <option value=",">, (standar internasional)</option>
+                </select>
+              </label>
+            </div>
+            <div id="exp-msg" class="data-msg" style="display: none"></div>
+            <div class="data-actions">
+              <button
+                type="button"
+                class="data-primary"
+                id="exp-btn"
+                onclick="downloadExport()"
+              >
+                <i class="fa-solid fa-download"></i> Unduh
+              </button>
+            </div>
+            <p class="data-note">
+              Excel: satu berkas dengan sheet Rekap Cluster-Area, Node, Kabel,
+              Insiden, dan Sambungan Core. CSV dengan cakupan "Semua" diunduh
+              sebagai ZIP (nodes, cables, connections, incidents). Hasil ekspor
+              Node/Kabel bisa diimpor kembali.
+            </p>
+          </div>
+
+          <!-- ===== IMPORT ===== -->
+          <div id="data-import" style="display: none">
+            <div id="imp-denied" class="data-msg err" style="display: none">
+              Akun Anda tidak punya izin mengimpor data (hanya NOC dan Admin).
+            </div>
+            <div id="imp-form">
+              <label class="data-drop" id="imp-drop" for="imp-file">
+                <i class="fa-solid fa-cloud-arrow-up"></i>
+                <b id="imp-file-name"
+                  >Pilih berkas Excel / CSV / GeoJSON / KML / KMZ</b
+                >
+                <small
+                  >Maksimal 8 MB dan 5.000 data. Titik = node, garis =
+                  kabel.</small
+                >
+                <input
+                  type="file"
+                  id="imp-file"
+                  accept=".xlsx,.xlsm,.csv,.txt,.geojson,.json,.kml,.kmz"
+                  onchange="onImportFileChosen(event)"
+                />
+              </label>
+              <div class="data-grid">
+                <label
+                  >Jika nama + jenis sudah ada
+                  <select id="imp-dup" onchange="previewImport()">
+                    <option value="skip">Lewati (aman)</option>
+                    <option value="update">
+                      Perbarui atribut (bukan posisi/geometri)
+                    </option>
+                    <option value="create">Tetap buat baru</option>
+                  </select>
+                </label>
+                <div class="data-templates">
+                  Template:
+                  <a
+                    href="#"
+                    onclick="
+                      downloadTemplate('nodes', 'xlsx');
+                      return false;
+                    "
+                    >Excel (node + kabel)</a
+                  >
+                  &middot; CSV
+                  <a
+                    href="#"
+                    onclick="
+                      downloadTemplate('nodes');
+                      return false;
+                    "
+                    >node</a
+                  >
+                  /
+                  <a
+                    href="#"
+                    onclick="
+                      downloadTemplate('cables');
+                      return false;
+                    "
+                    >kabel</a
+                  >
+                </div>
+              </div>
+              <div id="imp-msg" class="data-msg" style="display: none"></div>
+              <div id="imp-preview"></div>
+              <div class="data-actions">
+                <button
+                  type="button"
+                  class="data-ghost"
+                  onclick="resetImport()"
+                >
+                  Ganti berkas
+                </button>
+                <button
+                  type="button"
+                  class="data-primary"
+                  id="imp-commit"
+                  onclick="commitImport()"
+                  disabled
+                >
+                  <i class="fa-solid fa-check"></i> Terapkan impor
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- ===== OTDR & REDAMAN ===== -->
+          <div id="data-otdr" style="display: none">
+            <div id="otdr-denied" class="data-msg err" style="display: none">
+              Akun Anda tidak punya izin mengunggah hasil OTDR (Teknisi, NOC,
+              dan Admin).
+            </div>
+            <div class="otdr-seg">
+              <h4 class="otdr-h">1. Segmen yang diukur</h4>
+              <div class="data-grid">
+                <label class="data-wide"
+                  >Kabel / segmen
+                  <select id="otdr-seg" onchange="onOtdrSegChange()">
+                    <option value="">-- Ikuti kolom Kabel di berkas --</option>
+                  </select>
+                </label>
+                <label
+                  >Diukur dari
+                  <select id="otdr-seg-from" onchange="onOtdrSegChange()">
+                    <option value="A">Ujung A</option>
+                    <option value="B">Ujung B</option>
+                  </select>
+                </label>
+                <div class="otdr-seg-info" id="otdr-seg-info">
+                  Pilih kabel agar arah ukur (dari mana ke mana) jelas. Dipakai
+                  oleh unggah, input manual, dan pencarian titik putus di bawah.
+                </div>
+              </div>
+            </div>
+            <div id="otdr-form">
+              <h4 class="otdr-h">2a. Unggah berkas hasil OTDR</h4>
+              <label class="data-drop" id="otdr-drop" for="otdr-file">
+                <i class="fa-solid fa-wave-square"></i>
+                <b id="otdr-file-name">Pilih berkas hasil OTDR (Excel / CSV)</b>
+                <small
+                  >Satu baris per kabel + core; event boleh di baris lanjutan.
+                  Kolom Dari/Ke (aset ujung kabel) menentukan arah. Jika segmen
+                  dipilih di atas, kolom Kabel boleh kosong.</small
+                >
+                <input
+                  type="file"
+                  id="otdr-file"
+                  accept=".xlsx,.xlsm,.csv,.txt"
+                  onchange="onOtdrFileChosen(event)"
+                />
+              </label>
+              <div class="data-grid">
+                <label
+                  >Jika kabel + core + tanggal sama sudah ada
+                  <select id="otdr-dup" onchange="previewOtdr()">
+                    <option value="skip">Lewati (aman)</option>
+                    <option value="replace">Timpa dengan data baru</option>
+                  </select>
+                </label>
+                <div class="data-templates">
+                  Template:
+                  <a
+                    href="#"
+                    onclick="
+                      downloadOtdrTemplate('xlsx');
+                      return false;
+                    "
+                    >Excel</a
+                  >
+                  &middot;
+                  <a
+                    href="#"
+                    onclick="
+                      downloadOtdrTemplate('csv');
+                      return false;
+                    "
+                    >CSV</a
+                  >
+                </div>
+              </div>
+              <div id="otdr-msg" class="data-msg" style="display: none"></div>
+              <div id="otdr-preview"></div>
+              <div class="data-actions">
+                <button type="button" class="data-ghost" onclick="resetOtdr()">
+                  Ganti berkas
+                </button>
+                <button
+                  type="button"
+                  class="data-primary"
+                  id="otdr-commit"
+                  onclick="commitOtdr()"
+                  disabled
+                >
+                  <i class="fa-solid fa-check"></i> Simpan hasil OTDR
+                </button>
+              </div>
+
+              <details class="otdr-manual">
+                <summary>
+                  <b>2b. Input manual satu hasil ukur</b> (untuk segmen di atas)
+                </summary>
+                <div class="data-grid">
+                  <label
+                    >Core <input type="text" id="om-core" placeholder="mis. 3"
+                  /></label>
+                  <label
+                    >Panjang gelombang (nm)
+                    <input type="number" id="om-wl" placeholder="1310"
+                  /></label>
+                  <label>Tanggal ukur <input type="date" id="om-date" /></label>
+                  <label
+                    >Panjang terukur (m)
+                    <input type="number" id="om-len" step="1"
+                  /></label>
+                  <label
+                    >Total redaman (dB)
+                    <input type="number" id="om-loss" step="0.01"
+                  /></label>
+                  <label
+                    >Event: jarak (m)
+                    <input type="number" id="om-ev-d" step="1"
+                  /></label>
+                  <label
+                    >Event: redaman (dB)
+                    <input type="number" id="om-ev-l" step="0.01"
+                  /></label>
+                  <label
+                    >Jenis event
+                    <select id="om-ev-t">
+                      <option value="splice">Splice</option>
+                      <option value="connector">Konektor</option>
+                      <option value="bend">Bending</option>
+                      <option value="break">Putus</option>
+                    </select>
+                  </label>
+                </div>
+                <div id="om-msg" class="data-msg" style="display: none"></div>
+                <div class="data-actions">
+                  <button
+                    type="button"
+                    class="data-primary"
+                    onclick="saveOtdrManual()"
+                  >
+                    <i class="fa-solid fa-floppy-disk"></i> Simpan hasil ukur
+                  </button>
+                </div>
+              </details>
+            </div>
+
+            <h4 class="otdr-h">3. Cari titik putus / event di peta</h4>
+            <div class="data-grid">
+              <label
+                >Jarak dari ujung ukur (m)
+                <input
+                  type="number"
+                  id="loc-dist"
+                  step="1"
+                  min="0"
+                  placeholder="mis. 1240"
+              /></label>
+              <label
+                >Panjang optik total terukur (m)
+                <small>(opsional, mengoreksi slack)</small>
+                <input type="number" id="loc-len" step="1" min="0"
+              /></label>
+            </div>
+            <div id="loc-msg" class="data-msg" style="display: none"></div>
+            <div class="data-actions">
+              <button
+                type="button"
+                class="data-ghost"
+                onclick="clearCutMarker()"
+              >
+                Hapus penanda
+              </button>
+              <button type="button" class="data-primary" onclick="locateCut()">
+                <i class="fa-solid fa-location-crosshairs"></i> Tampilkan di
+                peta
+              </button>
+            </div>
+            <div id="loc-result"></div>
+
+            <h4 class="otdr-h">Hasil OTDR terakhir</h4>
+            <div id="otdr-list" class="imp-scroll"></div>
+            <div id="loss-admin" style="display: none">
+              <h4 class="otdr-h">Parameter redaman (Admin)</h4>
+              <div id="loss-fields" class="data-grid"></div>
+              <div id="loss-msg" class="data-msg" style="display: none"></div>
+              <div class="data-actions">
+                <button
+                  type="button"
+                  class="data-primary"
+                  onclick="saveLossParams()"
+                >
+                  <i class="fa-solid fa-floppy-disk"></i> Simpan parameter
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
