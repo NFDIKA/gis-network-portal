@@ -163,7 +163,7 @@
             <div style="display: flex; gap: 8px">
               <select
                 id="filter-cluster"
-                onchange="renderInventoryTable()"
+                onchange="onInventoryFilterChange()"
                 style="
                   padding: 6px 10px;
                   border: 1px solid #ccc;
@@ -178,7 +178,7 @@
 
               <select
                 id="filter-type"
-                onchange="renderInventoryTable()"
+                onchange="onInventoryFilterChange()"
                 style="
                   padding: 6px 10px;
                   border: 1px solid #ccc;
@@ -192,6 +192,8 @@
                 <option value="CLOSURE">Closure</option>
                 <option value="TIANG">Tiang</option>
                 <option value="SLACK">Slack Kabel</option>
+                <option value="PELANGGAN">Pelanggan</option>
+                <option value="INCIDENT">Titik Incident</option>
                 <option value="CABLE">Kabel / Jalur</option>
               </select>
             </div>
@@ -199,7 +201,7 @@
             <input
               type="text"
               id="inventory-search"
-              oninput="renderInventoryTable()"
+              oninput="onInventorySearchInput()"
               placeholder="Cari nama aset / kota..."
               style="
                 padding: 6px 10px;
@@ -238,12 +240,48 @@
                 "
               >
                 <tr>
-                  <th style="padding: 10px">Aset</th>
-                  <th style="padding: 10px">Tipe</th>
-                  <th style="padding: 10px">Cluster / Area</th>
-                  <th style="padding: 10px">Kota / Kab</th>
-                  <th style="padding: 10px">Kapasitas</th>
-                  <th style="padding: 10px">Status</th>
+                  <th
+                    style="padding: 10px; cursor: pointer; user-select: none"
+                    onclick="setInventorySort('name')"
+                    data-sort="name"
+                  >
+                    Aset<span class="sort-ind"></span>
+                  </th>
+                  <th
+                    style="padding: 10px; cursor: pointer; user-select: none"
+                    onclick="setInventorySort('type')"
+                    data-sort="type"
+                  >
+                    Tipe<span class="sort-ind"></span>
+                  </th>
+                  <th
+                    style="padding: 10px; cursor: pointer; user-select: none"
+                    onclick="setInventorySort('cluster')"
+                    data-sort="cluster"
+                  >
+                    Cluster / Area<span class="sort-ind"></span>
+                  </th>
+                  <th
+                    style="padding: 10px; cursor: pointer; user-select: none"
+                    onclick="setInventorySort('city')"
+                    data-sort="city"
+                  >
+                    Kota / Kab<span class="sort-ind"></span>
+                  </th>
+                  <th
+                    style="padding: 10px; cursor: pointer; user-select: none"
+                    onclick="setInventorySort('capacity')"
+                    data-sort="capacity"
+                  >
+                    Kapasitas<span class="sort-ind"></span>
+                  </th>
+                  <th
+                    style="padding: 10px; cursor: pointer; user-select: none"
+                    onclick="setInventorySort('status')"
+                    data-sort="status"
+                  >
+                    Status<span class="sort-ind"></span>
+                  </th>
                   <th style="padding: 10px; text-align: center">Aksi</th>
                 </tr>
               </thead>
@@ -251,6 +289,67 @@
                 <!-- Data baris tabel di-render via JavaScript -->
               </tbody>
             </table>
+          </div>
+
+          <!-- Pagination -->
+          <div
+            id="inventory-pager"
+            style="
+              display: flex;
+              gap: 10px;
+              align-items: center;
+              justify-content: space-between;
+              flex-wrap: wrap;
+              font-size: 12px;
+              color: #475569;
+            "
+          >
+            <span id="inventory-page-info">-</span>
+            <div style="display: flex; gap: 6px; align-items: center">
+              <select
+                id="inventory-page-size"
+                onchange="onInventoryPageSizeChange()"
+                style="
+                  padding: 4px 6px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                  font-size: 12px;
+                "
+              >
+                <option value="10">10 / halaman</option>
+                <option value="25" selected>25 / halaman</option>
+                <option value="50">50 / halaman</option>
+                <option value="100">100 / halaman</option>
+              </select>
+              <button
+                id="inventory-prev"
+                onclick="goInventoryPage(-1)"
+                style="
+                  padding: 4px 10px;
+                  border: 1px solid #ccc;
+                  background: #fff;
+                  border-radius: 4px;
+                  cursor: pointer;
+                  white-space: nowrap;
+                "
+              >
+                &laquo; Prev
+              </button>
+              <button
+                id="inventory-next"
+                onclick="goInventoryPage(1)"
+                style="
+                  padding: 4px 10px;
+                  border: 1px solid #ccc;
+                  background: #fff;
+                  border-radius: 4px;
+                  cursor: pointer;
+                  white-space: nowrap;
+                "
+              >
+                Next &raquo;
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -277,6 +376,7 @@
           <input type="hidden" id="asset-lng" />
           <input type="hidden" id="asset-coords-json" />
           <input type="hidden" id="asset-category-type" />
+          <input type="hidden" id="asset-edit-id" />
           <!-- 'NODE' atau 'CABLE' -->
 
           <div class="form-group" style="margin-bottom: 12px">
@@ -418,6 +518,120 @@
             </div>
           </div>
 
+          <!-- Topologi (opsional): dasar analisis dampak downstream -->
+          <div
+            id="topo-node-box"
+            style="
+              display: none;
+              margin-bottom: 12px;
+              padding: 10px;
+              border: 1px dashed #cbd5e1;
+              border-radius: 6px;
+            "
+          >
+            <div
+              style="
+                font-weight: 700;
+                font-size: 12px;
+                color: #475569;
+                margin-bottom: 8px;
+              "
+            >
+              Topologi Jaringan (opsional)
+            </div>
+            <div style="margin-bottom: 8px">
+              <label style="font-weight: 600; font-size: 12px"
+                >Parent Node (Upstream):</label
+              >
+              <select
+                id="asset-parent-node"
+                style="
+                  width: 100%;
+                  padding: 8px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                "
+              ></select>
+            </div>
+            <div style="margin-bottom: 8px">
+              <label style="font-weight: 600; font-size: 12px"
+                >Kabel Pemasok Sinyal (Upstream):</label
+              >
+              <select
+                id="asset-upstream-cable"
+                style="
+                  width: 100%;
+                  padding: 8px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                "
+              ></select>
+            </div>
+          </div>
+          <div
+            id="topo-cable-box"
+            style="
+              display: none;
+              margin-bottom: 12px;
+              padding: 10px;
+              border: 1px dashed #cbd5e1;
+              border-radius: 6px;
+            "
+          >
+            <div
+              style="
+                font-weight: 700;
+                font-size: 12px;
+                color: #475569;
+                margin-bottom: 8px;
+              "
+            >
+              Topologi Jaringan (opsional)
+            </div>
+            <div style="margin-bottom: 8px">
+              <label style="font-weight: 600; font-size: 12px"
+                >Node Asal (Upstream):</label
+              >
+              <select
+                id="asset-from-node"
+                style="
+                  width: 100%;
+                  padding: 8px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                "
+              ></select>
+            </div>
+            <div style="margin-bottom: 8px">
+              <label style="font-weight: 600; font-size: 12px"
+                >Node Tujuan (Downstream):</label
+              >
+              <select
+                id="asset-to-node"
+                style="
+                  width: 100%;
+                  padding: 8px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                "
+              ></select>
+            </div>
+            <div style="margin-bottom: 8px">
+              <label style="font-weight: 600; font-size: 12px"
+                >Kabel Induk (Parent):</label
+              >
+              <select
+                id="asset-parent-cable"
+                style="
+                  width: 100%;
+                  padding: 8px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                "
+              ></select>
+            </div>
+          </div>
+
           <div
             style="
               margin-top: 20px;
@@ -459,11 +673,11 @@
 
     <!-- Modal Detail Core / Port Grid & Splicing Matrix -->
     <div id="modal-core-detail" class="modal-overlay" style="display: none">
-      <div class="modal-container" style="max-width: 950px; max-height: 90vh">
+      <div class="modal-container" style="max-width: 980px; max-height: 90vh">
         <div class="modal-header">
           <h3 id="core-modal-title">
             <i class="fa-solid fa-diagram-project"></i> Detail Core / Port &
-            Splicing Matrix
+            Splicing Matrix (Topologi Upstream/Downstream)
           </h3>
           <button class="btn-close" onclick="closeCoreDetailModal()">
             &times;
@@ -471,7 +685,7 @@
         </div>
 
         <div class="modal-body" style="padding: 20px; overflow-y: auto">
-          <!-- Header Info Aset -->
+          <!-- Header Info Aset + Topologi Upstream/Downstream Status -->
           <div
             id="asset-detail-info"
             style="
@@ -481,115 +695,233 @@
               margin-bottom: 15px;
               font-size: 13px;
               display: grid;
-              grid-template-columns: repeat(3, 1fr);
+              grid-template-columns: repeat(4, 1fr);
               gap: 10px;
+              border-left: 4px solid #0284c7;
             "
-          ></div>
+          >
+            <!-- Diisi via JS (termasuk badge Upstream Asset & Downstream Targets) -->
+          </div>
 
-          <!-- Panel Splicing Matrix / Tambah Sambungan -->
+          <!-- Panel Splicing Matrix / Tambah Sambungan Topologi -->
           <div
             style="
               background: #f1f5f9;
               border: 1px solid #cbd5e1;
-              padding: 12px;
+              padding: 14px;
               border-radius: 8px;
               margin-bottom: 20px;
             "
           >
-            <h4 style="margin: 0 0 10px 0; font-size: 13px; color: #1e293b">
-              <i class="fa-solid fa-link"></i> Form Sambung Core / Port
-              (Splicing)
-            </h4>
             <div
               style="
                 display: flex;
-                gap: 10px;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 10px;
+              "
+            >
+              <h4 style="margin: 0; font-size: 13px; color: #1e293b">
+                <i class="fa-solid fa-link"></i> Form Sambung Core / Port
+                (Splicing Matrix)
+              </h4>
+              <span
+                style="
+                  font-size: 11px;
+                  background: #e0f2fe;
+                  color: #0369a1;
+                  padding: 2px 8px;
+                  border-radius: 12px;
+                  font-weight: 600;
+                "
+              >
+                <i class="fa-solid fa-arrow-down-wide-short"></i> Flow: Upstream
+                &rarr; Downstream
+              </span>
+            </div>
+
+            <div
+              style="
+                display: flex;
+                gap: 8px;
                 align-items: center;
                 flex-wrap: wrap;
               "
             >
-              <!-- Core Origin / Asal -->
-              <select
-                id="splice-from-core"
-                style="
-                  padding: 6px;
-                  font-size: 12px;
-                  border-radius: 4px;
-                  border: 1px solid #ccc;
-                  flex: 1;
-                  min-width: 140px;
-                "
-              >
-                <option value="">-- Pilih Core/Port Aset Ini --</option>
-              </select>
+              <!-- 1. Core Origin / Asal (Upstream/Current Core) -->
+              <div style="flex: 1; min-width: 140px">
+                <label
+                  style="
+                    font-size: 10px;
+                    font-weight: bold;
+                    color: #475569;
+                    display: block;
+                    margin-bottom: 2px;
+                  "
+                >
+                  PORT/CORE ASAL (UPSTREAM)
+                </label>
+                <select
+                  id="splice-from-core"
+                  style="
+                    width: 100%;
+                    padding: 6px;
+                    font-size: 12px;
+                    border-radius: 4px;
+                    border: 1px solid #ccc;
+                  "
+                >
+                  <option value="">-- Pilih Core/Port Aset Ini --</option>
+                </select>
+              </div>
 
-              <!-- Input Kabel Media Penghubung (VIA CABLE) -->
-              <select
-                id="splice-via-cable"
-                style="
-                  padding: 6px;
-                  font-size: 12px;
-                  border-radius: 4px;
-                  border: 1px solid #0284c7;
-                  background-color: #f0f9ff;
-                  flex: 1;
-                  min-width: 160px;
-                "
-              >
-                <option value="">-- Pilih Kabel Penghubung --</option>
-              </select>
-
+              <!-- Panah Indikator -->
               <i
                 class="fa-solid fa-arrow-right-long"
-                style="color: #64748b"
+                style="color: #0284c7; margin-top: 14px"
               ></i>
 
-              <!-- Target Asset -->
-              <select
-                id="splice-to-asset"
-                onchange="onTargetAssetChange()"
-                style="
-                  padding: 6px;
-                  font-size: 12px;
-                  border-radius: 4px;
-                  border: 1px solid #ccc;
-                  flex: 1;
-                  min-width: 160px;
-                "
-              >
-                <option value="">-- Pilih Aset Tujuan --</option>
-              </select>
+              <!-- 2. Input Kabel Media Penghubung (VIA CABLE) -->
+              <div style="flex: 1; min-width: 160px">
+                <label
+                  style="
+                    font-size: 10px;
+                    font-weight: bold;
+                    color: #0284c7;
+                    display: block;
+                    margin-bottom: 2px;
+                  "
+                >
+                  KABEL MEDIA (VIA CABLE)
+                </label>
+                <select
+                  id="splice-via-cable"
+                  onchange="onViaCableChange()"
+                  style="
+                    width: 100%;
+                    padding: 6px;
+                    font-size: 12px;
+                    border-radius: 4px;
+                    border: 1px solid #0284c7;
+                    background-color: #f0f9ff;
+                  "
+                >
+                  <option value="">-- Pilih Kabel Penghubung --</option>
+                </select>
+                <!-- Core milik kabel media yang dipakai sambungan ini -->
+                <div
+                  id="splice-via-core-wrap"
+                  style="display: none; margin-top: 6px"
+                >
+                  <label
+                    style="
+                      font-size: 10px;
+                      font-weight: bold;
+                      color: #0284c7;
+                      display: block;
+                      margin-bottom: 2px;
+                    "
+                  >
+                    CORE KABEL MEDIA
+                  </label>
+                  <select
+                    id="splice-via-core"
+                    style="
+                      width: 100%;
+                      padding: 6px;
+                      font-size: 12px;
+                      border-radius: 4px;
+                      border: 1px solid #0284c7;
+                      background-color: #f0f9ff;
+                    "
+                  >
+                    <option value="">-- Pilih Core Kabel --</option>
+                  </select>
+                </div>
+              </div>
 
-              <!-- Target Core / Port -->
-              <select
-                id="splice-to-core"
-                style="
-                  padding: 6px;
-                  font-size: 12px;
-                  border-radius: 4px;
-                  border: 1px solid #ccc;
-                  flex: 1;
-                  min-width: 140px;
-                "
-              >
-                <option value="">-- Pilih Core/Port Tujuan --</option>
-              </select>
+              <!-- Panah Indikator -->
+              <i
+                class="fa-solid fa-arrow-right-long"
+                style="color: #0284c7; margin-top: 14px"
+              ></i>
 
-              <button
-                onclick="submitSplicingConnection()"
-                style="
-                  background: #16a34a;
-                  color: white;
-                  border: none;
-                  padding: 7px 12px;
-                  border-radius: 4px;
-                  cursor: pointer;
-                  font-size: 12px;
-                  font-weight: 600;
-                "
-              >
-                <i class="fa-solid fa-plug"></i> Sambungkan
-              </button>
+              <!-- 3. Target Asset (Downstream Asset) -->
+              <div style="flex: 1; min-width: 160px">
+                <label
+                  style="
+                    font-size: 10px;
+                    font-weight: bold;
+                    color: #475569;
+                    display: block;
+                    margin-bottom: 2px;
+                  "
+                >
+                  ASET TUJUAN (DOWNSTREAM)
+                </label>
+                <select
+                  id="splice-to-asset"
+                  onchange="onTargetAssetChange()"
+                  style="
+                    width: 100%;
+                    padding: 6px;
+                    font-size: 12px;
+                    border-radius: 4px;
+                    border: 1px solid #ccc;
+                  "
+                >
+                  <option value="">-- Pilih Aset Tujuan --</option>
+                </select>
+              </div>
+
+              <!-- 4. Target Core / Port -->
+              <div style="flex: 1; min-width: 140px">
+                <label
+                  style="
+                    font-size: 10px;
+                    font-weight: bold;
+                    color: #475569;
+                    display: block;
+                    margin-bottom: 2px;
+                  "
+                >
+                  PORT/CORE TUJUAN
+                </label>
+                <select
+                  id="splice-to-core"
+                  style="
+                    width: 100%;
+                    padding: 6px;
+                    font-size: 12px;
+                    border-radius: 4px;
+                    border: 1px solid #ccc;
+                  "
+                >
+                  <option value="">-- Pilih Core/Port Tujuan --</option>
+                </select>
+              </div>
+
+              <!-- Tombol Eksekusi -->
+              <div style="margin-top: 14px">
+                <button
+                  onclick="submitSplicingConnection()"
+                  style="
+                    background: #16a34a;
+                    color: white;
+                    border: none;
+                    padding: 7px 14px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 12px;
+                    font-weight: 600;
+                    display: flex;
+                    align-items: center;
+                    gap: 5px;
+                  "
+                >
+                  <i class="fa-solid fa-plug"></i> Sambungkan
+                </button>
+              </div>
             </div>
           </div>
 
@@ -602,11 +934,28 @@
             style="display: none; margin-bottom: 20px"
           ></div>
 
-          <!-- Tabel Daftar Sambungan Aktif -->
+          <!-- Tabel Daftar Sambungan Aktif Topologi -->
           <div style="margin-top: 25px">
-            <h4 style="margin-bottom: 8px; font-size: 13px; color: #334155">
-              <i class="fa-solid fa-list-check"></i> Daftar Core Tersambung di
-              Aset Ini
+            <h4
+              style="
+                margin-bottom: 8px;
+                font-size: 13px;
+                color: #334155;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+              "
+            >
+              <span>
+                <i class="fa-solid fa-list-check"></i> Daftar Core Tersambung di
+                Aset Ini
+              </span>
+              <span
+                style="font-size: 11px; font-weight: normal; color: #64748b"
+              >
+                <i class="fa-solid fa-circle-info"></i> Menampilkan relasi
+                Upstream & Downstream
+              </span>
             </h4>
             <table
               style="
@@ -621,6 +970,9 @@
                   <th style="padding: 8px; text-align: left">
                     Core/Port Aset Ini
                   </th>
+                  <th style="padding: 8px; text-align: center">
+                    Aliran (Arah)
+                  </th>
                   <th style="padding: 8px; text-align: left">Melalui Kabel</th>
                   <th style="padding: 8px; text-align: left">
                     Tersambung Ke Aset
@@ -632,9 +984,19 @@
                 </tr>
               </thead>
               <tbody id="active-connections-tbody">
-                <!-- Diisi via JS -->
+                <!-- Diisi via JavaScript -->
               </tbody>
             </table>
+          </div>
+
+          <!-- Jalur & dampak (hulu / hilir) -->
+          <div id="trace-panel" style="margin-top: 16px">
+            <h4 style="margin: 0 0 8px; font-size: 13px; color: #334155">
+              <i class="fa-solid fa-route"></i> Jalur &amp; Dampak
+            </h4>
+            <div id="trace-content" style="font-size: 12px; color: #64748b">
+              Memuat jalur...
+            </div>
           </div>
         </div>
       </div>
@@ -728,6 +1090,7 @@
               >
               <select
                 id="inc-type"
+                onchange="onIncidentTypeChange()"
                 style="
                   width: 100%;
                   padding: 8px;
@@ -741,6 +1104,9 @@
                   Hardware / Port Failure
                 </option>
                 <option value="Cable Sagging">Kabel Andut / Turun</option>
+                <option value="Fiber Degradation">
+                  Redaman Tinggi / Core Degradasi
+                </option>
               </select>
             </div>
             <div style="flex: 1">
@@ -760,6 +1126,62 @@
                 <option value="In Progress">In Progress</option>
               </select>
             </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 12px">
+            <label style="font-weight: 600; font-size: 12px"
+              >Aset Terdampak (kabel / node):</label
+            >
+            <select
+              id="inc-linked-asset"
+              onchange="onIncidentLinkedChange()"
+              style="
+                width: 100%;
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+              "
+            >
+              <option value="">-- Tanpa aset (hanya titik lokasi) --</option>
+            </select>
+            <div
+              id="inc-locate-hint"
+              style="font-size: 11px; color: #0369a1; margin-top: 4px"
+            ></div>
+          </div>
+
+          <div id="inc-cores-wrap" style="display: none; margin-bottom: 12px">
+            <label style="font-weight: 600; font-size: 12px"
+              >Core terdampak (opsional, pisahkan koma):</label
+            >
+            <input
+              type="text"
+              id="inc-cores"
+              placeholder="Kosong = semua core kabel. Contoh: 3, 5, 7"
+              style="
+                width: 100%;
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+              "
+            />
+          </div>
+
+          <div style="margin-bottom: 12px">
+            <label style="font-weight: 600; font-size: 12px"
+              >Pelapor / teknisi (opsional):</label
+            >
+            <input
+              type="text"
+              id="inc-reporter"
+              placeholder="Nama pelapor"
+              style="
+                width: 100%;
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+              "
+            />
           </div>
 
           <div class="form-group" style="margin-bottom: 12px">
@@ -886,6 +1308,270 @@
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Detail Insiden: lokasi, dampak, perbaikan lapangan & riwayat -->
+    <div id="modal-incident-detail" class="modal-overlay" style="display: none">
+      <div class="modal-container" style="max-width: 860px; height: 85vh">
+        <div class="modal-header" style="background: #ef4444; color: white">
+          <h3 id="incd-title">
+            <i class="fa-solid fa-triangle-exclamation"></i> Detail Insiden
+          </h3>
+          <button
+            class="btn-close"
+            onclick="closeIncidentDetail()"
+            style="color: white"
+          >
+            &times;
+          </button>
+        </div>
+
+        <div
+          class="modal-body"
+          style="
+            padding: 15px;
+            overflow-y: auto;
+            height: calc(100% - 60px);
+            font-size: 13px;
+          "
+        >
+          <div id="incd-summary" style="margin-bottom: 12px"></div>
+
+          <div
+            style="
+              display: flex;
+              gap: 12px;
+              flex-wrap: wrap;
+              margin-bottom: 12px;
+            "
+          >
+            <div
+              style="
+                flex: 1;
+                min-width: 260px;
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                padding: 10px;
+              "
+            >
+              <div style="font-weight: 700; margin-bottom: 6px; color: #334155">
+                Lokasi Gangguan
+              </div>
+              <div id="incd-location" style="color: #475569"></div>
+            </div>
+            <div
+              style="
+                flex: 1;
+                min-width: 260px;
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                padding: 10px;
+              "
+            >
+              <div style="font-weight: 700; margin-bottom: 6px; color: #334155">
+                Dampak
+              </div>
+              <div id="incd-impact" style="color: #475569"></div>
+            </div>
+          </div>
+
+          <div
+            style="
+              border: 1px solid #e2e8f0;
+              border-radius: 6px;
+              padding: 10px;
+              margin-bottom: 12px;
+            "
+          >
+            <div style="font-weight: 700; margin-bottom: 6px; color: #334155">
+              Perbaikan Lapangan
+            </div>
+            <div
+              id="incd-repairs"
+              style="color: #475569; margin-bottom: 10px"
+            ></div>
+
+            <div
+              id="incd-repair-form"
+              style="
+                background: #f8fafc;
+                border: 1px dashed #cbd5e1;
+                border-radius: 6px;
+                padding: 10px;
+              "
+            >
+              <div style="display: flex; gap: 8px; flex-wrap: wrap">
+                <div style="flex: 1; min-width: 150px">
+                  <label style="font-size: 11px; font-weight: 600"
+                    >Jenis perbaikan</label
+                  >
+                  <select
+                    id="rep-kind"
+                    style="
+                      width: 100%;
+                      padding: 6px;
+                      border: 1px solid #ccc;
+                      border-radius: 4px;
+                    "
+                  >
+                    <option value="TEMPORARY">
+                      Sementara (layanan dipulihkan, tiket tetap terbuka)
+                    </option>
+                    <option value="PERMANENT">
+                      Permanen (tiket diselesaikan)
+                    </option>
+                  </select>
+                </div>
+                <div style="flex: 1; min-width: 150px">
+                  <label style="font-size: 11px; font-weight: 600"
+                    >Tindakan</label
+                  >
+                  <select
+                    id="rep-action"
+                    style="
+                      width: 100%;
+                      padding: 6px;
+                      border: 1px solid #ccc;
+                      border-radius: 4px;
+                    "
+                  >
+                    <option value="ADD_CLOSURE">
+                      Tambah Closure di titik gangguan
+                    </option>
+                    <option value="EXTRA_JOINT">
+                      Tambah Joint (extra splice)
+                    </option>
+                    <option value="OTHER">
+                      Lainnya (tanpa perubahan peta)
+                    </option>
+                  </select>
+                </div>
+              </div>
+              <div
+                style="
+                  display: flex;
+                  gap: 8px;
+                  flex-wrap: wrap;
+                  margin-top: 8px;
+                "
+              >
+                <div style="flex: 1; min-width: 150px">
+                  <label style="font-size: 11px; font-weight: 600"
+                    >Nama closure/joint (opsional)</label
+                  >
+                  <input
+                    type="text"
+                    id="rep-name"
+                    placeholder="otomatis: JC-nomor tiket"
+                    style="
+                      width: 100%;
+                      padding: 6px;
+                      border: 1px solid #ccc;
+                      border-radius: 4px;
+                    "
+                  />
+                </div>
+                <div style="flex: 1; min-width: 150px">
+                  <label style="font-size: 11px; font-weight: 600"
+                    >Teknisi</label
+                  >
+                  <input
+                    type="text"
+                    id="rep-tech"
+                    placeholder="Nama teknisi"
+                    style="
+                      width: 100%;
+                      padding: 6px;
+                      border: 1px solid #ccc;
+                      border-radius: 4px;
+                    "
+                  />
+                </div>
+              </div>
+              <div style="margin-top: 8px">
+                <label style="font-size: 11px; font-weight: 600"
+                  >Catatan perbaikan</label
+                >
+                <textarea
+                  id="rep-notes"
+                  rows="2"
+                  placeholder="Mis. splice 12 core, redaman akhir 0.08 dB"
+                  style="
+                    width: 100%;
+                    padding: 6px;
+                    border: 1px solid #ccc;
+                    border-radius: 4px;
+                  "
+                ></textarea>
+              </div>
+              <div style="margin-top: 8px; text-align: right">
+                <button
+                  onclick="submitIncidentRepair()"
+                  style="
+                    background: #16a34a;
+                    color: white;
+                    border: none;
+                    padding: 7px 14px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-weight: 600;
+                  "
+                >
+                  <i class="fa-solid fa-screwdriver-wrench"></i> Catat Perbaikan
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div
+            style="
+              border: 1px solid #e2e8f0;
+              border-radius: 6px;
+              padding: 10px;
+              margin-bottom: 12px;
+            "
+          >
+            <div style="font-weight: 700; margin-bottom: 6px; color: #334155">
+              Riwayat Tiket
+            </div>
+            <div id="incd-timeline" style="color: #475569"></div>
+            <div
+              style="display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap"
+            >
+              <input
+                type="text"
+                id="incd-note"
+                placeholder="Tambah catatan lapangan..."
+                style="
+                  flex: 1;
+                  min-width: 180px;
+                  padding: 6px;
+                  border: 1px solid #ccc;
+                  border-radius: 4px;
+                "
+              />
+              <button
+                onclick="submitIncidentNote()"
+                style="
+                  background: #2563eb;
+                  color: white;
+                  border: none;
+                  padding: 6px 12px;
+                  border-radius: 4px;
+                  cursor: pointer;
+                "
+              >
+                Tambah
+              </button>
+            </div>
+          </div>
+
+          <div
+            id="incd-status-actions"
+            style="display: flex; gap: 6px; flex-wrap: wrap"
+          ></div>
         </div>
       </div>
     </div>
