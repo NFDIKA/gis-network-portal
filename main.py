@@ -254,6 +254,13 @@ def init_db():
     ''')
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_otdr_cable ON otdr_results(cable_id, core, measured_at)")
     cursor.execute('''
+        CREATE TABLE IF NOT EXISTS sor_traces (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT, sha256 TEXT UNIQUE, size INTEGER, meta TEXT, trace TEXT, file_blob BLOB,
+            note TEXT, analysis TEXT, uploaded_by TEXT, uploaded_at TEXT
+        )
+    ''')
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS optical_power_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             asset_type TEXT, asset_id INTEGER, port_core TEXT,
@@ -292,10 +299,26 @@ def init_db():
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
             print(f"[MIGRATION] Added {column} to {table}")
 
+    # parameter aset (improvement K): kode registrasi (semua node kecuali HH/SLACK/INCIDENT), data layanan pelanggan, trunk POP
+    for _c, _t in (("reg_code", "TEXT"), ("service", "TEXT"), ("bandwidth_mbps", "REAL"), ("device_sn", "TEXT"),
+                   ("link_type", "TEXT"), ("trunk_mbps", "REAL"), ("trunk_overbook", "REAL")):
+        add_column_if_missing("nodes", _c, _t)
+    add_column_if_missing("otb_port_devices", "slot", "TEXT")   # slot/PON perangkat (mis. 1/1, 1/1/3) diisi manual
+    for _ix, _sql in (
+            ("ux_nodes_reg_code", "CREATE UNIQUE INDEX IF NOT EXISTS ux_nodes_reg_code ON nodes(reg_code) WHERE reg_code IS NOT NULL"),
+            ("ux_nodes_device_sn", "CREATE UNIQUE INDEX IF NOT EXISTS ux_nodes_device_sn ON nodes(device_sn) WHERE device_sn IS NOT NULL"),
+            ("ux_nodes_name", "CREATE UNIQUE INDEX IF NOT EXISTS ux_nodes_name ON nodes(lower(trim(name))) WHERE type != 'INCIDENT'")):
+        try:
+            cursor.execute(_sql)
+        except sqlite3.DatabaseError as _e:   # data lama sudah memuat duplikat -> pemeriksaan tetap di level aplikasi
+            print(f"[MIGRATION] Indeks {_ix} tidak dibuat ({_e}); duplikat lama perlu dirapikan")
     add_column_if_missing("plans", "boq_adjust", "TEXT")      # JSON penyesuaian BOQ (region, qty/item per baris, tambahan)
     add_column_if_missing("cables", "fiber_mode", "TEXT")      # SM (single-mode, bawaan) | MM (multimode)
     add_column_if_missing("otdr_results", "from_node_id", "INTEGER")
     add_column_if_missing("otdr_results", "to_node_id", "INTEGER")
+    add_column_if_missing("sor_traces", "incident_id", "INTEGER")
+    add_column_if_missing("sor_traces", "is_baseline", "INTEGER DEFAULT 0")
+    add_column_if_missing("sor_traces", "baseline_by", "TEXT")
     add_column_if_missing("cables", "installation", "TEXT")   # Udara / Tanah; NULL = belum diisi (data lama)
     add_column_if_missing("cables", "parent_cable_id", "INTEGER")
     add_column_if_missing("cables", "from_node_id", "INTEGER")
@@ -448,16 +471,19 @@ ROUTE_PERMS = [
     ("GET", r"^/api/audit$", "audit.view"),
     ("POST", r"^/api/audit/\d+/restore$", "audit.restore"),
     ("POST", r"^/api/incidents/\d+/repairs/\d+/undo$", "repair.undo"),
-    ("POST", r"^/api/incidents/(locate|analyze-impact|map-visibility)$", "incident.write"),
+    ("POST", r"^/api/incidents/(locate|analyze-impact|map-visibility|preview-impact)$", "incident.write"),
     ("PUT", r"^/api/incidents/\d+/map-visibility$", "incident.write"),
-    ("POST", r"^/api/import/(preview|commit)$", "data.import"),
+    ("POST", r"^/api/import/(preview|commit|commit-async)$", "data.import"),
     ("PUT", r"^/api/plan/rules$", "plan.rules"),
     ("PUT", r"^/api/loss/params$", "loss.edit"),
-    ("POST", r"^/api/otdr/(preview|commit|manual)$", "otdr.upload"),
+    ("POST", r"^/api/otdr/(preview|commit|manual|sor|sor/parse|sor/analyze|sor/analyze2)$", "otdr.upload"),
+    ("POST", r"^/api/otdr/sor/\d+/baseline$", "otdr.upload"),
+    ("DELETE", r"^/api/otdr/sor/\d+/baseline$", "otdr.upload"),
+    ("POST", r"^/api/otdr/sor/\d+/incident$", "incident.write"),
     ("PUT", r"^/api/power$", "power.write"),
     ("PUT", r"^/api/nodes/\d+/port-devices$", "asset.write"),
     ("DELETE", r"^/api/nodes/\d+/port-devices$", "asset.write"),
-    ("DELETE", r"^/api/otdr/\d+$", "otdr.upload"),
+    ("DELETE", r"^/api/otdr/(sor/)?\d+$", "otdr.upload"),
     ("POST", r"^/api/cables/\d+/core-remap$", "core.remap"),
     ("POST", r"^/api/(plans/bulk|plan/alternatives|boq/recap)$", "plan.write"),
     ("POST", r"^/api/khs/import$", "khs.edit"),
@@ -605,6 +631,8 @@ FIELD_LABELS = {
     "parent_node_id": "parent node", "upstream_cable_id": "kabel pemasok", "parent_cable_id": "kabel induk",
     "from_node_id": "node asal", "to_node_id": "node tujuan", "core_data": "data core",
     "installation": "pemasangan",
+    "reg_code": "kode registrasi", "service": "layanan", "bandwidth_mbps": "bandwidth (Mbps)", "device_sn": "SN perangkat",
+    "link_type": "jenis layanan", "trunk_mbps": "kapasitas trunk (Mbps)", "trunk_overbook": "rasio overbooking",
 }
 _REF_TABLE = {"parent_node_id": "nodes", "from_node_id": "nodes", "to_node_id": "nodes",
               "upstream_cable_id": "cables", "parent_cable_id": "cables"}
@@ -938,6 +966,13 @@ class NodeCreate(BaseModel):
     spec_data: Optional[str] = "{}"
     parent_node_id: Optional[int] = None
     upstream_cable_id: Optional[int] = None
+    reg_code: Optional[str] = None          # kode registrasi (opsional)
+    service: Optional[str] = None           # khusus PELANGGAN
+    bandwidth_mbps: Optional[float] = None  # khusus PELANGGAN
+    device_sn: Optional[str] = None         # khusus PELANGGAN (SN ONT/CPE)
+    link_type: Optional[str] = None         # khusus PELANGGAN: GPON | PTP
+    trunk_mbps: Optional[float] = None      # khusus POP: kapasitas trunk
+    trunk_overbook: Optional[float] = None  # khusus POP: rasio overbooking (>=1)
 
 
 class CableCreate(BaseModel):
@@ -974,6 +1009,13 @@ class NodeUpdate(BaseModel):
     spec_data: Optional[str] = None
     parent_node_id: Optional[int] = None
     upstream_cable_id: Optional[int] = None
+    reg_code: Optional[str] = None
+    service: Optional[str] = None
+    bandwidth_mbps: Optional[float] = None
+    device_sn: Optional[str] = None
+    link_type: Optional[str] = None
+    trunk_mbps: Optional[float] = None
+    trunk_overbook: Optional[float] = None
 
 
 class CableUpdate(BaseModel):
@@ -1061,6 +1103,178 @@ def _fields_set(model: BaseModel) -> dict:
     if hasattr(model, "model_dump"):
         return model.model_dump(exclude_unset=True)
     return model.dict(exclude_unset=True)
+
+
+# --- PARAMETER ASET, KODE REGISTRASI & ANTI-DUPLIKAT (tanpa membedakan huruf besar/kecil) ---
+NO_REG_TYPES = {"HH", "SLACK", "INCIDENT"}            # kabel juga tidak punya kode registrasi
+LINK_TYPES = ["GPON", "PTP"]
+SERVICE_SUGGEST = ["Internet", "Dedicated Internet", "IPTV", "VPN L2", "VPN L3", "Lainnya"]
+CUSTOMER_FIELDS = ("service", "bandwidth_mbps", "device_sn", "link_type")
+TRUNK_FIELDS = ("trunk_mbps", "trunk_overbook")
+BW_MAX_MBPS = 1_000_000
+REG_CODE_RE = re.compile(r"^[A-Z0-9][A-Z0-9._/\-]{1,39}$")
+SN_RE = re.compile(r"^[A-Z0-9][A-Z0-9._:\-]{3,39}$")
+NODE_ASSET_FIELDS = ("reg_code",) + CUSTOMER_FIELDS + TRUNK_FIELDS
+
+
+def _norm_name(v) -> str:
+    """Rapikan nama: buang spasi di tepi & ganda. Huruf dibiarkan sesuai input (perbandingan memakai _name_key)."""
+    return " ".join(str(v or "").split())
+
+
+def _name_key(v) -> str:
+    return _norm_name(v).lower()
+
+
+def _norm_code(v):
+    """Kode registrasi / SN: huruf besar, tanpa spasi. Kosong -> None."""
+    t = re.sub(r"\s+", "", str(v or "")).upper()
+    return t or None
+
+
+def _find_node_dup(cursor, column, value, exclude_id=None):
+    if value is None:
+        return None
+    if column == "name":
+        sql, arg = "SELECT id, name, type FROM nodes WHERE type != 'INCIDENT' AND lower(trim(name)) = ?", _name_key(value)
+    else:
+        sql, arg = f"SELECT id, name, type FROM nodes WHERE {column} = ?", value
+    args = [arg]
+    if exclude_id is not None:
+        sql += " AND id != ?"
+        args.append(exclude_id)
+    return cursor.execute(sql + " LIMIT 1", args).fetchone()
+
+
+def _find_cable_dup(cursor, name, exclude_id=None):
+    sql, args = "SELECT id, name, type FROM cables WHERE lower(trim(name)) = ?", [_name_key(name)]
+    if exclude_id is not None:
+        sql += " AND id != ?"
+        args.append(exclude_id)
+    return cursor.execute(sql + " LIMIT 1", args).fetchone()
+
+
+def _check_name_unique_node(cursor, name, ntype, exclude_id=None):
+    if (ntype or "").upper() == "INCIDENT":
+        return
+    d = _find_node_dup(cursor, "name", name, exclude_id)
+    if d:
+        raise HTTPException(status_code=409, detail=(
+            f"Nama '{_norm_name(name)}' sudah dipakai aset '{d['name']}' ({d['type']}, ID {d['id']}). "
+            "Nama harus unik, tanpa membedakan huruf besar/kecil."))
+
+
+def _check_name_unique_cable(cursor, name, exclude_id=None):
+    d = _find_cable_dup(cursor, name, exclude_id)
+    if d:
+        raise HTTPException(status_code=409, detail=(
+            f"Nama kabel '{_norm_name(name)}' sudah dipakai kabel '{d['name']}' ({d['type']}, ID {d['id']}). "
+            "Nama harus unik, tanpa membedakan huruf besar/kecil."))
+
+
+def _clean_asset_fields(cursor, ntype, data: dict, exclude_id=None, creating=False) -> dict:
+    """Normalisasi + validasi parameter aset pada dict `data` (hanya kunci yang dikirim). Mengembalikan data baru."""
+    t = (ntype or "").upper()
+    out = dict(data)
+    if "reg_code" in out:
+        code = _norm_code(out["reg_code"])
+        if code is not None:
+            if t in NO_REG_TYPES:
+                raise HTTPException(status_code=400, detail=f"Aset bertipe {t} tidak memakai kode registrasi")
+            if not REG_CODE_RE.match(code):
+                raise HTTPException(status_code=400, detail="Kode registrasi hanya huruf/angka/. _ / - (2-40 karakter)")
+            d = _find_node_dup(cursor, "reg_code", code, exclude_id)
+            if d:
+                raise HTTPException(status_code=409, detail=f"Kode registrasi {code} sudah dipakai aset '{d['name']}' ({d['type']}, ID {d['id']})")
+        out["reg_code"] = code
+    cust_given = [k for k in CUSTOMER_FIELDS if out.get(k) not in (None, "")]
+    if cust_given and t != "PELANGGAN":
+        raise HTTPException(status_code=400, detail="Layanan, bandwidth, SN perangkat, dan jenis hanya untuk aset PELANGGAN")
+    trunk_given = [k for k in TRUNK_FIELDS if out.get(k) not in (None, "")]
+    if trunk_given and t != "POP":
+        raise HTTPException(status_code=400, detail="Kapasitas trunk hanya untuk aset POP")
+    if "service" in out:
+        sv = _norm_name(out["service"])
+        if len(sv) > 80:
+            raise HTTPException(status_code=400, detail="Layanan maksimal 80 karakter")
+        out["service"] = sv or None
+    if "bandwidth_mbps" in out:
+        bw = out["bandwidth_mbps"]
+        if bw in (None, ""):
+            out["bandwidth_mbps"] = None
+        else:
+            try:
+                bw = float(bw)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Bandwidth harus berupa angka (Mbps)")
+            if not (0 < bw <= BW_MAX_MBPS):
+                raise HTTPException(status_code=400, detail=f"Bandwidth harus > 0 dan maksimal {BW_MAX_MBPS:,} Mbps")
+            out["bandwidth_mbps"] = round(bw, 3)
+    if "device_sn" in out:
+        sn = _norm_code(out["device_sn"])
+        if sn is not None:
+            if not SN_RE.match(sn):
+                raise HTTPException(status_code=400, detail="SN perangkat hanya huruf/angka/. _ : - (4-40 karakter)")
+            d = _find_node_dup(cursor, "device_sn", sn, exclude_id)
+            if d:
+                raise HTTPException(status_code=409, detail=f"SN perangkat {sn} sudah dipakai pelanggan '{d['name']}' (ID {d['id']})")
+        out["device_sn"] = sn
+    if "link_type" in out:
+        lt = str(out["link_type"] or "").strip().upper()
+        if lt and lt not in LINK_TYPES:
+            raise HTTPException(status_code=400, detail=f"Jenis layanan harus salah satu dari: {', '.join(LINK_TYPES)}")
+        out["link_type"] = lt or None
+    if "trunk_mbps" in out:
+        tr = out["trunk_mbps"]
+        if tr in (None, ""):
+            out["trunk_mbps"] = None
+        else:
+            try:
+                tr = float(tr)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Kapasitas trunk harus berupa angka (Mbps)")
+            if not (0 < tr <= BW_MAX_MBPS * 10):
+                raise HTTPException(status_code=400, detail="Kapasitas trunk harus > 0 Mbps")
+            out["trunk_mbps"] = round(tr, 3)
+    if "trunk_overbook" in out:
+        ob = out["trunk_overbook"]
+        if ob in (None, ""):
+            out["trunk_overbook"] = None
+        else:
+            try:
+                ob = float(ob)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Rasio overbooking harus berupa angka")
+            if not (1 <= ob <= 100):
+                raise HTTPException(status_code=400, detail="Rasio overbooking harus 1 s.d. 100 (1 = tanpa overbooking)")
+            out["trunk_overbook"] = round(ob, 2)
+    return out
+
+
+def _unique_node_name(cursor, base) -> str:
+    """Nama otomatis yang pasti belum dipakai: tambahkan ' (2)', ' (3)' ... bila bentrok."""
+    cand, k = _norm_name(base), 2
+    while _find_node_dup(cursor, "name", cand):
+        cand = f"{_norm_name(base)} ({k})"
+        k += 1
+    return cand
+
+
+def _unique_cable_name(cursor, base) -> str:
+    cand, k = _norm_name(base), 2
+    while _find_cable_dup(cursor, cand):
+        cand = f"{_norm_name(base)} ({k})"
+        k += 1
+    return cand
+
+
+def _gen_reg_code(cursor, ntype) -> str:
+    """Kode registrasi otomatis: <TIPE>-<nomor 5 digit>, nomor berikutnya yang belum terpakai."""
+    pre = {"POP": "POP", "CLOSURE": "CLS", "ODP": "ODP", "TIANG": "TNG", "PELANGGAN": "PLG"}.get((ntype or "").upper(), (ntype or "AST").upper()[:3])
+    n = cursor.execute("SELECT COUNT(*) FROM nodes WHERE reg_code LIKE ?", (pre + "-%",)).fetchone()[0] + 1
+    while cursor.execute("SELECT 1 FROM nodes WHERE reg_code = ?", (f"{pre}-{n:05d}",)).fetchone():
+        n += 1
+    return f"{pre}-{n:05d}"
 
 
 def _check_fiber_mode(value: Optional[str]):
@@ -1403,6 +1617,7 @@ def _split_cable_at(cursor, cable_id, lat, lng, node_name, spec, existing_node_i
     if existing_node_id:
         node_id = existing_node_id
     else:
+        _check_name_unique_node(cursor, node_name, "CLOSURE")
         cursor.execute(
             """INSERT INTO nodes (name, type, status, latitude, longitude, cluster, area, city, capacity,
                                   spec_data, parent_node_id, upstream_cable_id)
@@ -1415,7 +1630,7 @@ def _split_cable_at(cursor, cable_id, lat, lng, node_name, spec, existing_node_i
         """INSERT INTO cables (name, type, status, geojson_geometry, cluster, area, city, capacity,
                                core_data, installation, parent_cable_id, from_node_id, to_node_id)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (f"{cab['name']}-seg2", cab["type"], cab["status"], geom(coords_b), cab["cluster"], cab["area"],
+        (_unique_cable_name(cursor, f"{cab['name']}-seg2"), cab["type"], cab["status"], geom(coords_b), cab["cluster"], cab["area"],
          cab["city"], cab["capacity"], cab["core_data"], cab["installation"] if "installation" in cab.keys() else None,
          cable_id, node_id, cab["to_node_id"]))
     cable_b = cursor.lastrowid
@@ -1541,6 +1756,42 @@ def get_downstream_assets(cursor, start_cable_id=None, start_node_id=None):
     return affected_cables, affected_nodes
 
 
+def _core_circuit(cursor, names_, idx_, conns_, cable_id, label):
+    """Ikuti sirkuit satu core kabel sampai hilir: (node_ids, cable_ids) yang disuplai core tsb."""
+    nodes, cables = set(), set()
+    for r in conns_:
+        if r.get("via_cable_id") != cable_id or r.get("via_core") != label:
+            continue
+        seen_h, queue_h = set(), deque([r])
+        while queue_h:          # ikuti SIRKUIT core tsb (melewati closure lewat joint yang sama)
+            h = queue_h.popleft()
+            if h["id"] in seen_h:
+                continue
+            seen_h.add(h["id"])
+            if h["to_asset_type"] == "NODE":
+                nodes.add(h["to_asset_id"])
+            if h.get("via_cable_id") is not None and h["via_cable_id"] != cable_id:
+                cables.add(h["via_cable_id"])
+            queue_h.extend(_next_down(names_, idx_, h))
+    return nodes, cables
+
+
+def _compute_impact(cursor, linked_cable_id, linked_node_id, cores):
+    """Himpunan (kabel, node) yang terdampak. cores = daftar label core (None = seluruh kabel/aset)."""
+    cables, nodes = set(), set()
+    if linked_cable_id is not None and cores:
+        # Gangguan level core (mis. redaman tinggi): hanya yang disuplai core tsb yang terdampak
+        names_, conns_ = _trace_graph(cursor)
+        idx_ = _hop_index(conns_)
+        for lbl in cores:
+            n_, c_ = _core_circuit(cursor, names_, idx_, conns_, linked_cable_id, lbl)
+            nodes |= n_
+            cables |= c_
+    else:
+        cables, nodes = get_downstream_assets(cursor, start_cable_id=linked_cable_id, start_node_id=linked_node_id)
+    return cables, nodes
+
+
 def release_incident_impact(cursor, incident_id):
     """
     Pulihkan aset yang di-set 'Cut/Broken' oleh incident ini, kecuali masih terdampak
@@ -1586,31 +1837,7 @@ def apply_incident_impact(cursor, incident_id):
     except ValueError:
         cores = None
 
-    cables, nodes = set(), set()
-    if inc["linked_cable_id"] is not None and cores:
-        # Gangguan level core (mis. redaman tinggi): hanya yang disuplai core tsb yang terdampak
-        marks = ",".join("?" * len(cores))
-        names_, conns_ = _trace_graph(cursor)
-        idx_ = _hop_index(conns_)
-        for r in cursor.execute(
-                f"SELECT id FROM core_connections WHERE via_cable_id = ? AND via_core IN ({marks})",
-                (inc["linked_cable_id"], *cores)).fetchall():
-            start_h = next((c for c in conns_ if c["id"] == r["id"]), None)
-            seen_h, queue_h = set(), deque([start_h] if start_h else [])
-            while queue_h:          # ikuti SIRKUIT core tsb (melewati closure lewat joint yang sama)
-                h = queue_h.popleft()
-                if h["id"] in seen_h:
-                    continue
-                seen_h.add(h["id"])
-                if h["to_asset_type"] == "NODE":
-                    nodes.add(h["to_asset_id"])
-                if h.get("via_cable_id") is not None and h["via_cable_id"] != inc["linked_cable_id"]:
-                    cables.add(h["via_cable_id"])
-                queue_h.extend(_next_down(names_, idx_, h))
-    else:
-        cables, nodes = get_downstream_assets(
-            cursor, start_cable_id=inc["linked_cable_id"], start_node_id=inc["linked_node_id"]
-        )
+    cables, nodes = _compute_impact(cursor, inc["linked_cable_id"], inc["linked_node_id"], cores)
 
     for asset_type, ids in (("NODE", nodes), ("CABLE", cables)):
         table = _table_of(asset_type)
@@ -1724,8 +1951,9 @@ def get_inventory(q: str = "", cluster: str = "ALL", area: str = "ALL", type: st
     where, params = [], []
     if q.strip():
         like = "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        where.append("(name LIKE ? ESCAPE '\\' OR city LIKE ? ESCAPE '\\' OR area LIKE ? ESCAPE '\\')")
-        params += [like, like, like]
+        where.append("(name LIKE ? ESCAPE '\\' OR city LIKE ? ESCAPE '\\' OR area LIKE ? ESCAPE '\\' "
+                     "OR reg_code LIKE ? ESCAPE '\\' OR device_sn LIKE ? ESCAPE '\\')")
+        params += [like, like, like, like, like]
     sc, sp = _scope_conds(cluster, area)
     where += sc
     params += sp
@@ -1744,10 +1972,11 @@ def get_inventory(q: str = "", cluster: str = "ALL", area: str = "ALL", type: st
         params.append(installation)
 
     base = ("SELECT 'NODE' AS category, id, name, type, status, cluster, area, city, capacity, "
-            "NULL AS installation, spec_data FROM nodes "
+            "NULL AS installation, spec_data, reg_code, service, bandwidth_mbps, device_sn, link_type, trunk_mbps, trunk_overbook FROM nodes "
             "UNION ALL "
             "SELECT 'CABLE' AS category, id, name, type, status, cluster, area, city, capacity, "
-            "installation, NULL AS spec_data FROM cables")
+            "installation, NULL AS spec_data, NULL AS reg_code, NULL AS service, NULL AS bandwidth_mbps, NULL AS device_sn, "
+            "NULL AS link_type, NULL AS trunk_mbps, NULL AS trunk_overbook FROM cables")
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
 
     with db() as conn:
@@ -1813,6 +2042,9 @@ def get_nodes(cluster: str = "ALL", area: str = "ALL"):
                 "spec_data": n.get("spec_data") or "{}",
                 "parent_node_id": n.get("parent_node_id"),
                 "upstream_cable_id": n.get("upstream_cable_id"),
+                "reg_code": n.get("reg_code"), "service": n.get("service"), "bandwidth_mbps": n.get("bandwidth_mbps"),
+                "device_sn": n.get("device_sn"), "link_type": n.get("link_type"),
+                "trunk_mbps": n.get("trunk_mbps"), "trunk_overbook": n.get("trunk_overbook"),
                 "repair_kind": rp["kind"] if rp else None,
                 "repair_ticket": rp["ticket_number"] if rp else None,
                 "repair_incident_id": rp["incident_id"] if rp else None,
@@ -1825,6 +2057,11 @@ def get_nodes(cluster: str = "ALL", area: str = "ALL"):
 @app.post("/api/nodes")
 def create_node(node: NodeCreate):
     _check_status(node.status)
+    node.name = _norm_name(node.name)
+    if not node.name:
+        raise HTTPException(status_code=400, detail="Nama aset wajib diisi")
+    if len(node.name) > 120:
+        raise HTTPException(status_code=400, detail="Nama aset maksimal 120 karakter")
     with db() as conn:
         cursor = conn.cursor()
         _check_refs(
@@ -1832,14 +2069,19 @@ def create_node(node: NodeCreate):
             **{"Parent node": ("nodes", node.parent_node_id),
                "Kabel upstream": ("cables", node.upstream_cable_id)},
         )
+        _check_name_unique_node(cursor, node.name, node.type)
+        extra = _clean_asset_fields(cursor, node.type, {k: getattr(node, k) for k in NODE_ASSET_FIELDS})
         cursor.execute('''
             INSERT INTO nodes (name, type, status, latitude, longitude, cluster, area, city,
-                               capacity, spec_data, parent_node_id, upstream_cable_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               capacity, spec_data, parent_node_id, upstream_cable_id,
+                               reg_code, service, bandwidth_mbps, device_sn, link_type, trunk_mbps, trunk_overbook)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             node.name, node.type, node.status, node.latitude, node.longitude,
             node.cluster, node.area, node.city, node.capacity, node.spec_data,
             node.parent_node_id, node.upstream_cable_id,
+            extra["reg_code"], extra["service"], extra["bandwidth_mbps"], extra["device_sn"], extra["link_type"],
+            extra["trunk_mbps"], extra["trunk_overbook"],
         ))
         node_id = cursor.lastrowid
         _audit(cursor, "CREATE", "NODE", node_id, node.name, f"Tambah {node.type} {node.name}",
@@ -1849,11 +2091,28 @@ def create_node(node: NodeCreate):
 
 
 # 3. GET ALL CABLES
+def _core_fault_info(c, faults, used):
+    """Gangguan sebagian core pada kabel (tiket aktif dengan core tertentu); None bila tidak ada / seluruh kabel."""
+    f = faults.get(c["id"])
+    if not f or f["all"] or not f["cores"]:
+        return None
+    return {"down": len(f["cores"]), "labels": sorted(f["cores"]), "used": used.get(c["id"], 0),
+            "total": _core_total(c.get("capacity") or "24C"),
+            "tickets": sorted({t for v in f["cores"].values() for t in v})}
+
+
 @app.get("/api/cables")
 def get_cables(cluster: str = "ALL", area: str = "ALL"):
     sc, sp = _scope_conds(cluster, area)
     with db() as conn:
         cables = conn.execute("SELECT * FROM cables" + _where(sc), sp).fetchall()
+
+    with db() as conn:
+        _faults = _active_core_faults(conn.cursor())
+        _used = {}
+        for r in conn.execute("SELECT via_cable_id AS c, COUNT(DISTINCT via_core) AS n FROM core_connections "
+                              "WHERE via_cable_id IS NOT NULL GROUP BY via_cable_id").fetchall():
+            _used[r["c"]] = r["n"]
 
     features = []
     for cable in cables:
@@ -1888,6 +2147,7 @@ def get_cables(cluster: str = "ALL", area: str = "ALL"):
                 "parent_cable_id": c.get("parent_cable_id"),
                 "from_node_id": c.get("from_node_id"),
                 "to_node_id": c.get("to_node_id"),
+                "core_fault": _core_fault_info(c, _faults, _used),
             },
         })
     return {"type": "FeatureCollection", "features": features}
@@ -1901,9 +2161,13 @@ def create_cable(cable: CableCreate):
     _check_fiber_mode(cable.fiber_mode)
     _check_coordinates(cable.coordinates)
     geojson_geom = {"type": "LineString", "coordinates": cable.coordinates}
+    cable.name = _norm_name(cable.name)
+    if not cable.name:
+        raise HTTPException(status_code=400, detail="Nama kabel wajib diisi")
 
     with db() as conn:
         cursor = conn.cursor()
+        _check_name_unique_cable(cursor, cable.name)
         _check_refs(
             cursor,
             **{"Parent kabel": ("cables", cable.parent_cable_id),
@@ -2153,11 +2417,32 @@ def update_node(node_id: int, payload: NodeUpdate):
     _check_status(data.get("status"))
     if data.get("parent_node_id") == node_id:
         raise HTTPException(status_code=400, detail="Node tidak boleh menjadi parent dirinya sendiri")
+    if "name" in data and data["name"] is not None:
+        data["name"] = _norm_name(data["name"])
+        if not data["name"]:
+            raise HTTPException(status_code=400, detail="Nama aset wajib diisi")
+        if len(data["name"]) > 120:
+            raise HTTPException(status_code=400, detail="Nama aset maksimal 120 karakter")
 
     with db() as conn:
         cursor = conn.cursor()
         if not _exists(cursor, "nodes", node_id):
             raise HTTPException(status_code=404, detail="Node tidak ditemukan")
+        cur0 = cursor.execute("SELECT name, type FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        eff_type = data.get("type") or cur0["type"]
+        if data.get("name") is not None:
+            _check_name_unique_node(cursor, data["name"], eff_type, node_id)
+        asset_keys = [k for k in NODE_ASSET_FIELDS if k in data]
+        if asset_keys:
+            data.update(_clean_asset_fields(cursor, eff_type, {k: data[k] for k in asset_keys}, node_id))
+        if data.get("type") and data["type"].upper() != (cur0["type"] or "").upper():
+            # tipe berubah: kosongkan parameter yang tidak berlaku lagi untuk tipe baru
+            nt = data["type"].upper()
+            for k in NODE_ASSET_FIELDS:
+                if k in data:
+                    continue
+                if (k == "reg_code" and nt in NO_REG_TYPES) or (k in CUSTOMER_FIELDS and nt != "PELANGGAN") or (k in TRUNK_FIELDS and nt != "POP"):
+                    data[k] = None
         _check_refs(
             cursor,
             **{"Parent node": ("nodes", data.get("parent_node_id")),
@@ -2175,7 +2460,7 @@ def update_node(node_id: int, payload: NodeUpdate):
         sets, values = _build_update(
             "nodes", node_id, data,
             ["name", "type", "status", "latitude", "longitude", "cluster", "area", "city", "capacity", "spec_data"],
-            ["parent_node_id", "upstream_cable_id"],
+            ["parent_node_id", "upstream_cable_id", *NODE_ASSET_FIELDS],
         )
         if sets:
             cursor.execute(f"UPDATE nodes SET {', '.join(sets)} WHERE id = ?", (*values, node_id))
@@ -2185,7 +2470,7 @@ def update_node(node_id: int, payload: NodeUpdate):
         new_node = _row_dict(cursor.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone())
         changes = _diff_rows(cursor, old_node, new_node,
                              ["name", "type", "status", "latitude", "longitude", "cluster", "area", "city",
-                              "capacity", "spec_data", "parent_node_id", "upstream_cable_id"])
+                              "capacity", "spec_data", "parent_node_id", "upstream_cable_id", *NODE_ASSET_FIELDS])
         if changes:
             moved = None
             if "latitude" in changes or "longitude" in changes:
@@ -2271,6 +2556,11 @@ def update_cable(cable_id: int, payload: CableUpdate):
         cursor = conn.cursor()
         if not _exists(cursor, "cables", cable_id):
             raise HTTPException(status_code=404, detail="Kabel tidak ditemukan")
+        if data.get("name") is not None:
+            data["name"] = _norm_name(data["name"])
+            if not data["name"]:
+                raise HTTPException(status_code=400, detail="Nama kabel wajib diisi")
+            _check_name_unique_cable(cursor, data["name"], cable_id)
         _check_refs(
             cursor,
             **{"Parent kabel": ("cables", data.get("parent_cable_id")),
@@ -2464,6 +2754,17 @@ def create_connection(payload: CoreConnectionSchema):
                 raise HTTPException(
                     status_code=400,
                     detail=f"Port/core '{port}' tidak ada pada aset {side} {row['name']}")
+            if a_type == "NODE" and (row["type"] or "").upper() == "POP":
+                # OTB diperlakukan seperti closure: tiap port menerima 1 kabel MASUK (hulu/feeder) dan 1 kabel KELUAR
+                # (hilir/distribusi); sisi depan (perangkat/OLT) dicatat terpisah dan tidak memblokir sambungan kabel
+                ins, outs = _joint_dirs(cursor, a_id)
+                if side == "asal" and port in outs:
+                    raise HTTPException(status_code=409,
+                                        detail=f"Port '{port}' pada {row['name']} sudah meneruskan ke kabel keluar lain")
+                if side == "tujuan" and port in ins:
+                    raise HTTPException(status_code=409,
+                                        detail=f"Port '{port}' pada {row['name']} sudah menerima kabel masuk lain")
+                continue
             if port in _used_ports(cursor, a_type, a_id):
                 raise HTTPException(
                     status_code=409,
@@ -2606,8 +2907,8 @@ def _ac_plan_and_apply(cursor, cable_id, req):
     res = {"ok": False, "cable": {"id": cab["id"], "name": cab["name"]}, "reason": None, "warnings": [],
            "needs_choice": None, "links": [], "from": None, "to": None, "cores": req.cores}
     n = int(req.cores or 1)
-    if n < 1 or (n > 12 and not req.full):
-        res["reason"] = "Jumlah core harus 1-12"
+    if n < 1 or (n > _core_total(cab["capacity"]) and not req.full):
+        res["reason"] = f"Jumlah core harus 1-{_core_total(cab['capacity'])} (sesuai kapasitas kabel)"
         return res
     a_ = _cable_end_node(cursor, cab, True)
     b_ = _cable_end_node(cursor, cab, False)
@@ -2711,6 +3012,7 @@ def _ac_plan_and_apply(cursor, cable_id, req):
     before = cursor.execute("SELECT COALESCE(MAX(id), 0) AS m FROM core_connections").fetchone()["m"]
     feed_log = []
     chosen = [p for p in (req.from_ports or []) if p != "AUTO"]
+    fmap = {}
     if req.from_ports and chosen and len(chosen) == len(req.from_ports):
         # pengguna memilih sendiri port/joint hulu
         if len(chosen) != n or len(set(chosen)) != n:
@@ -2719,6 +3021,15 @@ def _ac_plan_and_apply(cursor, cable_id, req):
         if tu in JUNCTION_TYPES:
             ins_u2, outs_u2 = _joint_dirs(cursor, up["id"])
             okp = {p for p in ins_u2 if p not in outs_u2}
+            need_feed = [p for p in chosen if p not in okp]
+            if need_feed:
+                # core hulu yang dipilih belum tiba di joint: ambil dari kabel hulu (core persis yang dipilih)
+                fsrcs, fwhy = _acquire_feed(cursor, up, len(need_feed), exclude, 0, feed_log, prefer=need_feed)
+                if not fsrcs:
+                    res["reason"] = fwhy or f"Core hulu pilihan tidak tersedia pada {up['name']}"
+                    return res
+                fmap = {x[2]: x for x in fsrcs}
+                okp |= set(need_feed)
         else:
             lab = _port_labels("NODE", tu, up["capacity"])
             lab = [x for x in lab if x.startswith("OUT-")] if tu == "ODP" else lab
@@ -2727,7 +3038,7 @@ def _ac_plan_and_apply(cursor, cable_id, req):
         if any(p not in okp for p in chosen):
             res["reason"] = f"Port/joint hulu pilihan tidak tersedia pada {up['name']}"
             return res
-        srcs = [("NODE", up["id"], p) for p in chosen]
+        srcs = [fmap[p] if (tu in JUNCTION_TYPES and p in fmap) else ("NODE", up["id"], p) for p in chosen]
     else:
         srcs, why = _acquire_feed(cursor, up, n, exclude, 0, feed_log)
         if not srcs:
@@ -2771,8 +3082,8 @@ def connect_options(req: ConnectOptionsReq):
         tu, td = (up["type"] or "").upper(), (down["type"] or "").upper()
         out["from"] = {"id": up["id"], "name": up["name"], "type": up["type"]}
         out["to"] = {"id": down["id"], "name": down["name"], "type": down["type"]}
-        if n < 1 or (n > 12 and not req.full):
-            out["reason"] = "Jumlah core harus 1-12"; return out
+        if n < 1 or (n > _core_total(req.capacity or "12C") and not req.full):
+            out["reason"] = f"Jumlah core harus 1-{_core_total(req.capacity or '12C')} (sesuai kapasitas kabel)"; return out
         if up["id"] == down["id"]:
             out["reason"] = "Aset awal dan akhir harus berbeda"; return out
         if tu not in AC_RANK or td not in AC_RANK:
@@ -2804,7 +3115,34 @@ def connect_options(req: ConnectOptionsReq):
             out["feed"] = {"ok": bool(srcs), "reason": why}
             if srcs:
                 out["from_options"].append({"port": "AUTO", "label": "Otomatis (dibuatkan dari kabel hulu)", "state": "feed"})
-            out["defaults"]["from_ports"] = ready[:n] if len(ready) >= n else (["AUTO"] * n if srcs else [])
+            # kabel hulu yang bisa memasok core ke joint ini (pengguna boleh memilih core-nya sendiri)
+            feed_cables = []
+            all_cables = cur.execute("SELECT * FROM cables").fetchall()
+            at_up = [a2 for a2 in _cables_at_node(cur, up, all_cables) if a2["at_end"]]
+            for a2 in at_up:
+                c = a2["row"]
+                freec = [x for x in _core_labels(_core_total(c["capacity"]))
+                         if x not in _used_ports(cur, "CABLE", c["id"]) and x not in ins_u]
+                if not freec:
+                    continue
+                others = {b2["row"]["id"] for b2 in at_up if b2["row"]["id"] != c["id"]}
+                try:
+                    cur.execute("SAVEPOINT feedcab")
+                    fs, _w = _acquire_feed(cur, up, 1, others, 0, [], prefer=[freec[0]])
+                    cur.execute("ROLLBACK TO feedcab")
+                    cur.execute("RELEASE feedcab")
+                except Exception:
+                    fs = None
+                if fs:
+                    feed_cables.append({"id": c["id"], "name": c["name"], "capacity": c["capacity"], "cores": freec})
+            out["feed_cables"] = feed_cables
+            if len(ready) >= n:
+                out["defaults"]["from_ports"] = ready[:n]
+            elif srcs and feed_cables:
+                fill = feed_cables[0]["cores"][: n - len(ready)]
+                out["defaults"]["from_ports"] = (ready + fill) if len(ready) + len(fill) >= n else ["AUTO"] * n
+            else:
+                out["defaults"]["from_ports"] = ["AUTO"] * n if srcs else []
             if not out["from_options"]:
                 out["reason"] = why or f"{up['name']} belum punya jalur hulu"; return out
         else:
@@ -2960,7 +3298,7 @@ def _trace_hop(names, c, level):
 
 
 def _is_junction(names, key):
-    return key[0] == "NODE" and (names.get(key, (None, None))[1] or "").upper() in JUNCTION_TYPES
+    return key[0] == "NODE" and (names.get(key, (None, None))[1] or "").upper() in (JUNCTION_TYPES | {"POP"})
 
 
 def _hop_index(conns):
@@ -3126,6 +3464,10 @@ class PortDevicePayload(BaseModel):
     customer_name: Optional[str] = None
     customer_node_id: Optional[int] = None
     notes: Optional[str] = None
+    slot: Optional[str] = None
+
+
+SLOT_RE = re.compile(r"^[A-Za-z0-9/:@._-]{1,40}$")
 
 
 def _norm_vlan(text) -> Optional[str]:
@@ -3192,6 +3534,9 @@ def put_port_device(node_id: int, payload: PortDevicePayload):
     vlan = _norm_vlan(payload.vlan)
     service = (payload.service or "").strip()[:120] or None
     notes = (payload.notes or "").strip()[:300] or None
+    slot = re.sub(r"\s+", "", str(payload.slot or "")) or None
+    if slot and not SLOT_RE.match(slot):
+        raise HTTPException(status_code=400, detail="Slot/PON hanya huruf, angka dan / : @ . _ - (maks 40 karakter), contoh 1/1 atau 1/1/3")
     cust_name = (payload.customer_name or "").strip()[:120] or None
     cust_id = payload.customer_node_id
     with db() as conn:
@@ -3220,12 +3565,12 @@ def put_port_device(node_id: int, payload: PortDevicePayload):
         cursor.execute("DELETE FROM otb_port_devices WHERE asset_id = ? AND port_core = ?", (node_id, port))
         cursor.execute(
             """INSERT INTO otb_port_devices (asset_id, port_core, purpose, device_type, vendor, device_name, interface,
-                   vlan, service, customer_name, customer_node_id, notes, updated_by, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   vlan, service, customer_name, customer_node_id, notes, updated_by, updated_at, slot)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (node_id, port, purpose, dtype, vendor, name, iface, vlan, service, cust_name, cust_id, notes,
-             (u["username"] if u else None) or "system", _now_str()))
+             (u["username"] if u else None) or "system", _now_str(), slot))
         _audit(cursor, "UPDATE" if before else "CREATE", "NODE", node_id, n["name"],
-               f"{'Ubah' if before else 'Catat'} perangkat {name} [{iface}] pada {n['name']} {port} ({purpose}"
+               f"{'Ubah' if before else 'Catat'} perangkat {name} [{(slot + ' ') if slot else ''}{iface}] pada {n['name']} {port} ({purpose}"
                f"{', VLAN ' + vlan if vlan else ''}{', pelanggan ' + cust_name if cust_name else ''})")
         return {"message": "Perangkat port OTB tersimpan", "devices": _port_devices_of(cursor, node_id, labels)}
 
@@ -3243,6 +3588,114 @@ def delete_port_device(node_id: int, port: str):
         _audit(cursor, "DELETE", "NODE", node_id, n["name"],
                f"Hapus catatan perangkat {r['device_name']} [{r['interface']}] dari {n['name']} {port}")
         return {"message": "Catatan perangkat dihapus", "devices": _port_devices_of(cursor, node_id, labels)}
+
+
+# --- PEMERIKSAAN KEUNIKAN (dipakai form untuk umpan balik langsung) & KODE REGISTRASI OTOMATIS ---
+@app.get("/api/nodes/check-unique")
+def check_unique(name: str = "", reg_code: str = "", device_sn: str = "", exclude_id: Optional[int] = None,
+                 kind: str = "NODE", type: str = ""):
+    """Cek nama / kode registrasi / SN. Hasil: {field: {value (ternormalisasi), ok, conflict}}. Huruf besar/kecil diabaikan."""
+    out = {}
+    with db() as conn:
+        c = conn.cursor()
+        if name.strip():
+            d = _find_cable_dup(c, name, exclude_id) if kind.upper() == "CABLE" else (
+                None if type.upper() == "INCIDENT" else _find_node_dup(c, "name", name, exclude_id))
+            out["name"] = {"value": _norm_name(name), "ok": d is None,
+                           "conflict": None if d is None else {"id": d["id"], "name": d["name"], "type": d["type"]}}
+        for col, val in (("reg_code", reg_code), ("device_sn", device_sn)):
+            code = _norm_code(val)
+            if code:
+                d = _find_node_dup(c, col, code, exclude_id)
+                rx = REG_CODE_RE if col == "reg_code" else SN_RE
+                out[col] = {"value": code, "ok": d is None and bool(rx.match(code)), "valid_format": bool(rx.match(code)),
+                            "conflict": None if d is None else {"id": d["id"], "name": d["name"], "type": d["type"]}}
+    return out
+
+
+@app.get("/api/nodes/next-reg-code")
+def next_reg_code(type: str = "ODP"):
+    t = type.upper()
+    if t in NO_REG_TYPES:
+        raise HTTPException(status_code=400, detail=f"Aset bertipe {t} tidak memakai kode registrasi")
+    with db() as conn:
+        return {"reg_code": _gen_reg_code(conn.cursor(), t)}
+
+
+# --- KAPASITAS TRUNK POP: beban = jumlah BW pelanggan aktif yang terhubung ke bawah POP ---
+def _trunk_status(pct, trunk):
+    if not trunk:
+        return "unset"
+    if pct > 100:
+        return "over"
+    return "warn" if pct >= 80 else "ok"
+
+
+def _upstream_pops(names, idx, start) -> list:
+    """Id POP yang menjadi hulu sebuah aset (menelusuri sambungan ke arah POP)."""
+    if names.get(start, (None, None))[1] == "POP":
+        return [start[1]]
+    seen, pops, queue = set(), [], deque(idx[1].get(start, []))
+    while queue:
+        c = queue.popleft()
+        if c["id"] in seen:
+            continue
+        seen.add(c["id"])
+        for t, i in ((c["from_asset_type"], c["from_asset_id"]), (c["to_asset_type"], c["to_asset_id"])):
+            if t == "NODE" and names.get((t, i), (None, None))[1] == "POP" and i not in pops:
+                pops.append(i)
+        queue.extend(_next_up(names, idx, c))
+    return pops
+
+
+@app.get("/api/nodes/{node_id}/trunk")
+def pop_trunk(node_id: int):
+    with db() as conn:
+        cursor = conn.cursor()
+        n = cursor.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if not n:
+            raise HTTPException(status_code=404, detail="Node tidak ditemukan")
+        if (n["type"] or "").upper() != "POP":
+            raise HTTPException(status_code=400, detail="Kapasitas trunk hanya untuk aset POP")
+        names, conns = _trace_graph(cursor)
+        idx = _hop_index(conns)
+        return _trunk_info(cursor, n, names, idx)
+
+
+def _trunk_info(cursor, n, names, idx) -> dict:
+    node_id = n["id"]
+    reach = set()
+    for c in idx[0].get(("NODE", node_id), []):
+        reach |= _customers_after(names, idx, c)
+    ids = [k[1] for k in reach]
+    rows = []
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        rows += cursor.execute(
+            f"SELECT id, name, status, service, bandwidth_mbps, link_type FROM nodes WHERE id IN ({','.join('?' * len(chunk))})", chunk).fetchall()
+    trunk = n["trunk_mbps"]
+    ob = n["trunk_overbook"] or 1.0
+    delivered = [r for r in rows if r["status"] == "Active"]
+    inactive = [r for r in rows if r["status"] != "Active"]
+    total_bw = round(sum(r["bandwidth_mbps"] or 0 for r in delivered), 3)
+    effective = round(total_bw / ob, 3)
+    pct = round(effective / trunk * 100, 1) if trunk else 0.0
+    by_type, by_service = {}, {}
+    for r in delivered:
+        lt = r["link_type"] or "-"
+        a = by_type.setdefault(lt, {"count": 0, "mbps": 0.0}); a["count"] += 1; a["mbps"] = round(a["mbps"] + (r["bandwidth_mbps"] or 0), 3)
+        sv = r["service"] or "-"
+        b = by_service.setdefault(sv, {"count": 0, "mbps": 0.0}); b["count"] += 1; b["mbps"] = round(b["mbps"] + (r["bandwidth_mbps"] or 0), 3)
+    top = sorted(delivered, key=lambda r: -(r["bandwidth_mbps"] or 0))[:5]
+    return {
+        "node_id": node_id, "node_name": n["name"], "trunk_mbps": trunk, "overbook": ob,
+        "customers_total": len(rows), "delivered_count": len(delivered), "inactive_count": len(inactive),
+        "missing_bw_count": sum(1 for r in delivered if not r["bandwidth_mbps"]),
+        "delivered_mbps": total_bw, "effective_mbps": effective,
+        "free_mbps": round(trunk - effective, 3) if trunk else None, "util_pct": pct, "status": _trunk_status(pct, trunk),
+        "by_type": by_type, "by_service": by_service,
+        "top": [{"id": r["id"], "name": r["name"], "mbps": r["bandwidth_mbps"], "link_type": r["link_type"], "service": r["service"]} for r in top],
+    }
 
 
 # 15. GET NODE PORT SUMMARY
@@ -3474,6 +3927,109 @@ def get_incident_detail(incident_id: int):
     return {"incident": data, "location": location, "impact": impact, "repairs": repairs, "events": events}
 
 
+class ImpactPreview(BaseModel):
+    linked_cable_id: Optional[int] = None
+    linked_node_id: Optional[int] = None
+    affected_cores: Optional[List[int]] = None   # nomor core (1..N); kosong = seluruh kabel
+
+
+def _active_core_faults(cursor, cable_ids=None):
+    """Peta kabel -> {'all': [tiket gangguan seluruh kabel], 'cores': {label: [tiket]}} dari tiket aktif."""
+    out = {}
+    q = ("SELECT ticket_number, linked_cable_id, affected_cores FROM incidents "
+         "WHERE linked_cable_id IS NOT NULL AND status IN ('Open','In Progress')")
+    for r in cursor.execute(q).fetchall():
+        cid = r["linked_cable_id"]
+        if cable_ids is not None and cid not in cable_ids:
+            continue
+        e = out.setdefault(cid, {"all": [], "cores": {}})
+        labels = None
+        try:
+            labels = json.loads(r["affected_cores"]) if r["affected_cores"] else None
+        except ValueError:
+            labels = None
+        if labels:
+            for lbl in labels:
+                e["cores"].setdefault(lbl, []).append(r["ticket_number"])
+        else:
+            e["all"].append(r["ticket_number"])
+    return out
+
+
+@app.get("/api/cables/{cable_id}/core-routes")
+def get_cable_core_routes(cable_id: int):
+    """Tiap core kabel: terpakai atau tidak, menuju ODP/pelanggan mana (ikuti sirkuit), dan tiket aktif yang menimpanya."""
+    with db() as conn:
+        cur = conn.cursor()
+        cab = cur.execute("SELECT * FROM cables WHERE id = ?", (cable_id,)).fetchone()
+        if not cab:
+            raise HTTPException(status_code=404, detail="Kabel tidak ditemukan")
+        names, conns = _trace_graph(cur)
+        idx = _hop_index(conns)
+        faults = _active_core_faults(cur, {cable_id}).get(cable_id, {"all": [], "cores": {}})
+        res = []
+        for i, lbl in enumerate(_core_labels(_core_total(cab["capacity"])), start=1):
+            starts = [c for c in conns if c.get("via_cable_id") == cable_id and c.get("via_core") == lbl]
+            odps, ends, cust, seen = [], [], 0, set()
+            queue = deque(starts)
+            while queue:
+                h = queue.popleft()
+                if h["id"] in seen:
+                    continue
+                seen.add(h["id"])
+                k = (h["to_asset_type"], h["to_asset_id"])
+                nm, tp = names.get(k, (None, None))
+                tpu = (tp or "").upper()
+                if k[0] == "NODE":
+                    if tpu == "ODP" and nm not in odps:
+                        odps.append(nm)
+                    elif tpu == "PELANGGAN":
+                        cust += 1
+                nxt = _next_down(names, idx, h)
+                if not nxt and k[0] == "NODE" and tpu not in ("PELANGGAN",) and nm not in ends:
+                    ends.append(nm)
+                queue.extend(nxt)
+            tickets = list(faults["all"]) + list(faults["cores"].get(lbl, []))
+            res.append({"number": i, "core": lbl, "used": bool(starts),
+                        "odps": odps, "ends": ends[:4], "customers": cust,
+                        "down": bool(tickets), "tickets": sorted(set(tickets))})
+    return {"cable_id": cable_id, "name": cab["name"], "total": len(res),
+            "used": sum(1 for r in res if r["used"]), "cores": res}
+
+
+@app.post("/api/incidents/preview-impact")
+def preview_incident_impact(payload: ImpactPreview):
+    """Pratinjau dampak SEBELUM tiket disimpan (tanpa menulis apa pun)."""
+    with db() as conn:
+        cur = conn.cursor()
+        labels = None
+        if payload.affected_cores:
+            if payload.linked_cable_id is None:
+                raise HTTPException(status_code=400, detail="Core terdampak hanya berlaku untuk insiden pada kabel")
+            cab = cur.execute("SELECT capacity FROM cables WHERE id = ?", (payload.linked_cable_id,)).fetchone()
+            if not cab:
+                raise HTTPException(status_code=404, detail="Kabel tidak ditemukan")
+            valid = _core_labels(_core_total(cab["capacity"]))
+            labels = []
+            for n in payload.affected_cores:
+                if n < 1 or n > len(valid):
+                    raise HTTPException(status_code=400, detail=f"Core {n} tidak ada pada kabel (1-{len(valid)})")
+                labels.append(valid[n - 1])
+        elif payload.linked_cable_id is not None and not cur.execute(
+                "SELECT 1 FROM cables WHERE id = ?", (payload.linked_cable_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="Kabel tidak ditemukan")
+        if payload.linked_node_id is not None and not cur.execute(
+                "SELECT 1 FROM nodes WHERE id = ?", (payload.linked_node_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="Node tidak ditemukan")
+        cables, nodes = _compute_impact(cur, payload.linked_cable_id, payload.linked_node_id, labels)
+        out = _describe_assets(cur, nodes, cables)
+        out["scope"] = "core" if labels else ("kabel" if payload.linked_cable_id is not None
+                                               else ("node" if payload.linked_node_id is not None else "titik"))
+        out["cores"] = labels or []
+        out["odp_names"] = [n["name"] for n in out["nodes"] if (n["type"] or "").upper() == "ODP"]
+    return out
+
+
 @app.post("/api/incidents/analyze-impact")
 def analyze_incident_impact(incident_id: int):
     with db() as conn:
@@ -3548,7 +4104,7 @@ def add_incident_repair(incident_id: int, payload: RepairCreate):
                                  "repair": kind, "upgraded": True}, ensure_ascii=False), near[1]["id"]))
             else:
                 prefix = "JT" if action == "EXTRA_JOINT" else "JC"
-                name = (payload.name or "").strip() or f"{prefix}-{inc['ticket_number']}"
+                name = _norm_name(payload.name) or _unique_node_name(cursor, f"{prefix}-{inc['ticket_number']}")
                 result = _split_cable_at(
                     cursor, inc["linked_cable_id"], lat, lng, name,
                     {"kind": kind_label, "incident_id": incident_id,
@@ -3695,6 +4251,11 @@ def _connection_conflict(cursor, r: dict):
             port = r[f"{side}_port_core"] = _legacy_pop_port(row["capacity"], port)
         if port not in _port_labels(t, row["type"], row["capacity"]):
             return f"port {port} tidak ada pada {row['name']}"
+        if t == "NODE" and (row["type"] or "").upper() == "POP":
+            ins_, outs_ = _joint_dirs(cursor, i)
+            if (side == "from" and port in outs_) or (side == "to" and port in ins_):
+                return f"port {port} pada {row['name']} sudah dipakai sambungan lain"
+            continue
         if port in _used_ports(cursor, t, i):
             return f"port {port} pada {row['name']} sudah dipakai sambungan lain"
     if r.get("via_cable_id") is not None:
@@ -3743,6 +4304,13 @@ def _restore_node(cursor, snap) -> dict:
         notes.append("kabel pemasok sudah tidak ada, dikosongkan")
     if refs["impacts"]:
         row["status"] = refs["impacts"][0]["prev_status"] or "Active"   # status sebelum tertimpa dampak tiket
+    if (row.get("type") or "").upper() != "INCIDENT":
+        d = _find_node_dup(cursor, "name", row.get("name"))
+        if d:
+            raise HTTPException(status_code=409, detail=f"Tidak bisa dipulihkan: nama '{row.get('name')}' kini dipakai aset lain ('{d['name']}', ID {d['id']}). Ubah nama aset itu dulu.")
+    for col, lab in (("reg_code", "Kode registrasi"), ("device_sn", "SN perangkat")):
+        if row.get(col) and _find_node_dup(cursor, col, row[col]):
+            raise HTTPException(status_code=409, detail=f"Tidak bisa dipulihkan: {lab} {row[col]} kini dipakai aset lain")
     _insert_row(cursor, "nodes", row)
     nid = row["id"]
     for cid in refs["children"]:
@@ -4591,6 +5159,14 @@ class PlanRequest(BaseModel):
     hub_lat: Optional[float] = Field(None, ge=-90, le=90)
     hub_lng: Optional[float] = Field(None, ge=-180, le=180)
     splitter: Optional[str] = None            # rasio splitter ODP baru: 1:4, 1:8, 2:8 (hanya layanan 1 core)
+    # data layanan pelanggan yang akan dibuat saat rencana diwujudkan (semua opsional)
+    cust_service: Optional[str] = None
+    cust_bw_mbps: Optional[float] = None
+    cust_sn: Optional[str] = None
+    cust_link_type: Optional[str] = None
+    cust_reg_code: Optional[str] = None
+    # port OTB POP asal: kosong = otomatis; berisi = pilihan manual (jumlah = jumlah core layanan)
+    pop_ports: Optional[List[str]] = None
 
 
 TERMINATIONS = ("DROPCORE_ROSET", "UDARA_OTB")
@@ -4656,6 +5232,31 @@ def _segment_assets(rules, inst, coords, use_poles, use_slack, existing, tag):
             "total_cable": round(length + slack_n * slack_len, 1), "new_passive": new_p, "reuse_passive": re_p, "kind": passive_kind}
 
 
+def _plan_trunk_check(cursor, origin, bw_mbps, warnings) -> list:
+    """Dampak bandwidth pelanggan baru terhadap trunk POP hulu aset asal (hanya bila BW diisi & asal berupa aset)."""
+    if not bw_mbps or origin.get("type") != "NODE" or origin.get("id") is None:
+        return []
+    names, conns = _trace_graph(cursor)
+    idx = _hop_index(conns)
+    out = []
+    for pid in _upstream_pops(names, idx, ("NODE", origin["id"])):
+        n = cursor.execute("SELECT * FROM nodes WHERE id = ?", (pid,)).fetchone()
+        if not n:
+            continue
+        t = _trunk_info(cursor, n, names, idx)
+        ob = t["overbook"] or 1.0
+        after = round(t["effective_mbps"] + bw_mbps / ob, 3)
+        pct_after = round(after / t["trunk_mbps"] * 100, 1) if t["trunk_mbps"] else 0.0
+        item = {"pop_id": pid, "pop_name": n["name"], "trunk_mbps": t["trunk_mbps"], "before_mbps": t["effective_mbps"],
+                "after_mbps": after, "before_pct": t["util_pct"], "after_pct": pct_after,
+                "status_after": _trunk_status(pct_after, t["trunk_mbps"]), "overbook": ob}
+        out.append(item)
+        if t["trunk_mbps"] and item["status_after"] in ("warn", "over"):
+            warnings.append(f"Trunk {n['name']}: {t['util_pct']}% -> {pct_after}% setelah pelanggan ini"
+                            + (" (MELEBIHI kapasitas)" if item["status_after"] == "over" else " (hampir penuh)"))
+    return out
+
+
 def _drop_capacity(cores: int) -> str:
     return "1C" if cores <= 1 else "2C" if cores == 2 else "4C" if cores <= 4 else "12C"
 
@@ -4682,6 +5283,17 @@ def _compute_plan(cursor, req: PlanRequest) -> dict:
     if not re.match(r"^[12]:(4|8|16)$", ratio):
         raise HTTPException(status_code=400, detail="Splitter ODP baru harus 1:4, 1:8, 2:8 (atau 1:16)")
     rules["customer_capacity"] = f"{cores} Core"
+    cust_info = None
+    if req.create_customer:
+        raw = {k: v for k, v in (("service", req.cust_service), ("bandwidth_mbps", req.cust_bw_mbps), ("device_sn", req.cust_sn),
+                                 ("link_type", req.cust_link_type), ("reg_code", req.cust_reg_code)) if v not in (None, "")}
+        if raw:
+            cust_info = _clean_asset_fields(cursor, "PELANGGAN", raw)    # 400 (format) / 409 (SN, kode sudah dipakai)
+        dn = _norm_name(req.dest_name)
+        if dn and dn != "Pelanggan baru":
+            d0 = _find_node_dup(cursor, "name", dn)
+            if d0:
+                warnings.append(f"Nama pelanggan '{dn}' sudah dipakai aset '{d0['name']}' ({d0['type']}); ubah nama agar rencana bisa diwujudkan")
 
     # --- asal ---
     origin = {"type": "POINT", "id": None, "name": (req.origin_name or "Titik asal"), "kind": None, "status": None}
@@ -4700,7 +5312,7 @@ def _compute_plan(cursor, req: PlanRequest) -> dict:
         origin["availability"] = {k: av[k] for k in ("free", "total", "eligible", "reason", "detail", "at_cable_end")}
         if cores >= 2 and (n["type"] or "").upper() == "ODP":
             raise HTTPException(status_code=400, detail=f"Layanan {cores} core (dedicated) tidak bisa diambil dari ODP karena ODP hanya 1 core; pilih Closure/POP sebagai asal")
-        if av["reason"]:
+        if av["reason"] and (n["type"] or "").upper() != "POP":
             warnings.append(f"Aset asal {n['name']}: {av['reason']}")
         elif n["status"] == "Maintenance":
             warnings.append(f"Aset asal {n['name']} sedang Maintenance")
@@ -4711,13 +5323,24 @@ def _compute_plan(cursor, req: PlanRequest) -> dict:
     dest = {"lat": req.dest_lat, "lng": req.dest_lng, "name": (req.dest_name or "").strip() or "Pelanggan baru"}
     suggest_odp = False
     if origin["type"] == "NODE":
-        if origin["availability"]["eligible"] and origin["availability"]["free"] < cores and (origin.get("kind") or "").upper() != "ODP":
+        if origin["availability"]["eligible"] and origin["availability"]["free"] < cores and (origin.get("kind") or "").upper() not in ("ODP", "POP"):
             warnings.append(f"Aset asal {origin['name']} hanya punya {origin['availability']['free']} port/core kosong; layanan butuh {cores} core")
         if (origin.get("kind") or "").upper() == "ODP" and origin["availability"]["free"] == 0:
             suggest_odp = True
             warnings.append("Port ODP asal penuh: BOQ menyertakan saran ODP baru + splitter; pindahkan titik asal atau pasang ODP baru")
-        elif origin["availability"]["eligible"] and origin["availability"]["free"] == 1:
+        elif origin["availability"]["eligible"] and origin["availability"]["free"] == 1 and (origin.get("kind") or "").upper() != "POP":
             warnings.append(f"Aset asal {origin['name']} tinggal 1 port/core kosong; penuh setelah rencana ini diwujudkan")
+        if (origin.get("kind") or "").upper() == "POP":
+            # port OTB: otomatis (usulan) atau manual (dikunci pada rencana, divalidasi ulang saat diwujudkan)
+            nrow = cursor.execute("SELECT id, name, type, capacity FROM nodes WHERE id = ?", (origin["id"],)).fetchone()
+            ch = _pop_choose_ports(cursor, nrow, cores, req.pop_ports, True)
+            if ch["error"] and ch["mode"] == "MANUAL":
+                raise HTTPException(status_code=400, detail=ch["error"])
+            if ch["error"]:
+                warnings.append(f"Aset asal {origin['name']}: {ch['error']}")
+            warnings.extend(ch["warnings"])
+            origin["pop_ports"] = ch["ports"] if ch["mode"] == "MANUAL" else []
+            origin["port_plan"] = {"mode": ch["mode"], "ports": ch["ports"], "warnings": ch["warnings"], "error": ch["error"]}
 
     via = []
     for v in (req.via or [])[:8]:
@@ -4876,13 +5499,15 @@ def _compute_plan(cursor, req: PlanRequest) -> dict:
         boq.append({"code": "PELANGGAN", "label": f"Titik pelanggan ({cores} core, " + (f"roset {cores} port" if term == 'DROPCORE_ROSET' else f"OTB {_otb_size(cores)} core") + ")",
                     "qty": 1, "unit": "unit"})
     summary["notes"] = notes
+    trunk_check = _plan_trunk_check(cursor, origin, (cust_info or {}).get("bandwidth_mbps"), warnings)
     return {"origin": origin, "dest": dest, "via": [list(v) for v in via],
             "route": {"coords": coords, "length_m": round(length, 1), "source": rt["source"]},
             "cable": {"type": first["cable_type"], "label": first["cable_label"], "capacity": first["cable_capacity"],
                       "installation": first["installation"], "length_m": round(first["route_length_m"], 1), "total_length_m": first["cable_total_m"]},
             "segments": segments, "hub": hub, "scenario": scen, "termination": term, "customer_cores": cores, "notes": notes,
             "assets": assets, "summary": summary, "boq_items": boq, "rules": rules, "loss": loss,
-            "create_customer": bool(req.create_customer), "use_poles": use_poles, "use_slack": use_slack, "warnings": warnings}
+            "create_customer": bool(req.create_customer), "use_poles": use_poles, "use_slack": use_slack, "warnings": warnings,
+            "customer_info": cust_info, "trunk_check": trunk_check}
 
 
 @app.post("/api/plan/preview")
@@ -4975,16 +5600,28 @@ def realize_plan(plan_id: int):
             if not row:
                 raise HTTPException(status_code=409, detail="Aset asal sudah tidak ada; buat rencana baru")
             cluster, area, city = row["cluster"], row["area"], row["city"]
+            if o.get("pop_ports") and (row["type"] or "").upper() == "POP":
+                # pilihan port manual diperiksa ulang SEBELUM aset apa pun dibuat; tidak diganti diam-diam
+                chk = _pop_choose_ports(cursor, row, len(o["pop_ports"]), o["pop_ports"], True)
+                if chk["error"]:
+                    raise HTTPException(status_code=409, detail=f"Port OTB pilihan rencana tidak lagi valid: {chk['error']}. Ubah pilihan port lalu simpan ulang rencana")
         else:
             cluster, area, city = "EKO", "BANJARMASIN", "Kota Banjarmasin"
         prefix = f"PSB-{plan_id:04d}"
 
-        def make_node(name, ntype, lat, lng, capacity):
+        def make_node(name, ntype, lat, lng, capacity, user_name=False, extra=None):
+            if user_name:
+                _check_name_unique_node(cursor, name, ntype)
+            else:
+                name = _unique_node_name(cursor, name)
             cursor.execute(
                 """INSERT INTO nodes (name, type, status, latitude, longitude, cluster, area, city, capacity, spec_data)
                    VALUES (?, ?, 'Active', ?, ?, ?, ?, ?, ?, '{}')""",
                 (name, ntype, lat, lng, cluster, area, city, capacity))
             nid = cursor.lastrowid
+            if extra:    # data layanan pelanggan dari rencana; dicek ulang karena SN/kode bisa dipakai pihak lain sejak rencana dibuat
+                ex = _clean_asset_fields(cursor, ntype, extra, nid)
+                cursor.execute(f"UPDATE nodes SET {', '.join(k + ' = ?' for k in ex)} WHERE id = ?", (*ex.values(), nid))
             _audit(cursor, "CREATE", "NODE", nid, name, f"Tambah {ntype} {name} (dari rencana {prefix})",
                    snapshot=_row_dict(cursor.execute("SELECT * FROM nodes WHERE id = ?", (nid,)).fetchone()))
             return nid
@@ -5004,8 +5641,9 @@ def realize_plan(plan_id: int):
         cores = int(plan.get("customer_cores") or 1)
         hub = plan.get("hub")
         if plan.get("create_customer"):
-            cust_id = make_node(d["name"] if d["name"] != "Pelanggan baru" else f"{prefix}-PLG", "PELANGGAN",
-                                d["lat"], d["lng"], f"{cores} Core")
+            cust_user = d["name"] != "Pelanggan baru"
+            cust_id = make_node(_norm_name(d["name"]) if cust_user else f"{prefix}-PLG", "PELANGGAN",
+                                d["lat"], d["lng"], f"{cores} Core", user_name=cust_user, extra=plan.get("customer_info"))
             created["nodes"].append(cust_id)
         segs = plan.get("segments") or [{"tag": "S1", "coords": plan["route"]["coords"], "cable_type": cab["type"], "cable_capacity": cab["capacity"],
                                          "installation": cab["installation"]}]
@@ -5033,13 +5671,13 @@ def realize_plan(plan_id: int):
             cable_id = make_cable(f"{prefix}-S1-{segs[0]['cable_type'][:4].upper()}", segs[0], o["id"], closure_id)
             cable2_id = make_cable(f"{prefix}-S2-{segs[1]['cable_type'][:4].upper()}", segs[1], odp_id or closure_id, cust_id)
             cname = f"{prefix}-S1-{segs[0]['cable_type'][:4].upper()}"
-            alloc = _allocate_hub(cursor, o["id"], cable_id, closure_id, odp_id, cable2_id, cust_id, cores) if o["type"] == "NODE" else \
+            alloc = _allocate_hub(cursor, o["id"], cable_id, closure_id, odp_id, cable2_id, cust_id, cores, o.get("pop_ports") or None) if o["type"] == "NODE" else \
                 {"allocated": False, "reason": "Titik asal bebas (bukan aset); alokasi core manual"}
         else:
             cname = f"{prefix}-{segs[0]['cable_type'][:4].upper()}"
             cable_id = make_cable(cname, segs[0], o["id"], cust_id)
             cable2_id = None
-            alloc = _allocate_new_customer(cursor, o["id"], cable_id, cust_id, cores) if o["type"] == "NODE" else \
+            alloc = _allocate_new_customer(cursor, o["id"], cable_id, cust_id, cores, o.get("pop_ports") or None) if o["type"] == "NODE" else \
                 {"allocated": False, "reason": "Titik asal bebas (bukan aset); alokasi core manual"}
         info = {"cable_id": cable_id, "cable2_id": cable2_id, "closure_id": closure_id, "odp_id": odp_id, "cable_name": cname, "customer_id": cust_id,
                 "node_ids": created["nodes"], "reused_ids": created["reused"], "allocation": alloc}
@@ -5049,6 +5687,8 @@ def realize_plan(plan_id: int):
                f"Rencana '{r['name']}' diwujudkan: kabel {cname}, {len(created['nodes'])} aset baru")
     tail = (f"Core dialokasikan otomatis ({alloc.get('cores', 1)} core): {alloc['from_port']} -> {alloc['to_port']} lewat {alloc['via_core']}."
             if alloc.get("allocated") else f"Alokasi core manual di Detail Core ({alloc.get('reason')}).")
+    if alloc.get("allocated") and alloc.get("ports") and (o.get("kind") or "").upper() == "POP":
+        tail += f" Port OTB: {', '.join(alloc['ports'])}." + (" Peringatan: " + "; ".join(alloc["port_notes"]) + "." if alloc.get("port_notes") else "")
     return {"message": f"Rencana diwujudkan: kabel {cname} dan {len(created['nodes'])} aset baru dibuat. {tail}", **info}
 
 
@@ -5480,7 +6120,7 @@ def _export_xlsx_sheets(cursor, nodes, cables, incidents, scope, filt_text):
     if scope in ("all", "nodes"):
         sheets.append(("Node", ["id"] + NODE_CSV_HEADER,
                        [[n["id"], n["name"], n["type"], n["status"], n["latitude"], n["longitude"], n["cluster"],
-                         n["area"], n["city"], n["capacity"]] for n in nodes]))
+                         n["area"], n["city"], n["capacity"], *_asset_cells(n)] for n in nodes]))
     if scope in ("all", "cables"):
         crow, cut = [], 0
         for c in cables:
@@ -5516,7 +6156,8 @@ def _export_geojson(nodes, cables, incidents=()) -> bytes:
         feats.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [n["longitude"], n["latitude"]]},
                       "properties": {"kind": "NODE", "id": n["id"], "name": n["name"], "type": n["type"],
                                      "status": n["status"], "cluster": n["cluster"], "area": n["area"],
-                                     "city": n["city"], "capacity": n["capacity"]}})
+                                     "city": n["city"], "capacity": n["capacity"],
+                                     **{k: n.get(k) for k in ASSET_EXPORT_COLS if n.get(k) not in (None, "")}}})
     for c in cables:
         feats.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": c["coords"]},
                       "properties": {"kind": "CABLE", "id": c["id"], "name": c["name"], "type": c["type"],
@@ -5558,6 +6199,8 @@ def _export_kml(nodes, cables) -> bytes:
         for it in items:
             pairs = [("kind", kind), ("type", it["type"]), ("status", it["status"]), ("cluster", it["cluster"]),
                      ("area", it["area"]), ("city", it["city"]), ("capacity", it["capacity"])]
+            if kind == "NODE":
+                pairs += [(k, it.get(k)) for k in ASSET_EXPORT_COLS if it.get(k) not in (None, "")]
             if kind == "CABLE":
                 pairs += [("installation", it.get("installation")), ("length_m", it["length_m"])]
                 geom = "<LineString><tessellate>1</tessellate><coordinates>" + " ".join(
@@ -5580,7 +6223,13 @@ def _csv_bytes(header, rows, delimiter) -> bytes:
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-NODE_CSV_HEADER = ["name", "type", "status", "latitude", "longitude", "cluster", "area", "city", "capacity"]
+ASSET_EXPORT_COLS = ["reg_code", "service", "bandwidth_mbps", "device_sn", "link_type", "trunk_mbps", "trunk_overbook"]
+NODE_CSV_HEADER = ["name", "type", "status", "latitude", "longitude", "cluster", "area", "city", "capacity"] + ASSET_EXPORT_COLS
+
+
+def _asset_cells(n, safe=False):
+    f = _csv_safe if safe else (lambda v: v)
+    return [f(n.get(c)) for c in ASSET_EXPORT_COLS]
 CABLE_CSV_HEADER = ["name", "type", "status", "installation", "capacity", "cluster", "area", "city",
                     "length_m", "from_node", "to_node", "coordinates"]
 
@@ -5609,7 +6258,8 @@ def _export_csv_parts(cursor, nodes, cables, scope, delimiter, incidents=None) -
         parts["nodes.csv"] = _csv_bytes(
             ["id"] + NODE_CSV_HEADER,
             [[n["id"], _csv_safe(n["name"]), n["type"], n["status"], n["latitude"], n["longitude"],
-              _csv_safe(n["cluster"]), _csv_safe(n["area"]), _csv_safe(n["city"]), _csv_safe(n["capacity"])]
+              _csv_safe(n["cluster"]), _csv_safe(n["area"]), _csv_safe(n["city"]), _csv_safe(n["capacity"]),
+              *_asset_cells(n, safe=True)]
              for n in nodes], delimiter)
     if scope in ("all", "cables"):
         parts["cables.csv"] = _csv_bytes(
@@ -5689,14 +6339,20 @@ def export_data(format: str = "geojson", scope: str = "all", type: str = "ALL", 
 def import_template(kind: str = "nodes", delimiter: str = ",", format: str = "csv"):
     delim = ";" if delimiter in (";", "semicolon") else ","
     if (format or "").lower() == "xlsx":
-        ex_node = [["Contoh-ODP-01", "ODP", "Active", -3.323, 114.593, "EKO", "BANJARMASIN", "Kota Banjarmasin", "1 In - 8 Out"],
-                   ["Contoh-Tiang-01", "TIANG", "Active", -3.3231, 114.5931, "EKO", "BANJARMASIN", "Kota Banjarmasin", "Tiang 7m"]]
+        ex_node = [["Contoh-ODP-01", "ODP", "Active", -3.323, 114.593, "EKO", "BANJARMASIN", "Kota Banjarmasin", "1 In - 8 Out", "ODP-00001", None, None, None, None, None, None],
+                   ["Contoh-Tiang-01", "TIANG", "Active", -3.3231, 114.5931, "EKO", "BANJARMASIN", "Kota Banjarmasin", "Tiang 7m", None, None, None, None, None, None, None],
+                   ["Contoh-Pelanggan-01", "PELANGGAN", "Active", -3.3235, 114.5935, "EKO", "BANJARMASIN", "Kota Banjarmasin", "2 Core", "PLG-00001", "Dedicated Internet", 100, "HWTC1A2B3C4D", "GPON", None, None],
+                   ["Contoh-POP-01", "POP", "Active", -3.3200, 114.5900, "EKO", "BANJARMASIN", "Kota Banjarmasin", "12+24", "POP-00001", None, None, None, None, 10000, 2]]
         ex_cable = [["Contoh-Kabel-01", "Distribution", "Active", "Udara", "24C", "EKO", "BANJARMASIN", "Kota Banjarmasin",
                      None, None, None, "114.5930000 -3.3230000;114.5950000 -3.3240000;114.5970000 -3.3250000"]]
         guide = [["Sheet 'Node'", "Satu baris = satu titik (POP, CLOSURE, ODP, TIANG, HH, SLACK, PELANGGAN). Kolom wajib: name, type, latitude, longitude"],
                  ["Sheet 'Kabel'", "Satu baris = satu jalur. Kolom wajib: name, type (Backbone/Feeder/Distribution/Drop), coordinates"],
                  ["coordinates", "Pasangan 'bujur lintang' dipisah titik-koma: 114.593 -3.323;114.595 -3.324"],
                  ["status", "Active / Maintenance / Cut/Broken (kosong = Active)"],
+                 ["reg_code", "Kode registrasi (opsional, unik, tanpa membedakan huruf besar/kecil). Tidak berlaku untuk HH, SLACK, dan kabel"],
+                 ["service, bandwidth_mbps, device_sn, link_type", "Khusus PELANGGAN. bandwidth_mbps boleh '100', '100 Mbps', atau '1 Gbps'. link_type = GPON atau PTP. device_sn = SN ONT/CPE (unik)"],
+                 ["trunk_mbps, trunk_overbook", "Khusus POP. Kapasitas trunk (Mbps, boleh '10 Gbps') dan rasio overbooking 1 s.d. 100"],
+                 ["Nama aset", "Harus unik (huruf besar/kecil dianggap sama); nama yang sudah ada dilewati / diperbarui sesuai pilihan"],
                  ["cluster, area", "Dipakai untuk filter. Kosong = EKO / BANJARMASIN"],
                  ["Baris contoh", "Hapus baris contoh sebelum mengunggah"]]
         body = _xlsx_bytes([("Node", NODE_CSV_HEADER, ex_node), ("Kabel", CABLE_CSV_HEADER, ex_cable),
@@ -5711,9 +6367,13 @@ def import_template(kind: str = "nodes", delimiter: str = ",", format: str = "cs
     elif kind == "nodes":
         body = _csv_bytes(NODE_CSV_HEADER, [
             ["Contoh-ODP-01", "ODP", "Active", "-3.3230000", "114.5930000", "EKO", "BANJARMASIN", "Kota Banjarmasin",
-             "1 In - 8 Out"],
+             "1 In - 8 Out", "ODP-00001", "", "", "", "", "", ""],
             ["Contoh-Tiang-01", "TIANG", "Active", "-3.3231000", "114.5931000", "EKO", "BANJARMASIN",
-             "Kota Banjarmasin", "Tiang 7m"]], delim)
+             "Kota Banjarmasin", "Tiang 7m", "", "", "", "", "", "", ""],
+            ["Contoh-Pelanggan-01", "PELANGGAN", "Active", "-3.3235000", "114.5935000", "EKO", "BANJARMASIN",
+             "Kota Banjarmasin", "2 Core", "PLG-00001", "Dedicated Internet", "100", "HWTC1A2B3C4D", "GPON", "", ""],
+            ["Contoh-POP-01", "POP", "Active", "-3.3200000", "114.5900000", "EKO", "BANJARMASIN",
+             "Kota Banjarmasin", "12+24", "POP-00001", "", "", "", "", "10000", "2"]], delim)
         fname = "template_import_node.csv"
     else:
         raise HTTPException(status_code=400, detail="kind harus 'nodes' atau 'cables'")
@@ -5765,6 +6425,13 @@ _COL_ALIASES = {
     "capacity": {"capacity", "kapasitas", "core", "jumlah_core"},
     "installation": {"installation", "pemasangan", "instalasi", "jenis_pemasangan"},
     "coordinates": {"coordinates", "koordinat", "geometry", "wkt", "path", "jalur", "geom"},
+    "reg_code": {"reg_code", "kode_registrasi", "kode_reg", "registrasi", "registration_code", "reg"},
+    "service": {"service", "layanan"},
+    "bandwidth_mbps": {"bandwidth_mbps", "bandwidth", "bw", "bw_mbps", "kecepatan"},
+    "device_sn": {"device_sn", "sn", "sn_perangkat", "serial", "serial_number", "sn_ont", "sn_cpe"},
+    "link_type": {"link_type", "jenis_layanan", "jenis_link", "tipe_layanan"},
+    "trunk_mbps": {"trunk_mbps", "trunk", "kapasitas_trunk"},
+    "trunk_overbook": {"trunk_overbook", "overbooking", "overbook", "rasio_overbooking"},
 }
 
 
@@ -5821,6 +6488,12 @@ def _norm_capacity_node(typ, v):
         m = re.search(r"(\d+)\s*in\s*-\s*(\d+)\s*out", s, re.I)
         if m:
             return f"{int(m.group(1))} In - {int(m.group(2))} Out", False
+        return NODE_DEFAULT_CAPACITY[typ], True
+    if typ == "POP" and "+" in s:      # beberapa OTB: '12+24' (jumlah port tiap OTB)
+        if re.match(r"^\s*\d+(\s*\+\s*\d+)+\s*(c|core|port|p)?\s*$", s, re.I):
+            nums = [int(x) for x in re.findall(r"\d+", s)]
+            if all(0 < n <= 576 for n in nums) and len(nums) <= OTB_MAX_UNITS:
+                return "+".join(str(n) for n in nums), False
         return NODE_DEFAULT_CAPACITY[typ], True
     if typ in ("POP", "CLOSURE"):
         m = re.match(r"^(\d+)\s*(c|core)?$", s, re.I)
@@ -6096,6 +6769,91 @@ def _extract_import(filename: str, content: str, content_base64: str):
     raise HTTPException(status_code=400, detail="Format tidak dikenali. Gunakan GeoJSON, KML/KMZ, CSV, atau Excel (.xlsx)")
 
 
+def _parse_bw_mbps(v):
+    """'100', 100, '100 Mbps', '1,5 Gbps', '500M', '1G' -> Mbps (float) atau None bila tidak terbaca."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    m = re.fullmatch(r"\s*([0-9]+(?:[.,][0-9]+)?)\s*([a-zA-Z]*)\s*(?:bps|/s)?\s*", str(v))
+    if not m:
+        return None
+    n = float(m.group(1).replace(",", "."))
+    u = m.group(2).lower()
+    if u in ("", "m", "mb", "mbps", "mbit"):
+        return n
+    if u in ("g", "gb", "gbps", "gbit"):
+        return n * 1000
+    if u in ("k", "kb", "kbps"):
+        return n / 1000
+    return None
+
+
+def _import_asset_fields(typ, p, rec):
+    """Parameter aset dari satu baris impor -> rec['asset'] (hanya yang terisi & valid). Yang tak valid dilewati + peringatan."""
+    t = (typ or "").upper()
+    out = {}
+    w = rec["warnings"].append
+
+    def given(k):
+        return p.get(k) not in (None, "")
+
+    if given("reg_code"):
+        if t in NO_REG_TYPES:
+            w(f"Kode registrasi tidak berlaku untuk {t}; diabaikan")
+        else:
+            code = _norm_code(p["reg_code"])
+            if code and REG_CODE_RE.match(code):
+                out["reg_code"] = code
+            else:
+                w(f"Kode registrasi '{p['reg_code']}' tidak valid; diabaikan")
+    cust = [k for k in CUSTOMER_FIELDS if given(k)]
+    if cust and t != "PELANGGAN":
+        w("Layanan, bandwidth, SN, dan jenis hanya untuk PELANGGAN; diabaikan")
+    elif t == "PELANGGAN":
+        if given("service"):
+            sv = _norm_name(p["service"])
+            if len(sv) <= 80:
+                out["service"] = sv
+            else:
+                w("Layanan > 80 karakter; diabaikan")
+        if given("bandwidth_mbps"):
+            bw = _parse_bw_mbps(p["bandwidth_mbps"])
+            if bw is not None and 0 < bw <= BW_MAX_MBPS:
+                out["bandwidth_mbps"] = round(bw, 3)
+            else:
+                w(f"Bandwidth '{p['bandwidth_mbps']}' tidak valid; diabaikan")
+        if given("device_sn"):
+            sn = _norm_code(p["device_sn"])
+            if sn and SN_RE.match(sn):
+                out["device_sn"] = sn
+            else:
+                w(f"SN perangkat '{p['device_sn']}' tidak valid; diabaikan")
+        if given("link_type"):
+            lt = str(p["link_type"]).strip().upper()
+            if lt in LINK_TYPES:
+                out["link_type"] = lt
+            else:
+                w(f"Jenis layanan '{p['link_type']}' bukan GPON/PTP; diabaikan")
+    trunk = [k for k in TRUNK_FIELDS if given(k)]
+    if trunk and t != "POP":
+        w("Kapasitas trunk hanya untuk POP; diabaikan")
+    elif t == "POP":
+        if given("trunk_mbps"):
+            tr = _parse_bw_mbps(p["trunk_mbps"])
+            if tr is not None and 0 < tr <= BW_MAX_MBPS * 10:
+                out["trunk_mbps"] = round(tr, 3)
+            else:
+                w(f"Kapasitas trunk '{p['trunk_mbps']}' tidak valid; diabaikan")
+        if given("trunk_overbook"):
+            ob = _to_float(p["trunk_overbook"], True)
+            if ob is not None and 1 <= ob <= 100:
+                out["trunk_overbook"] = round(ob, 2)
+            else:
+                w(f"Rasio overbooking '{p['trunk_overbook']}' harus 1-100; diabaikan")
+    rec["asset"] = out
+
+
 def _build_records(raws):
     """raw -> catatan terstandar (node/kabel) lengkap dengan peringatan & galat per baris."""
     recs = []
@@ -6152,6 +6910,7 @@ def _build_records(raws):
                 rec["capacity"], bad = _norm_capacity_node(typ, p.get("capacity"))
                 if bad:
                     rec["warnings"].append(f"Kapasitas '{p.get('capacity')}' tidak sesuai; dipakai {rec['capacity']}")
+                _import_asset_fields(typ, p, rec)
         else:
             if rw["geom"] == "line_text":
                 coords = _parse_wkt_or_list(rw["coords"], rw.get("decimal_comma"))
@@ -6193,7 +6952,7 @@ class ImportRequest(BaseModel):
     on_duplicate: Optional[str] = "skip"    # skip | update | create
 
 
-def _plan_import(cursor, req: ImportRequest):
+def _plan_import(cursor, req: ImportRequest, progress=None):
     mode = (req.on_duplicate or "skip").lower()
     if mode not in ("skip", "update", "create"):
         raise HTTPException(status_code=400, detail="on_duplicate harus skip, update, atau create")
@@ -6206,15 +6965,20 @@ def _plan_import(cursor, req: ImportRequest):
 
     ex_nodes = [dict(r) for r in cursor.execute(
         "SELECT * FROM nodes WHERE type != 'INCIDENT'").fetchall()]
-    node_by_key = {((r["name"] or "").strip().lower(), r["type"]): r for r in ex_nodes}
+    node_by_key = {_name_key(r["name"]): r for r in ex_nodes}
     ex_cables = [dict(r) for r in cursor.execute("SELECT * FROM cables").fetchall()]
-    cable_by_key = {((r["name"] or "").strip().lower(), r["type"]): r for r in ex_cables}
+    cable_by_key = {_name_key(r["name"]): r for r in ex_cables}
+    reg_db = {r["reg_code"]: r for r in ex_nodes if r.get("reg_code")}
+    sn_db = {r["device_sn"]: r for r in ex_nodes if r.get("device_sn")}
+    reg_file, sn_file = {}, {}
     seen = set()
-    for rec in recs:
+    for idx, rec in enumerate(recs):
+        if progress and idx % 50 == 0:
+            progress(idx, len(recs))
         rec["action"] = "error" if rec["errors"] else "create"
         if rec["errors"]:
             continue
-        key = (rec["name"].strip().lower(), rec["type"])
+        key = _name_key(rec["name"])
         if (rec["kind"], key) in seen:
             rec["action"] = "skip"
             rec["warnings"].append("Duplikat di dalam berkas ini; baris ini dilewati")
@@ -6229,13 +6993,32 @@ def _plan_import(cursor, req: ImportRequest):
         if existing is not None:
             rec["existing_id"] = existing["id"]
             rec["existing_name"] = existing["name"]
-            if mode == "skip":
+            if _name_key(existing["name"]) == key and existing["type"] != rec["type"]:
+                rec["action"] = "error"
+                rec["errors"].append(f"Nama sudah dipakai aset bertipe {existing['type']} ({existing['name']}); nama harus unik")
+            elif mode == "skip":
                 rec["action"] = "skip"
                 rec["warnings"].append(f"Sudah ada ({existing['name']}); dilewati")
             elif mode == "update":
                 rec["action"] = "update"
             else:
-                rec["warnings"].append(f"Nama sama dengan aset yang sudah ada ({existing['name']}); tetap dibuat baru")
+                rec["action"] = "error"
+                rec["errors"].append(f"Nama sama dengan aset yang sudah ada ({existing['name']}); duplikat tidak diizinkan (gunakan skip atau update)")
+        if rec["action"] in ("create", "update") and rec["kind"] == "NODE":
+            own = rec.get("existing_id")
+            for col, db_map, file_map, lab in (("reg_code", reg_db, reg_file, "Kode registrasi"), ("device_sn", sn_db, sn_file, "SN perangkat")):
+                val = (rec.get("asset") or {}).get(col)
+                if not val:
+                    continue
+                other = db_map.get(val)
+                if other is not None and other["id"] != own:
+                    rec["action"] = "error"
+                    rec["errors"].append(f"{lab} {val} sudah dipakai aset '{other['name']}'")
+                elif val in file_map:
+                    rec["action"] = "error"
+                    rec["errors"].append(f"{lab} {val} dipakai juga oleh baris lain dalam berkas ({file_map[val]})")
+                else:
+                    file_map[val] = rec["name"]
     return fmt, recs, mode
 
 
@@ -6270,18 +7053,94 @@ def import_preview(req: ImportRequest):
 @app.post("/api/import/commit")
 def import_commit(req: ImportRequest):
     """Terapkan impor: baris valid dibuat/diperbarui dalam SATU transaksi; baris bergalat dilewati."""
+    return _do_import_commit(req)
+
+
+# --- Impor dengan progres nyata: berjalan di thread latar, klien memantau persentase per batch ---
+IMPORT_JOBS = {}
+IMPORT_JOBS_LOCK = threading.Lock()
+IMPORT_PROGRESS_STEP = 25   # perbarui progres setiap N baris
+
+
+def _job_set(job_id, **kw):
+    with IMPORT_JOBS_LOCK:
+        j = IMPORT_JOBS.get(job_id)
+        if j is not None:
+            j.update(kw)
+
+
+@app.post("/api/import/commit-async")
+def import_commit_async(req: ImportRequest):
+    """Mulai impor di latar belakang; kembalikan job_id untuk dipantau lewat GET /api/import/jobs/{job_id}."""
+    job_id = secrets.token_hex(8)
+    owner = _current_username()
+    with IMPORT_JOBS_LOCK:
+        for k in [k for k, v in IMPORT_JOBS.items() if v["status"] != "running" and time.time() - v["updated"] > 600][:50]:
+            IMPORT_JOBS.pop(k, None)
+        if any(v["status"] == "running" and v.get("owner") == owner for v in IMPORT_JOBS.values()):
+            raise HTTPException(409, "Masih ada impor yang berjalan. Tunggu sampai selesai.")
+        IMPORT_JOBS[job_id] = {"job_id": job_id, "status": "running", "stage": "Memeriksa berkas", "done": 0, "total": 0,
+                               "percent": 0, "started": time.time(), "updated": time.time(), "owner": owner,
+                               "result": None, "error": None}
+
+    def progress(stage, done, total, pct=None):
+        if pct is None:
+            pct = int(done * 100 / total) if total else 0
+        _job_set(job_id, stage=stage, done=done, total=total, percent=max(0, min(int(pct), 99)), updated=time.time())
+
+    def run():
+        try:
+            res = _do_import_commit(req, progress)
+            _job_set(job_id, status="done", stage="Selesai", percent=100, result=res, updated=time.time())
+        except HTTPException as e:
+            _job_set(job_id, status="error", error=str(e.detail), updated=time.time())
+        except Exception as e:     # noqa: BLE001 - jangan biarkan thread mati tanpa kabar
+            _job_set(job_id, status="error", error=f"Impor gagal: {e}", updated=time.time())
+
+    ctx = contextvars.copy_context()
+    threading.Thread(target=lambda: ctx.run(run), daemon=True).start()
+    return {"job_id": job_id}
+
+
+@app.get("/api/import/jobs/{job_id}")
+def import_job(job_id: str):
+    with IMPORT_JOBS_LOCK:
+        j = IMPORT_JOBS.get(job_id)
+        if not j or j.get("owner") != _current_username():
+            raise HTTPException(404, "Proses impor tidak ditemukan")
+        out = {k: v for k, v in j.items() if k not in ("owner", "started")}
+        out["elapsed_s"] = round(time.time() - j["started"], 1)
+    return out
+
+
+def _do_import_commit(req, progress=None):
+    rep = progress or (lambda *a, **k: None)
     with db() as conn:
         cursor = conn.cursor()
-        fmt, recs, mode = _plan_import(cursor, req)
+        # Bobot: membaca & memeriksa data 0-40%, menyimpan 40-99%, sisanya riwayat
+        rep("Membaca berkas", 0, 0, 0)
+        fmt, recs, mode = _plan_import(
+            cursor, req, lambda i, n: rep("Memeriksa data", i, n, 40 * i / max(n, 1)))
+        total_work = sum(1 for r in recs if r["action"] in ("create", "update")) or 1
+        done_work = [0]
+
+        def tick(stage, force=False):
+            done_work[0] += 0 if force else 1
+            if force or done_work[0] % IMPORT_PROGRESS_STEP == 0:
+                rep(stage, done_work[0], total_work, 40 + 58 * done_work[0] / total_work)
         made = {"nodes": 0, "cables": 0, "updated": 0, "linked_ends": 0, "unlinked_cables": 0}
         # 1) node dulu supaya ujung kabel bisa terhubung ke node yang baru dibuat
         for rec in [r for r in recs if r["kind"] == "NODE"]:
+            if rec["action"] in ("create", "update"):
+                tick("Menyimpan titik (node)")
             if rec["action"] == "create":
+                ax = rec.get("asset") or {}
                 cursor.execute(
-                    """INSERT INTO nodes (name, type, status, latitude, longitude, cluster, area, city, capacity, spec_data)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')""",
-                    (rec["name"], rec["type"], rec["status"], rec["lat"], rec["lng"], rec["cluster"], rec["area"],
-                     rec["city"], rec["capacity"]))
+                    """INSERT INTO nodes (name, type, status, latitude, longitude, cluster, area, city, capacity, spec_data,
+                                          reg_code, service, bandwidth_mbps, device_sn, link_type, trunk_mbps, trunk_overbook)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?, ?, ?, ?)""",
+                    (_norm_name(rec["name"]), rec["type"], rec["status"], rec["lat"], rec["lng"], rec["cluster"], rec["area"],
+                     rec["city"], rec["capacity"], *[ax.get(c) for c in ASSET_EXPORT_COLS]))
                 nid = cursor.lastrowid
                 rec["new_id"] = nid
                 made["nodes"] += 1
@@ -6300,7 +7159,10 @@ def import_commit(req: ImportRequest):
                     best = (d, n["id"])
             return best[1] if best else None
 
+        tick("Menyimpan kabel", force=True)
         for rec in [r for r in recs if r["kind"] == "CABLE"]:
+            if rec["action"] in ("create", "update"):
+                tick("Menyimpan kabel")
             if rec["action"] == "create":
                 a = nearest_node(*rec["coords"][0])
                 b = nearest_node(*rec["coords"][-1])
@@ -6323,6 +7185,7 @@ def import_commit(req: ImportRequest):
                        snapshot=_row_dict(cursor.execute("SELECT * FROM cables WHERE id = ?", (cid,)).fetchone()))
             elif rec["action"] == "update":
                 _import_update(cursor, "CABLE", rec, made, req.filename)
+        rep("Mencatat riwayat perubahan", total_work, total_work, 99)
         counts = {"create": made["nodes"] + made["cables"], "update": made["updated"],
                   "skip": sum(1 for r in recs if r["action"] == "skip"),
                   "error": sum(1 for r in recs if r["action"] == "error")}
@@ -6344,6 +7207,8 @@ def _import_update(cursor, kind, rec, made, filename):
     new = {"cluster": rec["cluster"], "area": rec["area"], "city": rec["city"], "capacity": rec["capacity"]}
     if kind == "CABLE" and rec.get("installation"):
         new["installation"] = rec["installation"]
+    if kind == "NODE":
+        new.update({k: v for k, v in (rec.get("asset") or {}).items() if v is not None})   # kolom kosong tidak menghapus data lama
     if old["status"] != "Cut/Broken" and rec["status"] in ("Active", "Maintenance"):
         new["status"] = rec["status"]       # status gangguan dikelola tiket, tidak ditimpa impor
     try:
@@ -6956,6 +7821,10 @@ DEFAULT_LOSS = {
     "otdr_bad_db": 3.0,        # selisih yang dianggap bermasalah
     "event_warn_db": 0.5,      # redaman satu event (splice/konektor) yang mencurigakan
     "event_bad_db": 1.0,
+    "otdr_slack_m": 20.0,       # cadangan kabel (slack/closure) per titik sambung, meter
+    "otdr_normal_pct": 2.0,     # toleransi panjang jalur vs event akhir OTDR dianggap normal (%)
+    "otdr_helix_pct": 0.5,      # serat lebih panjang dari kabel (helix/loose tube), %
+    "otdr_route_err_pct": 2.0,  # kekeliruan rute di peta vs lapangan, %
 }
 
 
@@ -6974,7 +7843,8 @@ def _loss_params(cursor, override=None) -> dict:
 def _validate_loss_params(src: dict) -> dict:
     out = {}
     lim = {"fiber_db_km": (0, 5), "splice_db": (0, 2), "connector_db": (0, 3), "tx_dbm": (-10, 15), "rx_min_dbm": (-50, 0),
-           "margin_db": (0, 15), "mm_fiber_db_km_850": (0, 8), "mm_fiber_db_km_1300": (0, 4), "rx_max_dbm": (-30, 10), "mm_tx_dbm": (-20, 10), "mm_rx_min_dbm": (-40, 0), "otdr_warn_db": (0, 20), "otdr_bad_db": (0, 40), "event_warn_db": (0, 10), "event_bad_db": (0, 20)}
+           "margin_db": (0, 15), "mm_fiber_db_km_850": (0, 8), "mm_fiber_db_km_1300": (0, 4), "rx_max_dbm": (-30, 10), "mm_tx_dbm": (-20, 10), "mm_rx_min_dbm": (-40, 0), "otdr_warn_db": (0, 20), "otdr_bad_db": (0, 40), "event_warn_db": (0, 10), "event_bad_db": (0, 20),
+           "otdr_slack_m": (0, 200), "otdr_normal_pct": (0, 20), "otdr_helix_pct": (0, 5), "otdr_route_err_pct": (0, 20)}
     for k, (lo, hi) in lim.items():
         if k in src and src[k] not in (None, ""):
             v = _num_or_none(src[k])
@@ -7212,7 +8082,99 @@ def _cable_end_node(cursor, cable, at_start):
     return best[1] if best else None
 
 
-def _acquire_feed(cursor, node, n, exclude_cable_ids, depth=0, log=None):
+# --- Pemilihan port OTB POP: otomatis / manual -------------------------------------------------
+def _pop_port_states(cursor, node) -> list:
+    """Status tiap port OTB: free (kosong) | in (sudah menerima kabel masuk) | out (sudah meneruskan kabel keluar) | full (keduanya),
+    beserta catatan perangkat di sisi depan."""
+    labels = _port_labels("NODE", "POP", node["capacity"])
+    ins, outs = _joint_dirs(cursor, node["id"])
+    devs = {r["port_core"]: dict(r) for r in cursor.execute(
+        "SELECT * FROM otb_port_devices WHERE asset_id = ?", (node["id"],)).fetchall()}
+    res = []
+    for lab in labels:
+        st = "full" if (lab in ins and lab in outs) else "out" if lab in outs else "in" if lab in ins else "free"
+        d = devs.get(lab)
+        res.append({"port": lab, "state": st,
+                    "device": ({k: d.get(k) for k in ("purpose", "device_type", "device_name", "slot", "interface", "customer_name")} if d else None)})
+    return res
+
+
+def _pop_choose_ports(cursor, node, n: int, manual=None, allow_in=False):
+    """Pilih n port OTB untuk sirkuit baru. Mengembalikan {"mode","ports","warnings","error"}.
+    Manual : port yang disebut pengguna divalidasi apa adanya (tidak pernah diganti diam-diam).
+    Otomatis: (1) port kosong yang depannya perangkat PON/OLT lebih dulu, lalu port kosong tanpa perangkat; port yang depannya
+              dicadangkan (PTP/uplink/lainnya) dilewati; (2) bila allow_in: port yang baru menerima kabel masuk, dengan peringatan.
+              Port yang sudah punya kabel keluar tidak pernah dipilih."""
+    states = _pop_port_states(cursor, node)
+    by = {x["port"]: x for x in states}
+    out = {"mode": "MANUAL" if manual else "AUTO", "ports": [], "warnings": [], "error": None}
+
+    def reserved(x):
+        d = x["device"]
+        return bool(d) and (d.get("purpose") or "").upper() != "PON"
+
+    if manual:
+        seen = []
+        for raw in manual:
+            lab = _legacy_pop_port(node["capacity"], str(raw or "").strip())
+            if lab in seen:
+                out["error"] = f"Port {lab} dipilih dua kali"
+                return out
+            seen.append(lab)
+        if len(seen) != n:
+            out["error"] = f"Layanan {n} core membutuhkan tepat {n} port OTB; dipilih {len(seen)}"
+            return out
+        for lab in seen:
+            x = by.get(lab)
+            if not x:
+                out["error"] = f"Port {lab} tidak ada pada {node['name']}"
+                return out
+            if x["state"] in ("out", "full"):
+                out["error"] = f"Port {lab} pada {node['name']} sudah meneruskan kabel keluar lain"
+                return out
+            if x["state"] == "in":
+                out["warnings"].append(f"Port {lab} sudah menerima kabel masuk: kabel keluar baru akan menyambung sirkuit masuk itu ke pelanggan ini")
+            if reserved(x):
+                d = x["device"]
+                out["warnings"].append(f"Port {lab} dicatat untuk {d.get('purpose')} {d.get('device_name') or ''}"
+                                       f"{' (' + d['customer_name'] + ')' if d.get('customer_name') else ''}; pastikan memang dipakai untuk pelanggan ini")
+        out["ports"] = seen
+        return out
+
+    free = [x for x in states if x["state"] == "free"]
+    pon = [x for x in free if x["device"] and not reserved(x)]
+    plain = [x for x in free if not x["device"]]
+    skipped = [x for x in free if reserved(x)]
+    picked = [x["port"] for x in pon + plain][:n]
+    if len(picked) < n and allow_in:
+        for x in states:
+            if x["state"] == "in" and not reserved(x) and len(picked) < n:
+                picked.append(x["port"])
+                out["warnings"].append(f"Port {x['port']} sudah menerima kabel masuk (feeder): meneruskannya akan menyambung sirkuit itu ke pelanggan ini")
+    if len(picked) < n:
+        out["error"] = (f"Port {node['name']} hanya {len(picked)} yang bisa dipilih otomatis; butuh {n}"
+                        + (f" ({len(skipped)} port kosong dicadangkan untuk perangkat lain, pilih manual bila perlu)" if skipped else ""))
+        return out
+    out["ports"] = picked
+    return out
+
+
+@app.get("/api/nodes/{node_id}/otb-ports")
+def get_otb_ports(node_id: int, n: int = 1):
+    """Status tiap port OTB POP untuk pemilihan manual + usulan otomatis (n port)."""
+    with db() as conn:
+        cursor = conn.cursor()
+        node = cursor.execute("SELECT id, name, type, capacity FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if not node:
+            raise HTTPException(status_code=404, detail="Node tidak ditemukan")
+        if (node["type"] or "").upper() != "POP":
+            raise HTTPException(status_code=400, detail="Port OTB hanya untuk aset bertipe POP")
+        auto = _pop_choose_ports(cursor, node, max(1, min(int(n), 12)), None, True)
+        return {"node_id": node_id, "node_name": node["name"], "ports": _pop_port_states(cursor, node),
+                "suggest": auto["ports"], "suggest_warnings": auto["warnings"], "suggest_error": auto["error"]}
+
+
+def _acquire_feed(cursor, node, n, exclude_cable_ids, depth=0, log=None, pop_ports=None, notes=None, allow_in=False, prefer=None):
     """
     n sumber sirkuit (("NODE", node_id, port)) yang bisa disambung ke hilir dari `node`.
       ODP     : 1 port OUT kosong
@@ -7234,15 +8196,17 @@ def _acquire_feed(cursor, node, n, exclude_cable_ids, depth=0, log=None):
             return None, f"Port {node['name']} sudah penuh; alokasi manual atau tambah ODP"
         return [("NODE", node["id"], free[0])], None
     if t == "POP":
-        used = _used_ports(cursor, "NODE", node["id"])
-        free = [x for x in _port_labels("NODE", t, node["capacity"]) if x not in used]
-        if len(free) < n:
-            return None, f"Port {node['name']} hanya {len(free)} kosong; butuh {n}"
-        return [("NODE", node["id"], x) for x in free[:n]], None
+        ch = _pop_choose_ports(cursor, node, n, pop_ports if depth == 0 else None, allow_in)
+        if ch["error"]:
+            return None, ch["error"]
+        if notes is not None:
+            notes.extend(ch["warnings"])
+        return [("NODE", node["id"], x) for x in ch["ports"]], None
     if t in JUNCTION_TYPES:
         ins, outs = _joint_dirs(cursor, node["id"])
         ready = sorted(p for p in ins if p not in outs)
-        srcs = [("NODE", node["id"], p) for p in ready[:n]]
+        # prefer: pengguna memilih core tertentu pada kabel hulu (bukan yang terendah)
+        srcs = [] if prefer else [("NODE", node["id"], p) for p in ready[:n]]
         need = n - len(srcs)
         if need <= 0:
             return srcs, None
@@ -7261,10 +8225,16 @@ def _acquire_feed(cursor, node, n, exclude_cable_ids, depth=0, log=None):
                 continue
             used = _used_ports(cursor, "CABLE", c["id"])
             free = [x for x in _core_labels(_core_total(c["capacity"])) if x not in used and x not in ins]
+            if prefer:
+                bad = [x for x in prefer if x not in free]
+                if bad:
+                    why = f"Core hulu {', '.join(bad[:3])} tidak tersedia pada kabel {c['name']} (sudah terpakai / bukan core kabel ini)"
+                    continue
+                free = list(prefer)
             if len(free) < need:
                 why = f"Kabel {c['name']} hanya {len(free)} core kosong; butuh {need}"
                 continue
-            feeds, why2 = _acquire_feed(cursor, up, need, exclude_cable_ids | {c["id"]}, depth + 1, log)
+            feeds, why2 = _acquire_feed(cursor, up, need, exclude_cable_ids | {c["id"]}, depth + 1, log, None, notes, allow_in)
             if not feeds:
                 why = why2
                 continue
@@ -7279,8 +8249,8 @@ def _acquire_feed(cursor, node, n, exclude_cable_ids, depth=0, log=None):
     return None, f"Jenis aset asal {t} tidak mendukung alokasi otomatis"
 
 
-def _pick_sources(cursor, origin, exclude_cable_ids, n, log=None):
-    return _acquire_feed(cursor, origin, n, set(exclude_cable_ids), 0, log)
+def _pick_sources(cursor, origin, exclude_cable_ids, n, log=None, pop_ports=None, notes=None, allow_in=False):
+    return _acquire_feed(cursor, origin, n, set(exclude_cable_ids), 0, log, pop_ports, notes, allow_in)
 
 
 def _link(cursor, src, dst_type, dst_id, dst_port, cable_id, core, note):
@@ -7294,7 +8264,7 @@ def _link(cursor, src, dst_type, dst_id, dst_port, cable_id, core, note):
     return {"id": cid, "label": lbl}
 
 
-def _allocate_new_customer(cursor, origin_id, cable_id, cust_id, n=1) -> dict:
+def _allocate_new_customer(cursor, origin_id, cable_id, cust_id, n=1, pop_ports=None) -> dict:
     """Sambungkan pelanggan baru (n core): n port/core kosong pada aset asal -> titik pelanggan, lewat n core pertama kabel baru."""
     if not cust_id:
         return {"allocated": False, "reason": "Rencana tanpa titik pelanggan; core dialokasikan manual"}
@@ -7307,16 +8277,16 @@ def _allocate_new_customer(cursor, origin_id, cable_id, cust_id, n=1) -> dict:
     cust_ports = _port_labels("NODE", "PELANGGAN", cust["capacity"])
     if len(cust_ports) < n or len(cab_cores) < n:
         return {"allocated": False, "reason": "Titik pelanggan/kabel tidak punya cukup port/core"}
-    feed_log = []
-    srcs, why = _pick_sources(cursor, origin, {cable_id}, n, feed_log)
+    feed_log, port_notes = [], []
+    srcs, why = _pick_sources(cursor, origin, {cable_id}, n, feed_log, pop_ports, port_notes, True)
     if not srcs:
         return {"allocated": False, "reason": why}
     links = feed_log + [_link(cursor, srcs[i], "NODE", cust_id, cust_ports[i], cable_id, cab_cores[i], "Alokasi otomatis dari rencana pasang baru") for i in range(n)]
-    return {"allocated": True, "connection_id": links[0]["id"], "from_port": srcs[0][2], "from_type": srcs[0][0], "from_id": srcs[0][1],
+    return {"allocated": True, "port_notes": port_notes, "ports": [x[2] for x in srcs], "connection_id": links[0]["id"], "from_port": srcs[0][2], "from_type": srcs[0][0], "from_id": srcs[0][1],
             "to_port": cust_ports[0], "via_core": cab_cores[0], "label": links[0]["label"], "cores": n, "links": links}
 
 
-def _allocate_hub(cursor, origin_id, cable1, closure_id, odp_id, cable2, cust_id, n) -> dict:
+def _allocate_hub(cursor, origin_id, cable1, closure_id, odp_id, cable2, cust_id, n, pop_ports=None) -> dict:
     """Rantai alokasi skenario hub: asal -> closure (kabel1), lalu closure -> pelanggan (kabel2) atau closure -> ODP -> pelanggan."""
     origin = cursor.execute("SELECT * FROM nodes WHERE id = ?", (origin_id,)).fetchone()
     cl = cursor.execute("SELECT * FROM nodes WHERE id = ?", (closure_id,)).fetchone()
@@ -7325,8 +8295,8 @@ def _allocate_hub(cursor, origin_id, cable1, closure_id, odp_id, cable2, cust_id
     c2 = cursor.execute("SELECT * FROM cables WHERE id = ?", (cable2,)).fetchone()
     if not (origin and cl and c1 and c2):
         return {"allocated": False, "reason": "Aset rantai tidak lengkap"}
-    feed_log = []
-    srcs, why = _pick_sources(cursor, origin, {cable1}, n, feed_log)
+    feed_log, port_notes = [], []
+    srcs, why = _pick_sources(cursor, origin, {cable1}, n, feed_log, pop_ports, port_notes, True)
     if not srcs:
         return {"allocated": False, "reason": why}
     k1, k2 = _core_labels(_core_total(c1["capacity"])), _core_labels(_core_total(c2["capacity"]))
@@ -7346,7 +8316,7 @@ def _allocate_hub(cursor, origin_id, cable1, closure_id, odp_id, cable2, cust_id
         cp = _port_labels("NODE", "PELANGGAN", cust["capacity"])
         for i in range(n):
             links.append(_link(cursor, ("NODE", closure_id, k1[i]), "NODE", cust_id, cp[i], cable2, k2[i], "Alokasi otomatis: closure -> pelanggan"))
-    return {"allocated": True, "connection_id": links[0]["id"], "from_port": srcs[0][2], "from_type": srcs[0][0], "from_id": srcs[0][1],
+    return {"allocated": True, "port_notes": port_notes, "ports": [x[2] for x in srcs], "connection_id": links[0]["id"], "from_port": srcs[0][2], "from_type": srcs[0][0], "from_id": srcs[0][1],
             "to_port": cports[0], "via_core": k1[0], "label": links[0]["label"], "cores": n, "links": links}
 
 
@@ -7820,6 +8790,907 @@ def list_otdr(cable_id: Optional[int] = None, limit: int = 100):
                             " ORDER BY o.measured_at DESC, o.id DESC LIMIT ?",
                             ((cable_id, limit) if cable_id is not None else (limit,))).fetchall()
     return [_stamp(_otdr_row(r), "uploaded_at") for r in rows]
+
+
+
+# ======================= OTDR: file SOR (SR-4731 v1/v2) =======================
+import struct
+C_VAC = 299792458.0
+
+
+class SorError(ValueError):
+    pass
+
+
+class _SorR:
+    def __init__(self, b, pos=0, end=None):
+        self.b, self.p, self.end = b, pos, len(b) if end is None else end
+
+    def need(self, n):
+        if self.p + n > self.end:
+            raise SorError("Blok SOR terpotong / tidak lengkap")
+
+    def u(self, n):
+        self.need(n)
+        v = int.from_bytes(self.b[self.p:self.p + n], "little"); self.p += n; return v
+
+    def i(self, n):
+        self.need(n)
+        v = int.from_bytes(self.b[self.p:self.p + n], "little", signed=True); self.p += n; return v
+
+    def s(self):
+        e = self.b.find(b"\0", self.p, self.end)
+        if e < 0:
+            raise SorError("String SOR tidak berakhir")
+        v = self.b[self.p:e].decode("latin-1").strip(); self.p = e + 1; return v
+
+    def fixed(self, n):
+        self.need(n)
+        v = self.b[self.p:self.p + n].decode("latin-1").strip("\0 "); self.p += n; return v
+
+
+def _sor_blocks(d):
+    if d[:4] != b"Map\0":
+        raise SorError("Bukan file SOR (blok Map tidak ditemukan)")
+    r = _SorR(d, 4)
+    ver = r.u(2); size = r.u(4); nb = r.u(2)
+    out = {}; pos = size
+    for _ in range(nb - 1):
+        name = r.s(); v = r.u(2); sz = r.u(4)
+        if pos + sz > len(d):
+            raise SorError(f"Blok {name} melebihi ukuran file")
+        out[name] = (pos, sz); pos += sz
+    return ver / 100.0, out
+
+
+def _sor_seek(d, blocks, name):
+    if name not in blocks:
+        return None
+    pos, sz = blocks[name]
+    r = _SorR(d, pos, pos + sz)
+    r.s()                                # nama blok
+    return r
+
+
+def parse_sor(data: bytes, max_points: int = 3000) -> dict:
+    d = bytes(data)
+    if len(d) < 60:
+        raise SorError("File terlalu kecil untuk SOR")
+    ver, blocks = _sor_blocks(d)
+    v2 = ver >= 2.0
+    res = {"format": f"SR-4731 v{ver:.2f}", "sha256": hashlib.sha256(d).hexdigest(), "size": len(d), "blocks": sorted(blocks)}
+    for need in ("GenParams", "FxdParams", "DataPts"):
+        if need not in blocks:
+            raise SorError(f"Blok wajib {need} tidak ada")
+    # --- GenParams
+    r = _sor_seek(d, blocks, "GenParams")
+    gen = {"language": r.fixed(2)}
+    gen["cable_id"] = r.s(); gen["fiber_id"] = r.s()
+    if v2:
+        gen["fiber_type"] = r.u(2)
+    gen["wavelength_nm"] = r.u(2)
+    gen["location_a"] = r.s(); gen["location_b"] = r.s(); gen["cable_code"] = r.s()
+    gen["build_condition"] = r.fixed(2)
+    gen["user_offset"] = r.i(4)
+    if v2:
+        gen["user_offset_distance"] = r.i(4)
+    gen["operator"] = r.s(); gen["comment"] = r.s()
+    res["general"] = gen
+    # --- SupParams
+    sup = {}
+    r = _sor_seek(d, blocks, "SupParams")
+    if r:
+        try:
+            for k in ("supplier", "mainframe", "mainframe_sn", "module", "module_sn", "software", "other"):
+                sup[k] = r.s()
+        except SorError:
+            pass
+    res["supplier"] = sup
+    # --- FxdParams
+    r = _sor_seek(d, blocks, "FxdParams")
+    fx = {}
+    ts = r.u(4); fx["timestamp"] = ts
+    fx["units"] = r.fixed(2)
+    fx["wavelength_nm"] = r.u(2) / 10.0
+    fx["acq_offset"] = r.i(4)
+    if v2:
+        fx["acq_offset_distance"] = r.i(4)
+    npw = r.u(2)
+    pws = [r.u(2) for _ in range(npw)]
+    spac = [r.u(4) for _ in range(npw)]
+    npts = [r.u(4) for _ in range(npw)]
+    n_grp = r.u(4)
+    ior = n_grp / 1e5
+    if not (1.3 <= ior <= 1.7):
+        raise SorError(f"Indeks bias grup tidak wajar ({ior}); file mungkin rusak")
+    fx.update(pulse_width_ns=pws[0] if pws else None, sample_spacing_100ps=spac[0] if spac else None, n_points=npts[0] if npts else None,
+              group_index=ior, backscatter=r.u(2), averages=r.u(4), avg_time_s=r.u(2) / 10.0,
+              range_100ps=r.u(4), range_distance=r.i(4), front_panel_offset=r.i(4),
+              noise_floor=r.u(2), noise_scale=r.u(2), power_offset=r.u(2),
+              loss_threshold_db=r.u(2) / 1000.0, refl_threshold_db=-r.u(2) / 1000.0, eot_threshold_db=r.u(2) / 1000.0,
+              trace_type=r.fixed(2))
+    res["fixed"] = fx
+    # --- DataPts
+    r = _sor_seek(d, blocks, "DataPts")
+    total_n = r.u(4); ntr = r.u(2); n2 = r.u(4); scale = r.u(2)
+    if ntr < 1 or n2 <= 0 or n2 > 5_000_000:
+        raise SorError("Blok DataPts tidak valid")
+    raw = struct.unpack_from(f"<{n2}H", d, r.p) if r.p + 2 * n2 <= r.end else None
+    if raw is None:
+        raise SorError("Data titik trace terpotong")
+    spacing_m = fx["sample_spacing_100ps"] * 1e-14 * C_VAC / ior / 2.0 if fx["sample_spacing_100ps"] else None
+    # SR-4731: nilai = -dB*1000/skala*(scale/1000) dari referensi; level relatif: titik terkuat = 0 dB
+    vmin = min(raw)
+    k = 0.001 * (scale / 1000.0 if scale else 1.0)
+    db = [-(v - vmin) * k for v in raw]
+    res["trace"] = {"n": n2, "scale": scale, "spacing_m": spacing_m, "length_m": (n2 - 1) * spacing_m if spacing_m else None}
+    # desimasi min/maks agar ringan di peramban
+    if n2 <= max_points:
+        idx = list(range(n2)); pts = [[round(i * spacing_m, 2) if spacing_m else i, round(db[i], 3)] for i in idx]
+    else:
+        step = n2 / (max_points / 2.0); pts = []
+        i0 = 0.0
+        while i0 < n2:
+            a = int(i0); b = min(n2, int(i0 + step)) or a + 1
+            seg = range(a, max(b, a + 1))
+            lo = min(seg, key=lambda i: db[i]); hi = max(seg, key=lambda i: db[i])
+            for i in sorted({lo, hi}):
+                pts.append([round(i * spacing_m, 2), round(db[i], 3)])
+            i0 += step
+    res["trace"]["points"] = pts
+    # --- KeyEvents
+    events = []
+    summ = {}
+    r = _sor_seek(d, blocks, "KeyEvents")
+    if r:
+        ne = r.u(2)
+        for _ in range(ne):
+            e = {"no": r.u(2)}
+            tt = r.u(4)
+            e["tt_100ps"] = tt
+            e["distance_m"] = tt * 1e-10 * C_VAC / ior / 2.0   # waktu tempuh pulang-pergi (dibagi 2)
+            e["slope_db_km"] = r.i(2) / 1000.0
+            e["splice_loss_db"] = r.i(2) / 1000.0
+            e["reflectance_db"] = r.i(4) / 1000.0
+            e["type_code"] = r.fixed(8)
+            if v2:
+                for kk in ("end_prev", "start", "end", "start_next", "peak"):
+                    e[kk + "_pt"] = r.u(4)
+            e["comment"] = r.s()
+            events.append(e)
+        try:
+            summ = {"total_loss_db": r.i(4) / 1000.0, "loss_start": r.i(4), "loss_end": r.i(4), "orl_db": r.u(2) / 1000.0}
+        except SorError:
+            summ = {}
+    res["events"] = events
+    res["summary"] = summ
+    res["raw_db"] = db       # untuk analisis internal (tidak diserialisasi)
+    res["_spacing_m"] = spacing_m
+    return res
+
+
+SOR_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _sor_public(res: dict) -> dict:
+    out = {k: v for k, v in res.items() if k not in ("raw_db", "_spacing_m")}
+    return out
+
+
+def _sor_decode(req) -> bytes:
+    try:
+        raw = base64.b64decode(req.content_base64 or "", validate=False)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Isi file tidak valid (base64)")
+    if not raw:
+        raise HTTPException(status_code=400, detail="File SOR kosong")
+    if len(raw) > SOR_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="File SOR terlalu besar (maks 8 MB)")
+    return raw
+
+
+class SorUpload(BaseModel):
+    filename: str = ""
+    content_base64: Optional[str] = ""
+    note: Optional[str] = ""
+
+
+@app.post("/api/otdr/sor/parse")
+def otdr_sor_parse(req: SorUpload):
+    raw = _sor_decode(req)
+    try:
+        return _sor_public(parse_sor(raw))
+    except SorError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except (struct.error, IndexError, ValueError):
+        raise HTTPException(status_code=422, detail="File SOR tidak dapat dibaca (struktur rusak)")
+
+
+@app.post("/api/otdr/sor")
+def otdr_sor_save(req: SorUpload):
+    raw = _sor_decode(req)
+    try:
+        res = _sor_public(parse_sor(raw))
+    except SorError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except (struct.error, IndexError, ValueError):
+        raise HTTPException(status_code=422, detail="File SOR tidak dapat dibaca (struktur rusak)")
+    with db() as conn:
+        cursor = conn.cursor()
+        dup = cursor.execute("SELECT id FROM sor_traces WHERE sha256 = ?", (res["sha256"],)).fetchone()
+        if dup:
+            raise HTTPException(status_code=409, detail=f"File yang sama sudah tersimpan (ID {dup['id']})")
+        trace = res.pop("trace")
+        cursor.execute(
+            """INSERT INTO sor_traces (filename, sha256, size, meta, trace, file_blob, note, uploaded_by, uploaded_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ((req.filename or "")[:200], res["sha256"], len(raw), json.dumps(res), json.dumps(trace), raw,
+             (req.note or "")[:500], _current_username(), datetime.now(timezone.utc).isoformat()))
+        new_id = cursor.lastrowid
+        g = res["general"]
+        _audit(cursor, "IMPORT", "OTDR_SOR", new_id, req.filename or "sor",
+               f"Simpan file SOR {req.filename} (kabel {g.get('cable_id')}, serat {g.get('fiber_id')}, {len(res['events'])} event)")
+    return {"id": new_id, "message": "File SOR tersimpan"}
+
+
+def _sor_row(r, full=False) -> dict:
+    meta = json.loads(r["meta"] or "{}")
+    d = {"id": r["id"], "filename": r["filename"], "size": r["size"], "note": r["note"], "uploaded_by": r["uploaded_by"],
+         "uploaded_at": r["uploaded_at"], "general": meta.get("general"), "fixed": meta.get("fixed"),
+         "events": meta.get("events"), "supplier": meta.get("supplier"), "summary": meta.get("summary"),
+         "format": meta.get("format"), "analysis": json.loads(r["analysis"]) if r["analysis"] else None}
+    if full:
+        d["trace"] = json.loads(r["trace"] or "{}")
+    return d
+
+
+
+# ---- jalur OTDR berbasis aset: awal + port + arah -> kabel berurutan -> posisi event di peta ----
+SOR_SLACK_TYPES = {"SLACK", "CLOSURE"}
+
+
+def _node_pt(n):
+    return {"id": n["id"], "name": n["name"], "type": n["type"], "lat": n["latitude"], "lng": n["longitude"]}
+
+
+def _orient_cable(cab, coords, start_node, nodes):
+    """True bila perjalanan dari start_node searah titik pertama->terakhir (A->B)."""
+    if cab["from_node_id"] == start_node["id"]:
+        return True
+    if cab["to_node_id"] == start_node["id"]:
+        return False
+    da = _haversine_m(coords[0][1], coords[0][0], start_node["latitude"], start_node["longitude"])
+    db_ = _haversine_m(coords[-1][1], coords[-1][0], start_node["latitude"], start_node["longitude"])
+    return da <= db_
+
+
+def _sor_hops_auto(cursor, start_id, port, direction):
+    names, conns = _trace_graph(cursor)
+    idx = _hop_index(conns)
+    key = ("NODE", start_id)
+    pool = (idx[0] if direction == "down" else idx[1]).get(key, [])
+    pf = "from_port_core" if direction == "down" else "to_port_core"
+    first = [c for c in pool if (not port) or c.get(pf) == port]
+    if not first:
+        raise HTTPException(status_code=404, detail="Tidak ada sambungan " + ("keluar" if direction == "down" else "masuk") + (f" pada port '{port}'" if port else "") + " di aset awal")
+    if len(first) > 1:
+        raise HTTPException(status_code=409, detail="Aset awal punya lebih dari satu sambungan; pilih port tertentu")
+    hops, notes, seen = [], [], set()
+    c = first[0]
+    while c and c["id"] not in seen and len(hops) < 300:
+        seen.add(c["id"])
+        hops.append((c, direction))
+        nxt = _next_down(names, idx, c) if direction == "down" else _next_up(names, idx, c)
+        nk = (c["to_asset_type"], c["to_asset_id"]) if direction == "down" else (c["from_asset_type"], c["from_asset_id"])
+        if len(nxt) == 1:
+            c = nxt[0]
+        else:
+            if len(nxt) > 1:
+                notes.append(f"Jalur berhenti di {names.get(nk, ('?',))[0]}: bercabang ({len(nxt)} sambungan)")
+            c = None
+    return hops, notes
+
+
+def _sor_build_path(cursor, start_id, port, direction, cable_ids=None):
+    nodes = {r["id"]: r for r in cursor.execute("SELECT * FROM nodes").fetchall()}
+    st = nodes.get(start_id)
+    if not st:
+        raise HTTPException(status_code=404, detail="Aset awal tidak ditemukan")
+    segs, notes = [], []
+    cur = st
+    if cable_ids:
+        for cid in cable_ids:
+            cab = cursor.execute("SELECT * FROM cables WHERE id = ?", (cid,)).fetchone()
+            if not cab:
+                raise HTTPException(status_code=404, detail=f"Kabel #{cid} tidak ditemukan")
+            coords = _cable_coords(cab)
+            if not coords:
+                raise HTTPException(status_code=400, detail=f"Kabel {cab['name']} tidak punya geometri")
+            fwd = _orient_cable(cab, coords, cur, nodes)
+            far_id = cab["to_node_id"] if fwd else cab["from_node_id"]
+            far = nodes.get(far_id) if far_id else None
+            if far is None:
+                far = (_cable_ends(cab, nodes).get("B" if fwd else "A") or None)
+                far = nodes.get(far["id"]) if far else None
+            segs.append({"cable": cab, "coords": coords if fwd else coords[::-1], "from": cur, "to": far, "core": None, "port_in": None, "port_out": None})
+            if far is None:
+                notes.append(f"Ujung kabel {cab['name']} tidak terhubung ke aset; jalur manual berhenti di sini")
+                break
+            cur = far
+        return segs, notes, nodes
+    hops, notes = _sor_hops_auto(cursor, start_id, port, direction)
+    for c, d in hops:
+        a = nodes.get(c["from_asset_id"] if d == "down" else c["to_asset_id"])
+        b = nodes.get(c["to_asset_id"] if d == "down" else c["from_asset_id"])
+        if c["from_asset_type"] != "NODE" or c["to_asset_type"] != "NODE" or not a or not b:
+            notes.append("Ada sambungan non-aset pada jalur; jalur dipotong di sini")
+            break
+        cab = cursor.execute("SELECT * FROM cables WHERE id = ?", (c.get("via_cable_id"),)).fetchone() if c.get("via_cable_id") else None
+        coords = _cable_coords(cab) if cab else None
+        if coords:
+            fwd = _orient_cable(cab, coords, a, nodes)
+            oc = coords if fwd else coords[::-1]
+        else:
+            oc = [[a["longitude"], a["latitude"]], [b["longitude"], b["latitude"]]]
+            if cab is None:
+                notes.append(f"Sambungan {a['name']} → {b['name']} tanpa kabel: jarak dihitung garis lurus")
+        segs.append({"cable": cab, "coords": oc, "from": a, "to": b, "core": c.get("via_core"),
+                     "port_in": c["from_port_core"] if d == "down" else c["to_port_core"],
+                     "port_out": c["to_port_core"] if d == "down" else c["from_port_core"]})
+    return segs, notes, nodes
+
+
+def _sor_timeline(segs, slack_m, helix_pct):
+    """Garis waktu optik: [{kind:'seg'|'slack', start, end, ...}], posisi tiap node sepanjang jalur."""
+    tl, pos = [], 0.0
+    nodes_on = []
+    if segs:
+        nodes_on.append({**_node_pt(segs[0]["from"]), "optical_m": 0.0, "slack": False})
+    for i, sg in enumerate(segs):
+        g = _polyline_length_m(sg["coords"])
+        o = g * (1.0 + helix_pct / 100.0)
+        tl.append({"kind": "seg", "i": i, "start": pos, "end": pos + o, "geo_m": g, "cable": sg["cable"]["name"] if sg["cable"] else None})
+        pos += o
+        to = sg["to"]
+        if to is not None:
+            has = (to["type"] or "").upper() in SOR_SLACK_TYPES and i < len(segs) - 1
+            nd = {**_node_pt(to), "optical_m": pos, "slack": has}
+            if has and slack_m > 0:
+                tl.append({"kind": "slack", "i": i, "start": pos, "end": pos + slack_m, "node": to})
+                pos += slack_m
+                nd["optical_end_m"] = pos
+            nodes_on.append(nd)
+    return tl, nodes_on, pos
+
+
+def _sor_locate(segs, tl, d, helix_pct):
+    for t in tl:
+        if d <= t["end"] + 1e-9 or t is tl[-1]:
+            if t["kind"] == "slack":
+                n = t["node"]
+                return {"lat": n["latitude"], "lng": n["longitude"], "in": "slack", "node": n["name"], "segment": t["i"]}
+            g = max(0.0, min((d - t["start"]) / (1.0 + helix_pct / 100.0), t["geo_m"]))
+            lat, lng = _points_along(segs[t["i"]]["coords"], [g])[0]
+            return {"lat": lat, "lng": lng, "in": "cable", "geo_from_seg_start_m": round(g, 1), "segment": t["i"]}
+    return None
+
+
+def _sor_sigma(d, n_slack, slack_m, p, spacing_m):
+    comp = {"slack": 0.4 * slack_m * math.sqrt(n_slack) if n_slack else 0.0,
+            "rute": d * p["otdr_route_err_pct"] / 100.0 / 2.0,
+            "helix": d * 0.005,
+            "alat": math.sqrt((spacing_m or 1.3) ** 2 + (d * 0.0005) ** 2)}
+    tot = math.sqrt(sum(v * v for v in comp.values()))
+    return tot, {k: round(v, 1) for k, v in comp.items()}
+
+
+def _sor_reflective(e):
+    c = str(e.get("type_code") or "")
+    return c[:1] in ("1", "2")
+
+
+class SorAnalyze(BaseModel):
+    sor_id: Optional[int] = None
+    content_base64: Optional[str] = ""
+    filename: str = ""
+    start_node_id: int
+    start_port: Optional[str] = None
+    direction: Optional[str] = "down"          # down | up
+    cable_ids: Optional[List[int]] = None       # jalur manual (urut dari aset awal)
+    slack_m: Optional[float] = None
+    launch_offset_m: Optional[float] = 0.0      # panjang kabel launch / patchcord sebelum aset awal
+    save: Optional[bool] = False
+
+
+@app.get("/api/otdr/sor/start-nodes")
+def otdr_sor_start_nodes(q: str = "", limit: int = 30):
+    like = "%" + (q or "").strip().lower() + "%"
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT n.id, n.name, n.type FROM nodes n JOIN core_connections c ON "
+            "((c.from_asset_type='NODE' AND c.from_asset_id=n.id) OR (c.to_asset_type='NODE' AND c.to_asset_id=n.id)) "
+            "WHERE LOWER(n.name) LIKE ? ORDER BY n.name LIMIT ?", (like, max(1, min(limit, 100)))).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/nodes/{node_id}/otdr-starts")
+def otdr_sor_starts(node_id: int):
+    """Pilihan titik awal ukur pada sebuah aset: tiap sambungan (port, arah, tujuan berikutnya)."""
+    with db() as conn:
+        cursor = conn.cursor()
+        n = cursor.execute("SELECT id, name, type FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if not n:
+            raise HTTPException(status_code=404, detail="Aset tidak ditemukan")
+        names, conns = _trace_graph(cursor)
+    out = []
+    for c in conns:
+        if c["from_asset_type"] == "NODE" and c["from_asset_id"] == node_id:
+            other = names.get((c["to_asset_type"], c["to_asset_id"]), ("?",))[0]
+            out.append({"port": c["from_port_core"], "direction": "down", "to": other, "to_port": c["to_port_core"],
+                        "cable": c.get("via_cable_name"), "core": c.get("via_core")})
+        if c["to_asset_type"] == "NODE" and c["to_asset_id"] == node_id:
+            other = names.get((c["from_asset_type"], c["from_asset_id"]), ("?",))[0]
+            out.append({"port": c["to_port_core"], "direction": "up", "to": other, "to_port": c["from_port_core"],
+                        "cable": c.get("via_cable_name"), "core": c.get("via_core")})
+    out.sort(key=lambda x: (x["port"] or "", x["direction"]))
+    return {"node": dict(n), "starts": out}
+
+
+def _sor_run(cursor, req, res, p):
+    slack_m = p["otdr_slack_m"] if req.slack_m is None else float(req.slack_m)
+    if not (0 <= slack_m <= 200):
+        raise HTTPException(status_code=400, detail="Slack harus 0-200 m")
+    launch = float(req.launch_offset_m or 0.0)
+    if not (0 <= launch <= 5000):
+        raise HTTPException(status_code=400, detail="Offset launch harus 0-5000 m")
+    direction = (req.direction or "down").lower()
+    if direction not in ("down", "up"):
+        raise HTTPException(status_code=400, detail="Arah harus down atau up")
+    segs, notes, _nodes = _sor_build_path(cursor, req.start_node_id, (req.start_port or "").strip() or None, direction, req.cable_ids or None)
+    if not segs:
+        raise HTTPException(status_code=400, detail="Jalur kosong")
+    tl, nodes_on, total = _sor_timeline(segs, slack_m, p["otdr_helix_pct"])
+    spacing = (res.get("trace") or {}).get("spacing_m")
+    n_slack_all = sum(1 for t in tl if t["kind"] == "slack")
+    evs = []
+    for e in res.get("events") or []:
+        d = e["distance_m"] - launch
+        if d < -1e-6:
+            evs.append({"no": e["no"], "optical_m": e["distance_m"], "before_start": True})
+            continue
+        n_sl = sum(1 for t in tl if t["kind"] == "slack" and t["end"] <= d + 1e-9)
+        loc = _sor_locate(segs, tl, min(d, total), p["otdr_helix_pct"])
+        sig, comp = _sor_sigma(d, n_sl, slack_m, p, spacing)
+        near = sorted(nodes_on, key=lambda n: abs(n["optical_m"] - d))[0]
+        evs.append({"no": e["no"], "optical_m": round(e["distance_m"], 1), "path_m": round(d, 1), "beyond_path": d > total + 1e-6,
+                    "slack_passed": n_sl, "sigma_m": round(sig, 1), "uncertainty_m": round(2 * sig, 1), "components": comp,
+                    "lat": loc["lat"] if loc else None, "lng": loc["lng"] if loc else None, "in": loc["in"] if loc else None,
+                    "segment": loc["segment"] if loc else None,
+                    "segment_cable": (segs[loc["segment"]]["cable"]["name"] if loc and segs[loc["segment"]]["cable"] else None),
+                    "segment_cable_id": (segs[loc["segment"]]["cable"]["id"] if loc and segs[loc["segment"]]["cable"] else None),
+                    "segment_core": (segs[loc["segment"]]["core"] if loc else None),
+                    "near_node": near["name"], "near_gap_m": round(d - near["optical_m"], 1)})
+    # klasifikasi event terakhir
+    end = None
+    if res.get("events"):
+        le = res["events"][-1]
+        d = le["distance_m"] - launch
+        tol = p["otdr_normal_pct"] / 100.0
+        diff = d - total
+        pct = (diff / total * 100.0) if total else 0.0
+        refl = _sor_reflective(le)
+        if abs(diff) <= tol * total:
+            kind, msg = "NORMAL", "Event akhir sesuai panjang jalur (selisih %.1f%%): ujung serat normal." % pct
+        elif diff < 0 and refl:
+            kind, msg = "BREAK", "Event akhir lebih pendek %.0f m dari jalur dan reflektif: indikasi serat patah/putus." % (-diff)
+        elif diff < 0:
+            kind, msg = "BEND", "Event akhir lebih pendek %.0f m dari jalur dan tidak reflektif: indikasi tekukan tajam (macrobend) atau sambungan buruk." % (-diff)
+        else:
+            kind, msg = "LONGER", "Event akhir lebih panjang %.0f m dari jalur: data jalur belum lengkap (kabel/slack belum tercatat) atau titik awal/arah keliru." % diff
+        end = {"kind": kind, "message": msg, "event_no": le["no"], "reflective": refl, "end_m": round(d, 1), "path_m": round(total, 1),
+               "diff_m": round(diff, 1), "diff_pct": round(pct, 2), "tolerance_pct": p["otdr_normal_pct"]}
+        ev_last = next((x for x in evs if x["no"] == le["no"]), None)
+        if ev_last and kind in ("BREAK", "BEND"):
+            end["lat"], end["lng"] = ev_last.get("lat"), ev_last.get("lng")
+            end["uncertainty_m"] = ev_last.get("uncertainty_m")
+            end["slack_passed"] = ev_last.get("slack_passed")
+            end["near_node"], end["near_gap_m"] = ev_last.get("near_node"), ev_last.get("near_gap_m")
+            end["segment_cable"], end["segment_cable_id"], end["segment_core"] = ev_last.get("segment_cable"), ev_last.get("segment_cable_id"), ev_last.get("segment_core")
+    path = {"start": _node_pt(segs[0]["from"]), "start_port": segs[0].get("port_in"), "direction": direction,
+            "slack_m": slack_m, "launch_offset_m": launch, "helix_pct": p["otdr_helix_pct"], "optical_total_m": round(total, 1),
+            "geo_total_m": round(sum(t["geo_m"] for t in tl if t["kind"] == "seg"), 1), "slack_count": n_slack_all,
+            "manual": bool(req.cable_ids), "nodes": [{k: v for k, v in n.items()} for n in nodes_on],
+            "segments": [{"cable_id": s["cable"]["id"] if s["cable"] else None, "cable": s["cable"]["name"] if s["cable"] else None,
+                          "core": s["core"], "from": s["from"]["name"], "to": s["to"]["name"] if s["to"] else None,
+                          "geo_m": round(_polyline_length_m(s["coords"]), 1),
+                          "line": [[c[1], c[0]] for c in s["coords"]]} for s in segs]}
+    return {"path": path, "events": evs, "end": end, "notes": notes}
+
+
+@app.post("/api/otdr/sor/analyze")
+def otdr_sor_analyze(req: SorAnalyze):
+    with db() as conn:
+        cursor = conn.cursor()
+        if req.sor_id:
+            r = cursor.execute("SELECT id, filename, meta, trace FROM sor_traces WHERE id = ?", (req.sor_id,)).fetchone()
+            if not r:
+                raise HTTPException(status_code=404, detail="File SOR tidak ditemukan")
+            res = json.loads(r["meta"]); res["trace"] = json.loads(r["trace"])
+        else:
+            try:
+                res = _sor_public(parse_sor(_sor_decode(req)))
+            except SorError as e:
+                raise HTTPException(status_code=422, detail=str(e))
+        p = _loss_params(cursor)
+        out = _sor_run(cursor, req, res, p)
+        if req.save:
+            if not req.sor_id:
+                raise HTTPException(status_code=400, detail="Simpan berkas SOR dahulu sebelum menyimpan analisis")
+            cursor.execute("UPDATE sor_traces SET analysis = ? WHERE id = ?", (json.dumps({**out, "request": {
+                "start_node_id": req.start_node_id, "start_port": req.start_port, "direction": req.direction,
+                "cable_ids": req.cable_ids, "slack_m": req.slack_m, "launch_offset_m": req.launch_offset_m}}), req.sor_id))
+            _audit(cursor, "UPDATE", "OTDR_SOR", req.sor_id, r["filename"], f"Simpan analisis jalur SOR {r['filename']} ({(out['end'] or {}).get('kind', '-')})")
+    return out
+
+
+
+# ---------------- SOR lanjutan: tiket, baseline, dua arah ----------------
+SOR_WL_BUCKETS = [850, 1310, 1383, 1490, 1550, 1625, 1650]
+
+
+def _sor_bkey(meta: dict) -> str:
+    g, fx = meta.get("general") or {}, meta.get("fixed") or {}
+    wl = fx.get("wavelength_nm") or g.get("wavelength_nm") or 0
+    b = min(SOR_WL_BUCKETS, key=lambda x: abs(x - wl)) if wl else 0
+    return f"{(g.get('cable_id') or '').strip().lower()}|{(g.get('fiber_id') or '').strip().lower()}|{b}"
+
+
+def _sor_load(cursor, sor_id):
+    r = cursor.execute("SELECT * FROM sor_traces WHERE id = ?", (sor_id,)).fetchone()
+    if not r:
+        raise HTTPException(status_code=404, detail="File SOR tidak ditemukan")
+    meta = json.loads(r["meta"] or "{}")
+    meta["trace"] = json.loads(r["trace"] or "{}")
+    return r, meta
+
+
+@app.post("/api/otdr/sor/{sor_id}/baseline")
+def otdr_sor_set_baseline(sor_id: int):
+    with db() as conn:
+        cursor = conn.cursor()
+        r, meta = _sor_load(cursor, sor_id)
+        key = _sor_bkey(meta)
+        if key.startswith("|"):
+            raise HTTPException(status_code=400, detail="Berkas tidak punya ID kabel/serat; baseline tidak bisa dikelompokkan")
+        for o in cursor.execute("SELECT id, meta FROM sor_traces WHERE is_baseline = 1 AND id != ?", (sor_id,)).fetchall():
+            if _sor_bkey(json.loads(o["meta"] or "{}")) == key:
+                cursor.execute("UPDATE sor_traces SET is_baseline = 0, baseline_by = NULL WHERE id = ?", (o["id"],))
+        cursor.execute("UPDATE sor_traces SET is_baseline = 1, baseline_by = ? WHERE id = ?", (_current_username(), sor_id))
+        _audit(cursor, "UPDATE", "OTDR_SOR", sor_id, r["filename"], f"Jadikan baseline {key}")
+    return {"message": "Dijadikan baseline", "key": key}
+
+
+@app.delete("/api/otdr/sor/{sor_id}/baseline")
+def otdr_sor_unset_baseline(sor_id: int):
+    with db() as conn:
+        cursor = conn.cursor()
+        r, _m = _sor_load(cursor, sor_id)
+        cursor.execute("UPDATE sor_traces SET is_baseline = 0, baseline_by = NULL WHERE id = ?", (sor_id,))
+        _audit(cursor, "UPDATE", "OTDR_SOR", sor_id, r["filename"], "Lepas status baseline")
+    return {"message": "Baseline dilepas"}
+
+
+def _sor_match_events(base, new, spacing):
+    used, rows = set(), []
+    for ne in new:
+        tol = max(3 * (spacing or 1.3), 0.005 * ne["distance_m"], 5.0)
+        best = None
+        for be in base:
+            if be["no"] in used:
+                continue
+            dd = abs(be["distance_m"] - ne["distance_m"])
+            if dd <= tol and (best is None or dd < best[0]):
+                best = (dd, be)
+        if best:
+            used.add(best[1]["no"])
+        rows.append((best[1] if best else None, ne))
+    lost = [be for be in base if be["no"] not in used]
+    return rows, lost
+
+
+def _sor_compare(bm, nm, p):
+    sp = (nm.get("trace") or {}).get("spacing_m")
+    rows, lost = _sor_match_events(bm.get("events") or [], nm.get("events") or [], sp)
+    wb, wn = p["event_warn_db"], p["event_bad_db"]
+    out = []
+
+    def lvl(delta):
+        return "BAD" if delta >= p["event_bad_db"] else "WARN" if delta >= p["event_warn_db"] else "OK"
+
+    def refl(e):
+        r = e.get("reflectance_db")
+        return r if r is not None and r > -1000 else None
+    for be, ne in rows:
+        if be is None:
+            st = "BAD" if ne.get("splice_loss_db", 0) >= wn else "WARN"
+            out.append({"kind": "NEW", "new_no": ne["no"], "distance_m": round(ne["distance_m"], 1), "new_loss": ne.get("splice_loss_db"),
+                        "new_refl": refl(ne), "status": st})
+            continue
+        dl = (ne.get("splice_loss_db") or 0) - (be.get("splice_loss_db") or 0)
+        rb, rn = refl(be), refl(ne)
+        drf = (rn - rb) if (rb is not None and rn is not None) else None
+        st = lvl(dl)
+        if st == "OK" and drf is not None and abs(drf) >= 3:
+            st = "WARN"
+        out.append({"kind": "CHANGED" if st != "OK" else "SAME", "base_no": be["no"], "new_no": ne["no"], "distance_m": round(ne["distance_m"], 1),
+                    "shift_m": round(ne["distance_m"] - be["distance_m"], 1), "base_loss": be.get("splice_loss_db"), "new_loss": ne.get("splice_loss_db"),
+                    "delta_loss": round(dl, 3), "base_refl": rb, "new_refl": rn, "delta_refl": round(drf, 2) if drf is not None else None, "status": st})
+    for be in lost:
+        out.append({"kind": "LOST", "base_no": be["no"], "distance_m": round(be["distance_m"], 1), "base_loss": be.get("splice_loss_db"), "status": "WARN"})
+    out.sort(key=lambda r: r["distance_m"])
+    tb, tn = (bm.get("summary") or {}).get("total_loss_db"), (nm.get("summary") or {}).get("total_loss_db")
+    dt = round(tn - tb, 3) if tb is not None and tn is not None else None
+    eb = (bm.get("events") or [{}])[-1].get("distance_m")
+    en = (nm.get("events") or [{}])[-1].get("distance_m")
+    de = round(en - eb, 1) if eb is not None and en is not None else None
+    tot_st = "OK"
+    if dt is not None:
+        tot_st = "BAD" if abs(dt) >= p["otdr_bad_db"] else "WARN" if abs(dt) >= p["otdr_warn_db"] else "OK"
+    end_st = "OK"
+    if de is not None and eb:
+        pct = abs(de) / eb * 100.0
+        end_st = "BAD" if pct > p["otdr_normal_pct"] * 2 else "WARN" if pct > p["otdr_normal_pct"] else "OK"
+    sts = [r["status"] for r in out] + [tot_st, end_st]
+    overall = "BAD" if "BAD" in sts else "WARN" if "WARN" in sts else "OK"
+    return {"overall": overall, "total": {"base": tb, "new": tn, "delta": dt, "status": tot_st},
+            "end": {"base_m": eb, "new_m": en, "delta_m": de, "status": end_st}, "events": out,
+            "wavelength_diff_nm": round(((nm.get("fixed") or {}).get("wavelength_nm") or 0) - ((bm.get("fixed") or {}).get("wavelength_nm") or 0), 1)}
+
+
+@app.get("/api/otdr/sor/{sor_id}/compare")
+def otdr_sor_compare(sor_id: int, base_id: Optional[int] = None):
+    with db() as conn:
+        cursor = conn.cursor()
+        r, nm = _sor_load(cursor, sor_id)
+        key = _sor_bkey(nm)
+        if base_id is None and r["is_baseline"]:
+            raise HTTPException(status_code=400, detail="Berkas ini sendiri adalah baseline")
+        if base_id is None:
+            for o in cursor.execute("SELECT id, meta FROM sor_traces WHERE is_baseline = 1 AND id != ?", (sor_id,)).fetchall():
+                if _sor_bkey(json.loads(o["meta"] or "{}")) == key:
+                    base_id = o["id"]
+                    break
+        if base_id is None:
+            raise HTTPException(status_code=404, detail="Belum ada baseline untuk kabel/serat/panjang gelombang ini")
+        if base_id == sor_id:
+            raise HTTPException(status_code=400, detail="Berkas ini sendiri adalah baseline")
+        b, bm = _sor_load(cursor, base_id)
+        p = _loss_params(cursor)
+        res = _sor_compare(bm, nm, p)
+        res.update({"base_id": base_id, "base_filename": b["filename"], "base_time": (bm.get("fixed") or {}).get("timestamp"),
+                    "new_time": (nm.get("fixed") or {}).get("timestamp"), "key_match": _sor_bkey(bm) == key,
+                    "base_trace": (bm.get("trace") or {}).get("points", [])})
+    return res
+
+
+class SorIncident(BaseModel):
+    severity: Optional[str] = "Critical"
+    note: Optional[str] = ""
+
+
+@app.post("/api/otdr/sor/{sor_id}/incident")
+def otdr_sor_incident(sor_id: int, req: SorIncident):
+    with db() as conn:
+        cursor = conn.cursor()
+        r = cursor.execute("SELECT id, filename, meta, analysis, incident_id FROM sor_traces WHERE id = ?", (sor_id,)).fetchone()
+        if not r:
+            raise HTTPException(status_code=404, detail="File SOR tidak ditemukan")
+        if not r["analysis"]:
+            raise HTTPException(status_code=400, detail="Simpan analisis jalur dahulu")
+        if r["incident_id"]:
+            t = cursor.execute("SELECT ticket_number FROM incidents WHERE id = ?", (r["incident_id"],)).fetchone()
+            if t:
+                raise HTTPException(status_code=409, detail=f"Tiket {t['ticket_number']} sudah dibuat dari berkas ini")
+        a = json.loads(r["analysis"])
+        meta = json.loads(r["meta"] or "{}")
+    e = a.get("end") or {}
+    if e.get("kind") not in ("BREAK", "BEND") or e.get("lat") is None:
+        raise HTTPException(status_code=400, detail="Hasil analisis tidak menunjukkan titik gangguan (hanya Putus/Tekukan yang bisa dijadikan tiket)")
+    sev = (req.severity or "Critical")
+    if sev not in ("Critical", "Major", "Minor", "Warning"):
+        sev = "Critical"
+    g = meta.get("general") or {}
+    core_no = None
+    m = re.search(r"(\d+)\s*$", str(e.get("segment_core") or ""))
+    if m:
+        core_no = int(m.group(1))
+    desc = [f"Dibuat otomatis dari OTDR (SOR): {r['filename']}",
+            f"Kabel/serat terukur: {g.get('cable_id') or '-'} / {g.get('fiber_id') or '-'}",
+            e.get("message") or "",
+            f"Estimasi titik: {e['lat']:.6f}, {e['lng']:.6f} (±{e.get('uncertainty_m')} m, 95%)",
+            f"Slack terlewati: {e.get('slack_passed')}; dekat {e.get('near_node') or '?'} ({e.get('near_gap_m')} m)"]
+    if e.get("method") == "TWOWAY":
+        desc.append("Metode: gabungan dua arah (SOR dari kedua ujung)")
+    if (req.note or "").strip():
+        desc.append("Catatan: " + req.note.strip())
+    ticket = "SOR-" + datetime.now().strftime("%y%m%d%H%M%S") + f"-{sor_id}"
+    cable_id = e.get("segment_cable_id")
+    inc = IncidentCreate(ticket_number=ticket, title=f"{'Fiber putus' if e['kind'] == 'BREAK' else 'Degradasi serat'} - {g.get('cable_id') or e.get('segment_cable') or 'OTDR'}",
+                         severity=sev, incident_type="FO Cut" if e["kind"] == "BREAK" else "Fiber Degradation", status="Open",
+                         description="\n".join(x for x in desc if x), latitude=e["lat"], longitude=e["lng"], linked_cable_id=cable_id,
+                         affected_cores=[core_no] if (core_no and cable_id) else None, reporter=_current_username())
+    try:
+        res = create_incident(inc)
+    except HTTPException as ex:
+        if ex.status_code == 400 and inc.affected_cores:
+            inc.affected_cores = None
+            res = create_incident(inc)
+        else:
+            raise
+    with db() as conn:
+        conn.execute("UPDATE sor_traces SET incident_id = ? WHERE id = ?", (res["id"], sor_id))
+        _log_event(conn.cursor(), res["id"], "NOTE", f"Sumber: analisis OTDR {r['filename']} (SOR #{sor_id})", {"sor_id": sor_id, "end": {k: e.get(k) for k in ("kind", "lat", "lng", "uncertainty_m")}})
+    return {"id": res["id"], "ticket_number": res["ticket_number"], "linked_cable_id": res["linked_cable_id"], "notes": res.get("notes")}
+
+
+class SorAnalyze2(BaseModel):
+    sor_id: int
+    sor_id_b: int
+    start_node_id: int
+    start_port: Optional[str] = None
+    direction: Optional[str] = "down"
+    cable_ids: Optional[List[int]] = None
+    slack_m: Optional[float] = None
+    launch_offset_m: Optional[float] = 0.0
+    launch_offset_b_m: Optional[float] = 0.0
+    save: Optional[bool] = False
+
+
+@app.post("/api/otdr/sor/analyze2")
+def otdr_sor_analyze2(req: SorAnalyze2):
+    if req.sor_id == req.sor_id_b:
+        raise HTTPException(status_code=400, detail="Pilih dua berkas SOR yang berbeda")
+    with db() as conn:
+        cursor = conn.cursor()
+        ra, ma = _sor_load(cursor, req.sor_id)
+        rb, mb = _sor_load(cursor, req.sor_id_b)
+        ga, gb = ma.get("general") or {}, mb.get("general") or {}
+        warn = []
+        if (ga.get("fiber_id") or "") != (gb.get("fiber_id") or ""):
+            warn.append(f"ID serat berbeda ({ga.get('fiber_id') or '-'} vs {gb.get('fiber_id') or '-'}); pastikan keduanya serat yang sama")
+        p = _loss_params(cursor)
+        one = SorAnalyze(sor_id=req.sor_id, start_node_id=req.start_node_id, start_port=req.start_port, direction=req.direction,
+                         cable_ids=req.cable_ids, slack_m=req.slack_m, launch_offset_m=req.launch_offset_m)
+        out = _sor_run(cursor, one, ma, p)
+        direction = (req.direction or "down").lower()
+        segs, _n, _nodes = _sor_build_path(cursor, req.start_node_id, (req.start_port or "").strip() or None, direction, req.cable_ids or None)
+        slack_m = p["otdr_slack_m"] if req.slack_m is None else float(req.slack_m)
+        tl, nodes_on, P = _sor_timeline(segs, slack_m, p["otdr_helix_pct"])
+        if not ma.get("events") or not mb.get("events"):
+            raise HTTPException(status_code=422, detail="Salah satu SOR tidak punya event")
+        da = ma["events"][-1]["distance_m"] - float(req.launch_offset_m or 0)
+        dbb = mb["events"][-1]["distance_m"] - float(req.launch_offset_b_m or 0)
+        tol = p["otdr_normal_pct"] / 100.0
+        if da >= P * (1 - tol) or dbb >= P * (1 - tol):
+            raise HTTPException(status_code=422, detail="Dua arah hanya berlaku bila kedua SOR berhenti sebelum ujung jalur (ada putus). "
+                                                         f"Jarak A {da:.0f} m, jarak B {dbb:.0f} m, panjang jalur {P:.0f} m.")
+        spacing = (ma.get("trace") or {}).get("spacing_m")
+        xa, xb = da, P - dbb
+        n_a = sum(1 for t in tl if t["kind"] == "slack" and t["end"] <= xa + 1e-9)
+        n_b = sum(1 for t in tl if t["kind"] == "slack" and t["start"] >= xb - 1e-9)
+        sa, comp_a = _sor_sigma(da, n_a, slack_m, p, spacing)
+        sb, comp_b = _sor_sigma(dbb, n_b, slack_m, p, (mb.get("trace") or {}).get("spacing_m"))
+        gap = P - da - dbb                       # >0: jumlah dua jarak lebih pendek dari model jalur
+        w = sa * sa / (sa * sa + sb * sb)
+        x = xa + gap * w
+        sf = math.sqrt(sa * sa * sb * sb / (sa * sa + sb * sb))
+        consistent = abs(gap) <= 3 * math.sqrt(sa * sa + sb * sb)
+        loc = _sor_locate(segs, tl, max(0.0, min(x, P)), p["otdr_helix_pct"])
+        near = sorted(nodes_on, key=lambda n: abs(n["optical_m"] - x))[0]
+        refl = _sor_reflective(ma["events"][-1]) or _sor_reflective(mb["events"][-1])
+        kind = "BREAK" if refl else "BEND"
+        seg = segs[loc["segment"]] if loc else None
+        msg = (f"Titik cut gabungan dua arah: {x:.0f} m dari titik awal A (A: {xa:.0f} m, B: {xb:.0f} m, selisih {abs(gap):.0f} m). "
+               + ("Dua pengukuran konsisten." if consistent else "PERINGATAN: dua pengukuran tidak konsisten (bukan titik yang sama, jalur belum lengkap, atau serat berbeda)."))
+        end = {"kind": kind, "method": "TWOWAY", "message": msg, "event_no": ma["events"][-1]["no"], "reflective": refl,
+               "end_m": round(da, 1), "path_m": round(P, 1), "diff_m": round(da - P, 1), "diff_pct": round((da - P) / P * 100.0, 2),
+               "tolerance_pct": p["otdr_normal_pct"], "lat": loc["lat"] if loc else None, "lng": loc["lng"] if loc else None,
+               "uncertainty_m": round(2 * sf, 1), "slack_passed": n_a, "near_node": near["name"], "near_gap_m": round(x - near["optical_m"], 1),
+               "segment_cable": seg["cable"]["name"] if seg and seg["cable"] else None, "segment_cable_id": seg["cable"]["id"] if seg and seg["cable"] else None,
+               "segment_core": seg["core"] if seg else None,
+               "twoway": {"x_a_m": round(xa, 1), "x_b_m": round(xb, 1), "fused_m": round(x, 1), "gap_m": round(gap, 1), "consistent": consistent,
+                          "uncertainty_a_m": round(2 * sa, 1), "uncertainty_b_m": round(2 * sb, 1), "uncertainty_fused_m": round(2 * sf, 1),
+                          "weight_a": round(w, 3), "sor_b": req.sor_id_b, "sor_b_filename": rb["filename"], "launch_b_m": float(req.launch_offset_b_m or 0)}}
+        out["end"] = end
+        out["notes"] = (out.get("notes") or []) + warn
+        out["method"] = "TWOWAY"
+        if req.save:
+            cursor.execute("UPDATE sor_traces SET analysis = ? WHERE id = ?", (json.dumps({**out, "request": {
+                "start_node_id": req.start_node_id, "start_port": req.start_port, "direction": req.direction, "cable_ids": req.cable_ids,
+                "slack_m": req.slack_m, "launch_offset_m": req.launch_offset_m, "sor_id_b": req.sor_id_b, "launch_offset_b_m": req.launch_offset_b_m}}), req.sor_id))
+            _audit(cursor, "UPDATE", "OTDR_SOR", req.sor_id, ra["filename"], f"Simpan analisis dua arah dengan {rb['filename']} ({kind})")
+    return out
+
+
+@app.get("/api/otdr/sor/map")
+def otdr_sor_map():
+    """Titik cut/akhir dari analisis SOR yang tersimpan, untuk layer peta."""
+    feats = []
+    with db() as conn:
+        for r in conn.execute("SELECT id, filename, meta, analysis, uploaded_at FROM sor_traces WHERE analysis IS NOT NULL ORDER BY id DESC LIMIT 200").fetchall():
+            a = json.loads(r["analysis"])
+            g = (json.loads(r["meta"]).get("general") or {})
+            e = a.get("end") or {}
+            feats.append({"id": r["id"], "filename": r["filename"], "cable": g.get("cable_id"), "fiber": g.get("fiber_id"),
+                          "kind": e.get("kind"), "message": e.get("message"), "lat": e.get("lat"), "lng": e.get("lng"),
+                          "uncertainty_m": e.get("uncertainty_m"), "slack_passed": e.get("slack_passed"),
+                          "near_node": e.get("near_node"), "near_gap_m": e.get("near_gap_m"),
+                          "path": [s["line"] for s in (a.get("path") or {}).get("segments", [])],
+                          "start": (a.get("path") or {}).get("start")})
+    return feats
+
+
+@app.get("/api/otdr/sor")
+def otdr_sor_list(limit: int = 100):
+    out = []
+    with db() as conn:
+        rows = conn.execute("SELECT id, filename, size, meta, note, uploaded_by, uploaded_at, analysis, incident_id, is_baseline, '{}' AS trace FROM sor_traces "
+                            "ORDER BY id DESC LIMIT ?", (max(1, min(limit, 500)),)).fetchall()
+        for r in rows:
+            d = _sor_row(r)
+            d["n_events"] = len(d.get("events") or [])
+            d.pop("events", None)
+            an = d.get("analysis") or {}
+            d["analysis"] = {"kind": (an.get("end") or {}).get("kind"), "start": (an.get("path") or {}).get("start"),
+                             "method": (an.get("end") or {}).get("method")} if an else None
+            d["is_baseline"] = bool(r["is_baseline"])
+            d["bkey"] = _sor_bkey(json.loads(r["meta"] or "{}"))
+            d["incident"] = None
+            if r["incident_id"]:
+                t = conn.execute("SELECT id, ticket_number FROM incidents WHERE id = ?", (r["incident_id"],)).fetchone()
+                d["incident"] = dict(t) if t else None
+            out.append(d)
+    return out
+
+
+@app.get("/api/otdr/sor/{sor_id}")
+def otdr_sor_get(sor_id: int):
+    with db() as conn:
+        r = conn.execute("SELECT id, filename, size, meta, trace, note, uploaded_by, uploaded_at, analysis, incident_id, is_baseline FROM sor_traces WHERE id = ?",
+                         (sor_id,)).fetchone()
+        if not r:
+            raise HTTPException(status_code=404, detail="File SOR tidak ditemukan")
+        d = _sor_row(r, full=True)
+        d["is_baseline"] = bool(r["is_baseline"])
+        d["bkey"] = _sor_bkey(json.loads(r["meta"] or "{}"))
+        d["incident"] = None
+        if r["incident_id"]:
+            t = conn.execute("SELECT id, ticket_number FROM incidents WHERE id = ?", (r["incident_id"],)).fetchone()
+            d["incident"] = dict(t) if t else None
+    return d
+
+
+@app.get("/api/otdr/sor/{sor_id}/file")
+def otdr_sor_file(sor_id: int):
+    with db() as conn:
+        r = conn.execute("SELECT filename, file_blob FROM sor_traces WHERE id = ?", (sor_id,)).fetchone()
+    if not r:
+        raise HTTPException(status_code=404, detail="File SOR tidak ditemukan")
+    fn = re.sub(r"[^A-Za-z0-9._-]", "_", r["filename"] or f"trace_{sor_id}.sor")
+    return Response(content=bytes(r["file_blob"]), media_type="application/octet-stream",
+                    headers={"Content-Disposition": f'attachment; filename="{fn}"'})
+
+
+@app.delete("/api/otdr/sor/{sor_id}")
+def otdr_sor_delete(sor_id: int):
+    with db() as conn:
+        cursor = conn.cursor()
+        r = cursor.execute("SELECT id, filename FROM sor_traces WHERE id = ?", (sor_id,)).fetchone()
+        if not r:
+            raise HTTPException(status_code=404, detail="File SOR tidak ditemukan")
+        cursor.execute("DELETE FROM sor_traces WHERE id = ?", (sor_id,))
+        _audit(cursor, "DELETE", "OTDR_SOR", sor_id, r["filename"], f"Hapus file SOR {r['filename']}")
+    return {"message": "File SOR dihapus"}
 
 
 @app.delete("/api/otdr/{otdr_id}")

@@ -26,9 +26,10 @@
     />
 
     <!-- External Custom CSS -->
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="style.css?v=20261004g" />
   </head>
   <body>
+    <div id="net-bar" class="net-bar"></div>
     <div class="app-container">
       <aside class="sidebar">
         <div class="brand-header">
@@ -485,7 +486,7 @@
                       type="checkbox"
                       id="plan-customer"
                       checked
-                      onchange="planDirty()"
+                      onchange="planCustToggle()"
                     />
                     Buat juga titik pelanggan saat diwujudkan</label
                   >
@@ -595,6 +596,115 @@
                     diambil dari closure.
                   </div>
                 </div>
+
+                <details
+                  class="tp-rules"
+                  id="plan-otb-box"
+                  open
+                  style="display: none"
+                >
+                  <summary>
+                    <i class="fa-solid fa-grip"></i> Port OTB di POP asal
+                  </summary>
+                  <div class="otb-mode">
+                    <label
+                      ><input
+                        type="radio"
+                        name="plan-otbmode"
+                        value="AUTO"
+                        checked
+                        onchange="planOtbMode()"
+                      />
+                      Otomatis</label
+                    >
+                    <label
+                      ><input
+                        type="radio"
+                        name="plan-otbmode"
+                        value="MANUAL"
+                        onchange="planOtbMode()"
+                      />
+                      Manual</label
+                    >
+                  </div>
+                  <div id="plan-otb-list" class="otb-pick"></div>
+                  <div class="cov-meta" id="plan-otb-hint"></div>
+                </details>
+                <details class="tp-rules" id="plan-cust-box" open>
+                  <summary>
+                    <i class="fa-solid fa-user-tag"></i> Data layanan pelanggan
+                    <small>(opsional)</small>
+                  </summary>
+                  <div class="tp-rules-grid">
+                    <label
+                      >Layanan
+                      <input
+                        type="text"
+                        id="plan-svc"
+                        list="plan-svc-list"
+                        maxlength="80"
+                        placeholder="mis. Dedicated Internet"
+                        oninput="planDirty()"
+                      />
+                      <datalist id="plan-svc-list"></datalist>
+                    </label>
+                    <label
+                      >Jenis
+                      <select id="plan-linktype" onchange="planDirty()">
+                        <option value="">- pilih -</option>
+                        <option value="GPON">GPON</option>
+                        <option value="PTP">PTP (Point to Point)</option>
+                      </select>
+                    </label>
+                    <label
+                      >Bandwidth
+                      <span class="ap-row"
+                        ><input
+                          type="number"
+                          id="plan-bw"
+                          min="0"
+                          step="any"
+                          placeholder="mis. 100"
+                          oninput="planDirty()"
+                        />
+                        <select
+                          id="plan-bw-unit"
+                          class="ap-unit"
+                          onchange="planDirty()"
+                        >
+                          <option value="Mbps">Mbps</option>
+                          <option value="Gbps">Gbps</option>
+                        </select></span
+                      >
+                    </label>
+                    <label
+                      >SN perangkat (ONT / CPE)
+                      <input
+                        type="text"
+                        id="plan-sn"
+                        maxlength="40"
+                        placeholder="bila sudah ada"
+                        oninput="planDirty()"
+                        onblur="planNormCodes()"
+                      />
+                    </label>
+                    <label
+                      >Kode registrasi
+                      <input
+                        type="text"
+                        id="plan-reg"
+                        maxlength="40"
+                        placeholder="opsional, unik"
+                        oninput="planDirty()"
+                        onblur="planNormCodes()"
+                      />
+                    </label>
+                  </div>
+                  <div class="cov-meta">
+                    Dipakai saat rencana diwujudkan. Bandwidth juga dipakai
+                    untuk memeriksa beban trunk POP hulu.
+                  </div>
+                </details>
 
                 <div class="tp-field">
                   <label
@@ -910,7 +1020,7 @@
 
           <!-- Tabel -->
           <div class="inv-table-wrap">
-            <table class="inv-table" id="inventory-table">
+            <table class="inv-table" id="inventory-table" data-ng="resize,wrap">
               <thead>
                 <tr>
                   <th data-sort="name" onclick="setInventorySort('name')">
@@ -1030,6 +1140,7 @@
               id="asset-name"
               required
               placeholder="Contoh: ODP-BJM-001"
+              oninput="assetUniqDebounce()"
               style="
                 width: 100%;
                 padding: 8px;
@@ -1037,6 +1148,7 @@
                 border-radius: 4px;
               "
             />
+            <div class="ap-msg" id="asset-name-msg"></div>
           </div>
 
           <div style="display: flex; gap: 10px; margin-bottom: 12px">
@@ -1196,6 +1308,135 @@
               id="otb-total"
               style="font-size: 11px; color: #475569; margin-left: 8px"
             ></span>
+          </div>
+
+          <!-- Parameter aset: kode registrasi (semua node kecuali HH/Slack/Incident), data layanan pelanggan, trunk POP -->
+          <div id="reg-box" style="display: none; margin-bottom: 12px">
+            <label style="font-weight: 600; font-size: 12px"
+              >Kode Registrasi
+              <small style="font-weight: 400; color: #64748b"
+                >(opsional, unik)</small
+              ></label
+            >
+            <div class="ap-row">
+              <input
+                type="text"
+                id="asset-reg"
+                maxlength="40"
+                placeholder="Contoh: ODP-00012"
+                oninput="assetUniqDebounce()"
+                onblur="assetNormCodes()"
+                class="ap-input"
+              />
+              <button
+                type="button"
+                class="btn-mini"
+                id="asset-reg-gen"
+                onclick="assetGenReg()"
+              >
+                <i class="fa-solid fa-wand-magic-sparkles"></i> Buat otomatis
+              </button>
+            </div>
+            <div class="ap-msg" id="asset-reg-msg"></div>
+          </div>
+
+          <div id="cust-box" class="ap-box" style="display: none">
+            <div class="ap-title">
+              <i class="fa-solid fa-user-tag"></i> Data layanan pelanggan
+            </div>
+            <div class="ap-grid">
+              <label
+                >Layanan
+                <input
+                  type="text"
+                  id="asset-service"
+                  list="asset-service-list"
+                  maxlength="80"
+                  placeholder="mis. Dedicated Internet"
+                  class="ap-input"
+                />
+                <datalist id="asset-service-list"></datalist>
+              </label>
+              <label
+                >Jenis
+                <select id="asset-linktype" class="ap-input">
+                  <option value="">- pilih -</option>
+                  <option value="GPON">GPON</option>
+                  <option value="PTP">PTP (Point to Point)</option>
+                </select>
+              </label>
+              <label
+                >Bandwidth
+                <span class="ap-row"
+                  ><input
+                    type="number"
+                    id="asset-bw"
+                    min="0"
+                    step="any"
+                    placeholder="mis. 100"
+                    class="ap-input"
+                  />
+                  <select id="asset-bw-unit" class="ap-input ap-unit">
+                    <option value="Mbps">Mbps</option>
+                    <option value="Gbps">Gbps</option>
+                  </select></span
+                >
+              </label>
+              <label
+                >SN perangkat (ONT / CPE)
+                <input
+                  type="text"
+                  id="asset-sn"
+                  maxlength="40"
+                  placeholder="mis. HWTC1A2B3C4D"
+                  oninput="assetUniqDebounce()"
+                  onblur="assetNormCodes()"
+                  class="ap-input"
+                />
+              </label>
+            </div>
+            <div class="ap-msg" id="asset-sn-msg"></div>
+          </div>
+
+          <div id="trunk-box" class="ap-box" style="display: none">
+            <div class="ap-title">
+              <i class="fa-solid fa-gauge-high"></i> Kapasitas trunk POP
+            </div>
+            <div class="ap-grid">
+              <label
+                >Kapasitas trunk
+                <span class="ap-row"
+                  ><input
+                    type="number"
+                    id="asset-trunk"
+                    min="0"
+                    step="any"
+                    placeholder="mis. 10"
+                    class="ap-input"
+                  />
+                  <select id="asset-trunk-unit" class="ap-input ap-unit">
+                    <option value="Mbps">Mbps</option>
+                    <option value="Gbps" selected>Gbps</option>
+                  </select></span
+                >
+              </label>
+              <label
+                >Rasio overbooking (1 : n)
+                <input
+                  type="number"
+                  id="asset-overbook"
+                  min="1"
+                  max="100"
+                  step="any"
+                  placeholder="1 = tanpa overbooking"
+                  class="ap-input"
+                />
+              </label>
+            </div>
+            <div class="ap-hint">
+              Beban trunk dihitung dari bandwidth pelanggan aktif yang
+              tersambung di bawah POP ini.
+            </div>
           </div>
 
           <!-- Cara pemasangan: khusus kabel -->
@@ -1726,7 +1967,28 @@
                 Upstream & Downstream
               </span>
             </h4>
+            <div class="conn-toolbar">
+              <input
+                type="text"
+                id="conn-search"
+                placeholder="Cari core, kabel, atau aset..."
+                oninput="onConnSearch(this.value)"
+              />
+              <select
+                id="conn-dir"
+                onchange="onConnDir(this.value)"
+                title="Filter arah"
+              >
+                <option value="ALL">Semua arah</option>
+                <option value="UP">Upstream</option>
+                <option value="DOWN">Downstream</option>
+                <option value="PASS">Melintas</option>
+              </select>
+              <span id="conn-summary" class="conn-summary"></span>
+            </div>
             <table
+              id="conn-table"
+              class="conn-table"
               style="
                 width: 100%;
                 border-collapse: collapse;
@@ -1734,6 +1996,15 @@
                 border: 1px solid #e2e8f0;
               "
             >
+              <colgroup>
+                <col style="width: 13%" />
+                <col style="width: 10%" />
+                <col style="width: 19%" />
+                <col style="width: 18%" />
+                <col style="width: 18%" />
+                <col style="width: 13%" />
+                <col style="width: 9%" />
+              </colgroup>
               <thead style="background: #f8fafc">
                 <tr>
                   <th style="padding: 8px; text-align: left">
@@ -1741,6 +2012,12 @@
                   </th>
                   <th style="padding: 8px; text-align: center">
                     Aliran (Arah)
+                  </th>
+                  <th
+                    style="padding: 8px; text-align: center"
+                    title="Status sambungan core ini di sisi hulu (Upstream) dan hilir (Downstream): abu = belum terisi, berwarna = sudah tersambung"
+                  >
+                    Jalur (Upstream = Downstream)
                   </th>
                   <th style="padding: 8px; text-align: left">Melalui Kabel</th>
                   <th style="padding: 8px; text-align: left">
@@ -1756,6 +2033,25 @@
                 <!-- Diisi via JavaScript -->
               </tbody>
             </table>
+            <div id="conn-pager" class="inv-pager" style="display: none">
+              <span id="conn-page-info">-</span>
+              <div class="inv-pager-ctl">
+                <select
+                  id="conn-page-size"
+                  onchange="onConnPageSize(this.value)"
+                >
+                  <option value="10" selected>10 / halaman</option>
+                  <option value="25">25 / halaman</option>
+                  <option value="50">50 / halaman</option>
+                </select>
+                <button id="conn-prev" onclick="goConnPage(-1)">
+                  &laquo; Prev
+                </button>
+                <button id="conn-next" onclick="goConnPage(1)">
+                  Next &raquo;
+                </button>
+              </div>
+            </div>
           </div>
 
           <!-- Redaman & daya optik per aset -->
@@ -1928,20 +2224,34 @@
 
           <div id="inc-cores-wrap" style="display: none; margin-bottom: 12px">
             <label style="font-weight: 600; font-size: 12px"
-              >Core terdampak (opsional, pisahkan koma):</label
+              >Core terdampak
+              <span style="font-weight: 400; color: #64748b"
+                >(<span id="inc-core-summary"></span>)</span
+              ></label
             >
-            <input
-              type="text"
-              id="inc-cores"
-              placeholder="Kosong = semua core kabel. Contoh: 3, 5, 7"
-              style="
-                width: 100%;
-                padding: 8px;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-              "
-            />
+            <div class="inc-core-tools">
+              <button
+                type="button"
+                class="btn-mini"
+                onclick="incCoreSelectAll(false)"
+              >
+                Kosongkan
+              </button>
+              <button
+                type="button"
+                class="btn-mini"
+                onclick="incCoreSelectAll(true)"
+              >
+                Pilih semua terpakai
+              </button>
+              <span class="inc-core-note"
+                >Tanpa centang = <b>seluruh kabel</b> dianggap terputus.</span
+              >
+            </div>
+            <div id="inc-core-list" class="inc-core-list"></div>
+            <input type="hidden" id="inc-cores" value="" />
           </div>
+          <div id="inc-preview" class="inc-preview" style="display: none"></div>
 
           <div style="margin-bottom: 12px">
             <label style="font-weight: 600; font-size: 12px"
@@ -2770,7 +3080,8 @@
           </h3>
           <button
             class="btn-close"
-            onclick="closeDataModal()"
+            onclick="dismissDataModal()"
+            title="Tutup"
             style="color: white"
           >
             &times;
@@ -2899,8 +3210,17 @@
                 </select>
               </label>
             </div>
+            <div id="exp-prog" class="data-prog" style="display: none"></div>
             <div id="exp-msg" class="data-msg" style="display: none"></div>
             <div class="data-actions">
+              <button
+                type="button"
+                class="data-ghost"
+                id="exp-close"
+                onclick="dismissDataModal()"
+              >
+                Tutup
+              </button>
               <button
                 type="button"
                 class="data-primary"
@@ -2942,13 +3262,12 @@
               </label>
               <div class="data-grid">
                 <label
-                  >Jika nama + jenis sudah ada
+                  >Jika nama sudah ada (huruf besar/kecil dianggap sama)
                   <select id="imp-dup" onchange="previewImport()">
                     <option value="skip">Lewati (aman)</option>
                     <option value="update">
                       Perbarui atribut (bukan posisi/geometri)
                     </option>
-                    <option value="create">Tetap buat baru</option>
                   </select>
                 </label>
                 <div class="data-templates">
@@ -2981,15 +3300,33 @@
                   >
                 </div>
               </div>
+              <div class="data-note">
+                Kolom tambahan untuk node (opsional): <code>reg_code</code>;
+                PELANGGAN:
+                <code>service, bandwidth_mbps, device_sn, link_type</code>
+                (GPON/PTP); POP: <code>trunk_mbps, trunk_overbook</code>. Nama,
+                kode registrasi, dan SN harus unik; baris yang bentrok ditolak.
+                Kolom kosong tidak menghapus data lama saat mode perbarui.
+              </div>
+              <div id="imp-prog" class="data-prog" style="display: none"></div>
               <div id="imp-msg" class="data-msg" style="display: none"></div>
               <div id="imp-preview"></div>
               <div class="data-actions">
                 <button
                   type="button"
                   class="data-ghost"
+                  id="imp-close"
+                  onclick="dismissDataModal()"
+                >
+                  Tutup
+                </button>
+                <button
+                  type="button"
+                  class="data-ghost"
+                  id="imp-cancel"
                   onclick="resetImport()"
                 >
-                  Ganti berkas
+                  Batal / kosongkan
                 </button>
                 <button
                   type="button"
@@ -3010,6 +3347,160 @@
               Akun Anda tidak punya izin mengunggah hasil OTDR (Teknisi, NOC,
               dan Admin).
             </div>
+            <details class="sor-box" id="sor-box" open>
+              <summary class="otdr-h">0. Berkas SOR (semua merek OTDR)</summary>
+              <div id="sor-form">
+                <label class="data-drop" id="sor-drop" for="sor-file">
+                  <i class="fa-solid fa-wave-square"></i>
+                  <b id="sor-file-name"
+                    >Pilih berkas .sor (Telcordia SR-4731: EXFO, Viavi,
+                    Yokogawa, Anritsu, Fujikura, dll.)</b
+                  >
+                  <input
+                    type="file"
+                    id="sor-file"
+                    accept=".sor,.SOR"
+                    onchange="onSorFileChosen(event)"
+                  />
+                </label>
+              </div>
+              <div class="data-actions sor-top-actions">
+                <button
+                  type="button"
+                  class="data-ghost"
+                  id="sor-close"
+                  onclick="dismissDataModal()"
+                >
+                  Tutup
+                </button>
+                <button
+                  type="button"
+                  class="data-ghost"
+                  id="sor-reset"
+                  onclick="resetSor()"
+                  title="Kosongkan berkas, grafik, dan analisis yang sedang tampil (daftar tersimpan tidak terhapus)"
+                >
+                  Batal / kosongkan tampilan
+                </button>
+              </div>
+              <div id="sor-msg" class="data-msg" style="display: none"></div>
+              <div id="sor-view"></div>
+              <div id="sor-cmp"></div>
+              <div id="sor-an" style="display: none">
+                <h4 class="otdr-h">Jalur &amp; estimasi titik cut</h4>
+                <div class="data-grid">
+                  <label class="data-wide"
+                    >Titik awal ukur (aset)
+                    <input
+                      type="text"
+                      id="sor-start-q"
+                      list="sor-start-dl"
+                      autocomplete="off"
+                      placeholder="ketik nama POP / OTB / Closure..."
+                      oninput="onSorStartInput()"
+                      onchange="onSorStartPick()"
+                    />
+                    <datalist id="sor-start-dl"></datalist>
+                  </label>
+                  <label class="data-wide"
+                    >Port / arah
+                    <select id="sor-start-port">
+                      <option value="">-- pilih aset awal dahulu --</option>
+                    </select>
+                  </label>
+                  <label
+                    >Slack per titik (m) <small>(kosong = pengaturan)</small>
+                    <input
+                      type="number"
+                      id="sor-slack"
+                      step="1"
+                      min="0"
+                      max="200"
+                      placeholder="20"
+                    />
+                  </label>
+                  <label
+                    >Offset launch (m)
+                    <input
+                      type="number"
+                      id="sor-launch"
+                      step="1"
+                      min="0"
+                      value="0"
+                    />
+                  </label>
+                  <label class="data-wide"
+                    >Jalur manual
+                    <small
+                      >(opsional: nama kabel urut, pisah koma; menggantikan
+                      pelacakan sambungan)</small
+                    >
+                    <input
+                      type="text"
+                      id="sor-manual"
+                      placeholder="mis. KAB-A1, KAB-A2"
+                    />
+                  </label>
+                </div>
+                <div
+                  id="sor-an-msg"
+                  class="data-msg"
+                  style="display: none"
+                ></div>
+                <div class="data-actions">
+                  <button
+                    type="button"
+                    class="data-ghost"
+                    onclick="sorPickStart()"
+                  >
+                    Pilih jalur di peta
+                  </button>
+                  <button
+                    type="button"
+                    class="data-primary"
+                    onclick="runSorAnalysis()"
+                  >
+                    Analisis jalur &amp; titik cut
+                  </button>
+                </div>
+                <details class="sor-two" id="sor-two">
+                  <summary>
+                    Dua arah: gabungkan dengan SOR dari ujung seberang
+                  </summary>
+                  <div class="data-grid">
+                    <label class="data-wide"
+                      >SOR dari ujung seberang (harus tersimpan)
+                      <select id="sor-b-sel">
+                        <option value="">-- pilih berkas --</option>
+                      </select>
+                    </label>
+                    <label
+                      >Offset launch ujung seberang (m)
+                      <input
+                        type="number"
+                        id="sor-launch-b"
+                        step="1"
+                        min="0"
+                        value="0"
+                      />
+                    </label>
+                  </div>
+                  <div class="data-actions">
+                    <button
+                      type="button"
+                      class="data-primary"
+                      onclick="runSorTwoWay()"
+                    >
+                      Analisis dua arah
+                    </button>
+                  </div>
+                </details>
+                <div id="sor-an-result"></div>
+              </div>
+              <h4 class="otdr-h">Berkas SOR tersimpan</h4>
+              <div id="sor-list" class="imp-scroll"></div>
+            </details>
+
             <div class="otdr-seg">
               <h4 class="otdr-h">1. Segmen yang diukur</h4>
               <div class="data-grid">
@@ -3081,8 +3572,21 @@
               <div id="otdr-msg" class="data-msg" style="display: none"></div>
               <div id="otdr-preview"></div>
               <div class="data-actions">
-                <button type="button" class="data-ghost" onclick="resetOtdr()">
-                  Ganti berkas
+                <button
+                  type="button"
+                  class="data-ghost"
+                  id="otdr-close"
+                  onclick="dismissDataModal()"
+                >
+                  Tutup
+                </button>
+                <button
+                  type="button"
+                  class="data-ghost"
+                  id="otdr-cancel"
+                  onclick="resetOtdr()"
+                >
+                  Batal / kosongkan
                 </button>
                 <button
                   type="button"
@@ -3205,6 +3709,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
 
     <!-- External Custom JS Logic -->
-    <script src="app.js"></script>
+    <script src="app.js?v=20261004g"></script>
   </body>
 </html>

@@ -118,6 +118,118 @@ window.addEventListener("resize", () => {
   layoutLayerTimer = setTimeout(layoutLayerControl, 150);
 });
 
+// ===================== PERFORMA DATA BESAR =====================
+// (A) Kabel dalam jumlah besar digambar di kanvas (satu elemen, bukan ribuan <path>); kabel putus tetap SVG agar berkedip.
+// (B) Lapis padat (pelanggan, tiang, handhole, slack, kabel drop) hanya dipasang pada zoom dekat bila isinya banyak.
+// (C) Isi popup dibuat saat popup dibuka (lihat bindPopup(() => ...) di renderNodes/renderCables).
+const CABLE_CANVAS_MIN = 300; // jumlah kabel di atas ini -> kanvas
+const GATE_MIN_COUNT = 250; // lapis dengan isi di atas ini dibatasi menurut zoom
+const cableCanvas = L.canvas({ padding: 0.3, tolerance: 6 });
+const ZOOM_GATES = [
+  {
+    group: pelangganGroup,
+    minZoom: 16,
+    label: "Pelanggan",
+    wants: true,
+    force: false,
+  },
+  { group: tiangGroup, minZoom: 16, label: "Tiang", wants: true, force: false },
+  { group: hhGroup, minZoom: 16, label: "Handhole", wants: true, force: false },
+  { group: slackGroup, minZoom: 15, label: "Slack", wants: true, force: false },
+  {
+    group: dropGroup,
+    minZoom: 16,
+    label: "Kabel Drop",
+    wants: true,
+    force: false,
+  },
+];
+let gateBusy = false;
+let gateHintEl = null;
+function gateCount(g) {
+  return typeof g.group.getLayers === "function"
+    ? g.group.getLayers().length
+    : (g.group.layers || []).length;
+}
+function gateSetHint(list) {
+  try {
+    if (!gateHintEl && typeof document.createElement === "function") {
+      const host = document.querySelector(".map-viewport");
+      if (!host || typeof host.appendChild !== "function") return;
+      gateHintEl = document.createElement("div");
+      gateHintEl.className = "zoom-gate-hint";
+      host.appendChild(gateHintEl);
+    }
+    if (!gateHintEl) return;
+    gateHintEl.style.display = list.length ? "" : "none";
+    gateHintEl.textContent = list.length
+      ? "Perbesar peta untuk menampilkan: " + list.join(", ")
+      : "";
+  } catch (_) {
+    /* petunjuk hanya tambahan */
+  }
+}
+function applyZoomGates() {
+  if (!map || typeof map.getZoom !== "function") return;
+  const z = map.getZoom();
+  const hints = [];
+  gateBusy = true;
+  try {
+    ZOOM_GATES.forEach((g) => {
+      if (z >= g.minZoom) g.force = false;
+      const gated = z < g.minZoom && !g.force && gateCount(g) > GATE_MIN_COUNT;
+      const show = g.wants && !gated;
+      const on = map.hasLayer(g.group);
+      if (show && !on) {
+        map.addLayer(g.group);
+        if (g.group.eachLayer)
+          g.group.eachLayer((l) => editableGroup.addLayer(l));
+      } else if (!show && on) {
+        if (g.group.eachLayer)
+          g.group.eachLayer((l) => editableGroup.removeLayer(l));
+        map.removeLayer(g.group);
+      }
+      if (g.wants && gated) hints.push(`${g.label} (zoom ${g.minZoom}+)`);
+    });
+  } finally {
+    gateBusy = false;
+  }
+  gateSetHint(hints);
+}
+function zoomGateFor(layer) {
+  return ZOOM_GATES.find((g) => g.group === layer);
+}
+map.on("overlayadd", (e) => {
+  if (gateBusy) return;
+  const g = zoomGateFor(e.layer);
+  if (!g) return;
+  g.wants = true;
+  g.force = map.getZoom() < g.minZoom; // dinyalakan sengaja pada zoom jauh: hormati pilihan pengguna
+  if (g.group.eachLayer) g.group.eachLayer((l) => editableGroup.addLayer(l));
+  gateSetHint(
+    ZOOM_GATES.filter((x) => x.wants && !map.hasLayer(x.group)).map(
+      (x) => `${x.label} (zoom ${x.minZoom}+)`,
+    ),
+  );
+});
+map.on("overlayremove", (e) => {
+  if (gateBusy) return;
+  const g = zoomGateFor(e.layer);
+  if (!g) return;
+  g.wants = false;
+  g.force = false;
+  gateSetHint(
+    ZOOM_GATES.filter((x) => x.wants && !map.hasLayer(x.group)).map(
+      (x) => `${x.label} (zoom ${x.minZoom}+)`,
+    ),
+  );
+});
+map.on("zoomend", applyZoomGates);
+// layer yang baru dibuat ikut daftar penyuntingan hanya bila sedang tampil di peta
+function registerEditable(layer) {
+  if (layer && layer._map) editableGroup.addLayer(layer);
+}
+
 // Setup Toolbar Draw
 let drawControl = new L.Control.Draw({
   draw: {
@@ -262,18 +374,67 @@ function impactNamesText(im, limit = 8) {
 }
 
 // Semua request lewat sini: error server (termasuk 422/409) menjadi pesan yang terbaca
+// Bar tipis di atas layar: muncul bila ada request yang berjalan > 300 ms (tanda sistem sedang bekerja)
+const NETBAR = { n: 0, timer: null, shown: false };
+function netBarStart() {
+  NETBAR.n++;
+  if (NETBAR.timer || NETBAR.shown) return;
+  NETBAR.timer = setTimeout(() => {
+    NETBAR.timer = null;
+    const el = document.getElementById("net-bar");
+    if (el && NETBAR.n > 0) {
+      el.className = "net-bar on";
+      NETBAR.shown = true;
+    }
+  }, 300);
+}
+function netBarEnd() {
+  NETBAR.n = Math.max(0, NETBAR.n - 1);
+  if (NETBAR.n > 0) return;
+  if (NETBAR.timer) {
+    clearTimeout(NETBAR.timer);
+    NETBAR.timer = null;
+  }
+  if (NETBAR.shown) {
+    NETBAR.shown = false;
+    const el = document.getElementById("net-bar");
+    if (el) el.className = "net-bar";
+  }
+}
 async function apiRequest(url, method = "GET", body) {
+  const quiet = String(url).startsWith("/api/import/jobs/"); // polling progres punya indikator sendiri
   const options = { method, headers: {}, credentials: "same-origin" };
   if (body !== undefined) {
     options.headers["Content-Type"] = "application/json";
     options.body = JSON.stringify(body);
   }
-  const res = await fetch(url, options);
-  let data = null;
+  if (!quiet) netBarStart();
+  // Aksi tulis (POST/PUT/DELETE): tombol yang diklik diberi spinner & dikunci sampai selesai (cegah klik ganda)
+  let busyBtn = null;
+  if (!quiet && method !== "GET") {
+    const b = document.activeElement;
+    if (b && b.tagName === "BUTTON" && !b.disabled) {
+      busyBtn = b;
+      setBtnBusy(b, true);
+    }
+  }
+  let res,
+    data = null;
   try {
-    data = await res.json();
-  } catch (_) {
-    /* respons tanpa body JSON */
+    res = await fetch(url, options);
+    try {
+      data = await res.json();
+    } catch (_) {
+      /* respons tanpa body JSON */
+    }
+  } finally {
+    if (!quiet) netBarEnd();
+    if (busyBtn) {
+      busyBtn.className = (busyBtn.className || "")
+        .replace(/\bis-busy\b/g, "")
+        .trim();
+      busyBtn.disabled = false;
+    }
   }
   if (res.status === 401 && !url.startsWith("/api/auth/login")) {
     // Sesi habis / belum login: kembali ke layar login (data peta tidak ditampilkan lagi)
@@ -586,8 +747,44 @@ function renderSummaryModal(d) {
   renderScopeBreakdown(d.breakdown);
 }
 
+// Tombol "Lihat Detail" pada popup peta: membuka modal detail aset (alternatif dari Asset Inventory)
+function openMapDetail(category, id) {
+  try {
+    map.closePopup();
+  } catch (_) {}
+  openCoreDetailModal(Number(id), category);
+}
+// Baris ringkasan popup per tipe aset (kapasitas, komposisi OTB, area)
+function popupSummaryRows(props, isCable) {
+  const row = (k, v) =>
+    `<div class="popup-row"><span>${k}:</span> <b>${v}</b></div>`;
+  let h = "";
+  const t = String(props.type || "").toUpperCase();
+  if (props.capacity) {
+    if (!isCable && t === "POP") {
+      const sz = otbSizes(props.capacity);
+      h += row(
+        "Kapasitas",
+        `${sz.length} OTB &middot; ${sz.reduce((a, b) => a + b, 0)} port`,
+      );
+    } else {
+      h += row("Kapasitas", escapeHtml(props.capacity));
+    }
+  }
+  if (props.cluster || props.area)
+    h += row(
+      "Cluster / Area",
+      `${escapeHtml(props.cluster || "-")} / ${escapeHtml(props.area || "-")}`,
+    );
+  return h;
+}
+function popupDetailButton(category, id) {
+  return `<button class="btn-status btn-detail" onclick="openMapDetail('${category}', ${Number(id)})"><i class="fa-solid fa-circle-info"></i> Lihat Detail</button>`;
+}
+
 function openAssetPopup(key) {
   const layer = markersMap[key];
+  if (layer && !layer._map) applyZoomGates(); // lapis dibatasi zoom: pasang dulu bila peta sudah cukup dekat
   if (layer && layer._map) layer.openPopup();
 }
 
@@ -613,9 +810,39 @@ function deleteNode(id, name) {
 }
 
 function updateCableStatus(id, newStatus) {
+  // "Report Cable Cut": buka form tiket dengan kabel terpilih supaya bisa memilih core terdampak
+  // (status langsung tanpa form = seluruh kabel putus). Pemulihan tetap langsung.
+  if (
+    newStatus === "Cut/Broken" &&
+    can("incident.write") &&
+    openCableCutForm(id)
+  )
+    return;
   apiRequest(`/api/cables/${id}/status`, "PUT", { status: newStatus })
     .then(() => loadData())
     .catch((err) => alert("Gagal mengubah status kabel: " + err.message));
+}
+
+let incidentPreset = null; // {cableId, name} dari tombol Report Cable Cut
+
+function openCableCutForm(id) {
+  const layer = markersMap[`cable:${id}`];
+  if (!layer || typeof layer.getLatLngs !== "function") return false;
+  let pts = layer.getLatLngs();
+  while (Array.isArray(pts) && Array.isArray(pts[0])) pts = pts[0]; // MultiLineString
+  if (!Array.isArray(pts) || pts.length < 2) return false;
+  const mid = pts[Math.floor(pts.length / 2)];
+  const name = (layer.metaData && layer.metaData.name) || `#${id}`;
+  try {
+    map.closePopup();
+  } catch (_) {
+    /* abaikan */
+  }
+  openAddIncidentModal(mid.lat, mid.lng, { cableId: Number(id), name });
+  const t = document.getElementById("inc-title");
+  if (t) t.value = `Gangguan kabel ${name}`;
+  applyIncidentLocateSuggestion(); // langsung pilih kabel (tanpa menunggu deteksi lokasi)
+  return true;
 }
 
 function editCableProperties(id) {
@@ -685,12 +912,17 @@ function renderNodes(data) {
       const nextStatus = isBroken ? "Active" : "Cut/Broken";
       const id = Number(props.id);
 
-      marker.bindPopup(`
+      marker.bindPopup(
+        () => `
         <div class="popup-header">${escapeHtml(props.name)}</div>
         <div class="popup-row"><span>Kategori:</span> <b>${escapeHtml(props.type)}</b></div>
         <div class="popup-row"><span>Latitude:</span> <b>${latlng.lat.toFixed(6)}</b></div>
         <div class="popup-row"><span>Longitude:</span> <b>${latlng.lng.toFixed(6)}</b></div>
         <div class="popup-row"><span>Status:</span> <b>${escapeHtml(props.status)}</b></div>
+        ${popupSummaryRows(props, false)}
+        ${props.reg_code ? `<div class="popup-row"><span>Kode Reg:</span> <b>${escapeHtml(props.reg_code)}</b></div>` : ""}
+        ${(props.type || "").toUpperCase() === "PELANGGAN" && (props.bandwidth_mbps || props.link_type) ? `<div class="popup-row"><span>Layanan:</span> <b>${escapeHtml(props.service || "-")} &middot; ${escapeHtml(fmtBw(props.bandwidth_mbps))} &middot; ${escapeHtml(props.link_type || "-")}</b></div>` : ""}
+        ${(props.type || "").toUpperCase() === "POP" && props.trunk_mbps ? `<div class="popup-row"><span>Trunk:</span> <b>${escapeHtml(fmtBw(props.trunk_mbps))}</b></div>` : ""}
         ${
           props.repair_kind
             ? `<div class="popup-row"><span>Perbaikan:</span> <b>${props.repair_kind === "TEMPORARY" ? "Sementara (perlu permanen)" : "Permanen"}</b> &middot; ${escapeHtml(props.repair_ticket || "")}</div>
@@ -699,6 +931,7 @@ function renderNodes(data) {
         }
 
         <div class="popup-actions">
+            ${popupDetailButton("NODE", id)}
             ${
               can("status.write")
                 ? `<button class="btn-status ${btnClass}" onclick="updateNodeStatus(${id}, '${nextStatus}')">
@@ -728,10 +961,18 @@ function renderNodes(data) {
                 : ""
             }
         </div>
-      `);
+      `,
+      );
 
       markersMap[`node:${id}`] = marker;
       marker.on("click", () => {
+        if (SORPICK.on) {
+          try {
+            marker.closePopup();
+          } catch (_) {}
+          sorPickNode(props);
+          return;
+        }
         if (CONNECT.active) {
           try {
             marker.closePopup();
@@ -744,7 +985,7 @@ function renderNodes(data) {
       marker.on("mouseover", () => connectHover(marker));
       marker.on("mouseout", () => connectHover(null));
       addNodeToGroup(marker, props);
-      editableGroup.addLayer(marker);
+      registerEditable(marker);
       return marker;
     },
   });
@@ -781,7 +1022,8 @@ function renderIncidents(data) {
           ? `<span style="color:#d97706; font-weight:bold;">Temporary Fix (perlu perbaikan permanen)</span>`
           : `<span style="color:#ef4444; font-weight:bold;">${escapeHtml(props.status)} (${escapeHtml(props.severity)})</span>`;
 
-      marker.bindPopup(`
+      marker.bindPopup(
+        () => `
         <div class="popup-header" style="background:#ef4444; color:white; padding:4px 8px; border-radius:4px;">
           [${escapeHtml(props.ticket_number)}] ${escapeHtml(props.title)}
         </div>
@@ -817,7 +1059,8 @@ function renderIncidents(data) {
               : ""
           }
         </div>
-      `);
+      `,
+      );
 
       markersMap[`incident:${id}`] = marker;
       (hidden ? hiddenIncidentGroup : incidentGroup).addLayer(marker);
@@ -826,14 +1069,31 @@ function renderIncidents(data) {
   });
 }
 
+// Baris popup untuk kabel dengan gangguan sebagian core
+function coreFaultPopupRow(props) {
+  const f = props && props.core_fault;
+  if (!f) return "";
+  const nums = (f.labels || []).map((l) => escapeHtml(l)).join(", ");
+  return (
+    `<div class="popup-row core-fault-row"><span>Gangguan core:</span> <b>${Number(f.down)} dari ${Number(f.used)} core terpakai down</b>` +
+    `<div class="core-fault-sub">${nums} · tiket ${(f.tickets || []).map(escapeHtml).join(", ")}</div></div>`
+  );
+}
+
 function renderCables(data) {
+  const bigCables = ((data && data.features) || []).length > CABLE_CANVAS_MIN;
   L.geoJSON(data, {
     style: function (feature) {
-      return getCableStyle(
+      const st = getCableStyle(
         normalizeCableType(feature.properties.type),
         feature.properties.status,
         feature.properties.installation,
+        feature.properties.core_fault,
       );
+      // Banyak kabel -> kanvas; kabel putus tetap SVG supaya kedip merahnya terlihat
+      if (bigCables && feature.properties.status !== "Cut/Broken")
+        st.renderer = cableCanvas;
+      return st;
     },
     onEachFeature: function (feature, layer) {
       const props = feature.properties;
@@ -844,25 +1104,28 @@ function renderCables(data) {
       layer.metaType = "cable";
       layer.metaData = props;
 
-      const lengthInMeters = calculatePolylineLength(coords);
-      const formattedLength =
-        lengthInMeters > 1000
-          ? `${(lengthInMeters / 1000).toFixed(2)} km (${Math.round(lengthInMeters)} m)`
-          : `${Math.round(lengthInMeters)} m`;
-
       const isCut = props.status === "Cut/Broken";
       const btnText = isCut ? "Set Normal (Active)" : "Report Cable Cut";
       const btnClass = isCut ? "btn-success" : "btn-danger";
       const nextStatus = isCut ? "Active" : "Cut/Broken";
 
-      layer.bindPopup(`
+      layer.bindPopup(() => {
+        const lengthInMeters = calculatePolylineLength(coords);
+        const formattedLength =
+          lengthInMeters > 1000
+            ? `${(lengthInMeters / 1000).toFixed(2)} km (${Math.round(lengthInMeters)} m)`
+            : `${Math.round(lengthInMeters)} m`;
+        return `
         <div class="popup-header">${escapeHtml(props.name)}</div>
         <div class="popup-row"><span>Tipe Jalur:</span> <b>Kabel ${escapeHtml(type)}</b></div>
         <div class="popup-row"><span>Panjang Kabel:</span> <b>${formattedLength}</b></div>
         <div class="popup-row"><span>Pemasangan:</span> <b>${props.installation === "Udara" ? "Kabel Udara" : props.installation === "Tanah" ? "Kabel Tanah" : "Belum diisi"}</b></div>
         <div class="popup-row"><span>Status:</span> <b>${escapeHtml(props.status)}</b></div>
+        ${coreFaultPopupRow(props)}
+        ${popupSummaryRows(props, true)}
 
         <div class="popup-actions">
+            ${popupDetailButton("CABLE", id)}
             ${
               can("status.write")
                 ? `<button class="btn-status ${btnClass}" onclick="updateCableStatus(${id}, '${nextStatus}')">
@@ -892,16 +1155,25 @@ function renderCables(data) {
                 : ""
             }
         </div>
-      `);
+      `;
+      });
 
       markersMap[`cable:${id}`] = layer;
+      layer.on("click", () => {
+        if (SORPICK.on) {
+          try {
+            layer.closePopup();
+          } catch (_) {}
+          sorPickCable(layer);
+        }
+      });
 
       if (type === "Backbone") backboneGroup.addLayer(layer);
       else if (type === "Feeder") feederGroup.addLayer(layer);
       else if (type === "Drop") dropGroup.addLayer(layer);
       else distGroup.addLayer(layer);
 
-      editableGroup.addLayer(layer);
+      registerEditable(layer);
     },
   });
 }
@@ -923,6 +1195,7 @@ function loadData() {
       renderNodes(nodes);
       renderIncidents(incidents);
       renderCables(cables);
+      applyZoomGates();
       buildInventory(nodes, cables);
       renderInventoryIfOpen();
       fitScopeIfRequested(nodes, cables);
@@ -1344,7 +1617,7 @@ function drawInventoryRows(items, tbody) {
 
     tr.innerHTML = `
       <td><div class="inv-name"><span class="inv-ico" style="background:${meta.color}"><i class="fa-solid ${meta.icon}"></i></span>
-        <div><b>${escapeHtml(item.name)}</b><span class="inv-sub">${escapeHtml(typeLabel || "-")} &middot; ${escapeHtml(item.city || "-")}</span></div></div></td>
+        <div><b>${escapeHtml(item.name)}</b><span class="inv-sub">${escapeHtml(typeLabel || "-")} &middot; ${escapeHtml(item.city || "-")}${item.reg_code ? ` &middot; ${escapeHtml(item.reg_code)}` : ""}${typeKey === "PELANGGAN" && item.bandwidth_mbps ? ` &middot; ${escapeHtml(fmtBw(item.bandwidth_mbps))} ${escapeHtml(item.link_type || "")}` : ""}</span></div></div></td>
       <td class="col-type"><span class="inv-tag">${escapeHtml(typeLabel || "-")}</span></td>
       <td class="col-loc inv-loc"><b>${escapeHtml(item.city || "-")}</b><small>${escapeHtml(item.cluster || "-")} / ${escapeHtml(item.area || "-")}</small></td>
       <td class="col-cap">${escapeHtml(item.capacity || "-")}</td>
@@ -1556,6 +1829,7 @@ function openAddAssetModal(
   document.getElementById("asset-name").value = "";
   OTB_EDIT = [];
   OTB_BASE_SPEC = {};
+  assetParamsReset();
 
   // Cluster & area bawaan: ikut filter wilayah yang sedang aktif, kalau tidak EKO
   fillAssetClusterOptions(SCOPE.cluster !== "ALL" ? SCOPE.cluster : "EKO");
@@ -1674,6 +1948,7 @@ function openEditAssetModal(category, id, props) {
     if (category === "NODE") {
       setVal("asset-parent-node", props.parent_node_id);
       setVal("asset-upstream-cable", props.upstream_cable_id);
+      assetParamsFill(props);
     } else {
       setVal("asset-installation", props.installation);
       setVal("asset-fiber-mode", props.fiber_mode || "SM");
@@ -1690,6 +1965,256 @@ function closeAddAssetModal() {
   if (editId) editId.value = "";
   const st = document.getElementById("asset-status");
   if (st) st.disabled = false;
+}
+
+// --- PARAMETER ASET: kode registrasi, data pelanggan, trunk POP; pemeriksaan keunikan ---
+const ASSET_NO_REG = ["HH", "SLACK", "INCIDENT"];
+const ASSET_SERVICES = [
+  "Internet",
+  "Dedicated Internet",
+  "IPTV",
+  "VPN L2",
+  "VPN L3",
+  "Lainnya",
+];
+const ASSET_UNIQ = { timer: null, token: 0, bad: {} };
+function assetNormCode(v) {
+  return String(v || "")
+    .replace(/\s+/g, "")
+    .toUpperCase();
+}
+function bwToMbps(v, unit) {
+  const n = parseFloat(String(v == null ? "" : v).replace(",", "."));
+  if (!isFinite(n)) return null;
+  return unit === "Gbps" ? Math.round(n * 1000 * 1000) / 1000 : n;
+}
+function bwSplit(mbps) {
+  if (mbps == null || mbps === "") return { v: "", u: "Mbps" };
+  const n = Number(mbps);
+  return n >= 1000 && n % 1000 === 0
+    ? { v: String(n / 1000), u: "Gbps" }
+    : { v: String(n), u: "Mbps" };
+}
+function fmtBw(mbps) {
+  if (mbps == null || mbps === "" || !isFinite(Number(mbps))) return "-";
+  const n = Number(mbps);
+  return n >= 1000
+    ? `${(n / 1000).toLocaleString("id-ID", { maximumFractionDigits: 2 })} Gbps`
+    : `${n.toLocaleString("id-ID", { maximumFractionDigits: 2 })} Mbps`;
+}
+function assetEl(id) {
+  return document.getElementById(id);
+}
+function assetParamsToggle() {
+  const cat = (assetEl("asset-category-type") || {}).value;
+  const t = ((assetEl("asset-type") || {}).value || "").toUpperCase();
+  const isNode = cat === "NODE";
+  const show = (id, on) => {
+    const e = assetEl(id);
+    if (e) e.style.display = on ? "" : "none";
+  };
+  show("reg-box", isNode && !ASSET_NO_REG.includes(t));
+  show("cust-box", isNode && t === "PELANGGAN");
+  show("trunk-box", isNode && t === "POP");
+  const dl = assetEl("asset-service-list");
+  if (dl && !dl.innerHTML)
+    dl.innerHTML = ASSET_SERVICES.map(
+      (x) => `<option value="${escapeHtml(x)}">`,
+    ).join("");
+}
+function assetParamsReset() {
+  [
+    "asset-reg",
+    "asset-service",
+    "asset-bw",
+    "asset-sn",
+    "asset-trunk",
+    "asset-overbook",
+  ].forEach((i) => {
+    const e = assetEl(i);
+    if (e) e.value = "";
+  });
+  const lt = assetEl("asset-linktype");
+  if (lt) lt.value = "";
+  const u = assetEl("asset-bw-unit");
+  if (u) u.value = "Mbps";
+  const tu = assetEl("asset-trunk-unit");
+  if (tu) tu.value = "Gbps";
+  ASSET_UNIQ.bad = {};
+  ["asset-name-msg", "asset-reg-msg", "asset-sn-msg"].forEach((i) => {
+    const e = assetEl(i);
+    if (e) {
+      e.textContent = "";
+      e.className = "ap-msg";
+    }
+  });
+}
+function assetParamsFill(props) {
+  const set = (i, v) => {
+    const e = assetEl(i);
+    if (e) e.value = v == null ? "" : String(v);
+  };
+  set("asset-reg", props.reg_code);
+  set("asset-service", props.service);
+  set("asset-sn", props.device_sn);
+  set("asset-linktype", props.link_type);
+  const bw = bwSplit(props.bandwidth_mbps);
+  set("asset-bw", bw.v);
+  set("asset-bw-unit", bw.u);
+  const tr = bwSplit(props.trunk_mbps);
+  set("asset-trunk", tr.v);
+  set("asset-trunk-unit", props.trunk_mbps == null ? "Gbps" : tr.u);
+  set("asset-overbook", props.trunk_overbook);
+}
+function assetNormCodes() {
+  const r = assetEl("asset-reg"),
+    s = assetEl("asset-sn");
+  if (r) r.value = assetNormCode(r.value);
+  if (s) s.value = assetNormCode(s.value);
+  assetUniqDebounce();
+}
+function assetUniqDebounce() {
+  clearTimeout(ASSET_UNIQ.timer);
+  ASSET_UNIQ.timer = setTimeout(assetUniqCheck, 350);
+}
+function assetUniqCheck() {
+  const cat = (assetEl("asset-category-type") || {}).value;
+  const type = (assetEl("asset-type") || {}).value || "";
+  const name = ((assetEl("asset-name") || {}).value || "").trim();
+  const regOn = cat === "NODE" && !ASSET_NO_REG.includes(type.toUpperCase());
+  const reg = regOn ? assetNormCode((assetEl("asset-reg") || {}).value) : "";
+  const sn =
+    cat === "NODE" && type.toUpperCase() === "PELANGGAN"
+      ? assetNormCode((assetEl("asset-sn") || {}).value)
+      : "";
+  const msg = (id, ok, text) => {
+    const e = assetEl(id);
+    if (e) {
+      e.textContent = text || "";
+      e.className = "ap-msg" + (text ? (ok ? " ok" : " bad") : "");
+    }
+  };
+  if (!name && !reg && !sn) {
+    ASSET_UNIQ.bad = {};
+    msg("asset-name-msg");
+    msg("asset-reg-msg");
+    msg("asset-sn-msg");
+    return Promise.resolve();
+  }
+  const q = new URLSearchParams({
+    name,
+    reg_code: reg,
+    device_sn: sn,
+    kind: cat === "CABLE" ? "CABLE" : "NODE",
+    type,
+  });
+  const ex = (assetEl("asset-edit-id") || {}).value;
+  if (ex) q.set("exclude_id", ex);
+  const tok = ++ASSET_UNIQ.token;
+  return apiRequest(`/api/nodes/check-unique?${q}`)
+    .then((r) => {
+      if (tok !== ASSET_UNIQ.token || !r) return;
+      const who = (c) =>
+        c ? `${c.name} (${c.type}${c.id != null ? ", ID " + c.id : ""})` : "";
+      ASSET_UNIQ.bad = {};
+      if (r.name) {
+        ASSET_UNIQ.bad.name = !r.name.ok;
+        msg(
+          "asset-name-msg",
+          r.name.ok,
+          r.name.ok
+            ? "\u2713 Nama tersedia"
+            : `Nama sudah dipakai: ${who(r.name.conflict)} \u2014 huruf besar/kecil dianggap sama`,
+        );
+      } else msg("asset-name-msg");
+      if (r.reg_code) {
+        ASSET_UNIQ.bad.reg_code = !r.reg_code.ok;
+        msg(
+          "asset-reg-msg",
+          r.reg_code.ok,
+          r.reg_code.ok
+            ? "\u2713 Kode tersedia"
+            : r.reg_code.valid_format === false
+              ? "Format kode tidak valid (huruf/angka/. _ / -, 2\u201340 karakter)"
+              : `Kode sudah dipakai: ${who(r.reg_code.conflict)}`,
+        );
+      } else msg("asset-reg-msg");
+      if (r.device_sn) {
+        ASSET_UNIQ.bad.device_sn = !r.device_sn.ok;
+        msg(
+          "asset-sn-msg",
+          r.device_sn.ok,
+          r.device_sn.ok
+            ? "\u2713 SN tersedia"
+            : r.device_sn.valid_format === false
+              ? "Format SN tidak valid (huruf/angka/. _ : -, 4\u201340 karakter)"
+              : `SN sudah dipakai: ${who(r.device_sn.conflict)}`,
+        );
+      } else msg("asset-sn-msg");
+    })
+    .catch(() => {});
+}
+function assetGenReg() {
+  const t = (assetEl("asset-type") || {}).value || "ODP";
+  return apiRequest(`/api/nodes/next-reg-code?type=${encodeURIComponent(t)}`)
+    .then((r) => {
+      const e = assetEl("asset-reg");
+      if (e && r && r.reg_code) e.value = r.reg_code;
+      return assetUniqCheck();
+    })
+    .catch((err) => alert("Gagal membuat kode: " + err.message));
+}
+// isi parameter aset untuk payload (null = kosongkan); validasi sisi klien. Mengembalikan {extra} atau {error}
+function assetExtraPayload(type, creating) {
+  const t = (type || "").toUpperCase();
+  const v = (id) => ((assetEl(id) || {}).value || "").trim();
+  const ex = {
+    reg_code: null,
+    service: null,
+    bandwidth_mbps: null,
+    device_sn: null,
+    link_type: null,
+    trunk_mbps: null,
+    trunk_overbook: null,
+  };
+  if (!ASSET_NO_REG.includes(t))
+    ex.reg_code = assetNormCode(v("asset-reg")) || null;
+  if (t === "PELANGGAN") {
+    ex.service = v("asset-service") || null;
+    ex.link_type = v("asset-linktype") || null;
+    ex.device_sn = assetNormCode(v("asset-sn")) || null;
+    if (v("asset-bw")) {
+      ex.bandwidth_mbps = bwToMbps(v("asset-bw"), v("asset-bw-unit"));
+      if (ex.bandwidth_mbps == null || ex.bandwidth_mbps <= 0)
+        return { error: "Bandwidth harus berupa angka lebih dari 0." };
+    }
+    if (creating) {
+      if (!ex.service) return { error: "Layanan pelanggan wajib diisi." };
+      if (!ex.link_type)
+        return { error: "Jenis layanan (GPON / PTP) wajib dipilih." };
+      if (ex.bandwidth_mbps == null)
+        return { error: "Bandwidth pelanggan wajib diisi." };
+      if (!ex.device_sn)
+        return { error: "SN perangkat (ONT / CPE) wajib diisi." };
+    }
+  }
+  if (t === "POP") {
+    if (v("asset-trunk")) {
+      ex.trunk_mbps = bwToMbps(v("asset-trunk"), v("asset-trunk-unit"));
+      if (ex.trunk_mbps == null || ex.trunk_mbps <= 0)
+        return { error: "Kapasitas trunk harus berupa angka lebih dari 0." };
+    }
+    if (v("asset-overbook")) {
+      ex.trunk_overbook = parseFloat(v("asset-overbook").replace(",", "."));
+      if (
+        !isFinite(ex.trunk_overbook) ||
+        ex.trunk_overbook < 1 ||
+        ex.trunk_overbook > 100
+      )
+        return { error: "Rasio overbooking harus 1 sampai 100." };
+    }
+  }
+  return { extra: ex };
 }
 
 // --- EDITOR OTB (form aset bertipe POP) ---
@@ -1808,6 +2333,8 @@ const CORE_OPTIONS = `
         `;
 
 function onAssetTypeChange() {
+  assetParamsToggle();
+  assetUniqDebounce();
   const selectedType = document.getElementById("asset-type").value;
   const capacitySelect = document.getElementById("asset-capacity");
   const otbBox = document.getElementById("otb-editor");
@@ -1875,6 +2402,15 @@ function saveAssetData(e) {
   if (city === GEOCODE_PENDING_TEXT) {
     return alert("Lokasi masih dideteksi, tunggu sebentar lalu simpan lagi.");
   }
+  let assetExtra = null;
+  if (categoryType === "NODE") {
+    const xr = assetExtraPayload(
+      type,
+      !document.getElementById("asset-edit-id").value,
+    );
+    if (xr.error) return alert(xr.error);
+    assetExtra = xr.extra;
+  }
 
   const val = (id) => {
     const el = document.getElementById(id);
@@ -1894,6 +2430,7 @@ function saveAssetData(e) {
       url = `/api/nodes/${Number(editId)}`;
       payload = {
         ...common,
+        ...assetExtra,
         parent_node_id: val("asset-parent-node"),
         upstream_cable_id: val("asset-upstream-cable"),
       };
@@ -1938,6 +2475,7 @@ function saveAssetData(e) {
       spec_data: type === "POP" ? otbSpecJson() : "{}",
       parent_node_id: val("asset-parent-node"),
       upstream_cable_id: val("asset-upstream-cable"),
+      ...assetExtra,
     };
   } else {
     url = "/api/cables";
@@ -2198,6 +2736,15 @@ function isJunction(item) {
     JUNCTION_UI.includes((item.type || "").toUpperCase())
   );
 }
+// POP/OTB diperlakukan seperti closure untuk pemakaian port: tiap port menerima 1 kabel masuk + 1 kabel keluar
+function isJointLike(item) {
+  return (
+    isJunction(item) ||
+    (!!item &&
+      item.category === "NODE" &&
+      (item.type || "").toUpperCase() === "POP")
+  );
+}
 // Closure/slack = penghubung kabel: joint masuk (dari hulu) & keluar (ke hilir) dihitung terpisah
 function jointDirsLocal(asset) {
   const ins = new Set(),
@@ -2223,7 +2770,7 @@ function buildPortOptionsHtml(
   dir = null,
   arrived = null,
 ) {
-  const junction = isJunction(item) && dir;
+  const junction = isJointLike(item) && dir;
   const opt = (value, label) => {
     const used = usedPorts.has(value);
     const hint =
@@ -2382,6 +2929,14 @@ function initCoreDetailLogic(id, category) {
     <div><b>Tipe Aset:</b> ${escapeHtml(item.type || "-")}</div>
     <div><b>Cluster / Area:</b> ${escapeHtml(item.cluster || "-")} / ${escapeHtml(item.area || "-")}</div>
     <div><b>Kapasitas:</b> ${escapeHtml(item.capacity || "-")}</div>
+    ${item.reg_code ? `<div><b>Kode Registrasi:</b> ${escapeHtml(item.reg_code)}</div>` : ""}
+    ${
+      (item.type || "").toUpperCase() === "PELANGGAN"
+        ? `<div><b>Layanan:</b> ${escapeHtml(item.service || "-")} &middot; ${escapeHtml(item.link_type || "-")}</div>
+    <div><b>Bandwidth:</b> ${escapeHtml(fmtBw(item.bandwidth_mbps))}</div>
+    <div><b>SN Perangkat:</b> ${escapeHtml(item.device_sn || "-")}</div>`
+        : ""
+    }
   `;
 
   fetchConnectionsAndRender();
@@ -2406,8 +2961,15 @@ function fetchConnectionsAndRender() {
           POPDEV.editPort = null;
           POPDEV.draft = null;
         }
+        if (POPTRUNK.id !== null && String(POPTRUNK.id) !== String(asset.id)) {
+          POPTRUNK.id = null;
+          POPTRUNK.data = null;
+          POPTRUNK.edit = false;
+          POPTRUNK.draft = null;
+        }
         renderPopOtb(asset, gridContainer);
         popDevLoad(asset, gridContainer);
+        popTrunkLoad(asset, gridContainer);
       } else if (
         asset.category === "CABLE" ||
         assetType === "CLOSURE" ||
@@ -2455,6 +3017,17 @@ function populateSplicingDropdowns() {
       '<option value="">-- Pilih Joint Closure --</option>' + ordered;
     const first = [...arrived][0];
     if (first) fromSelect.value = first;
+  } else if (isPop(currentActiveAsset)) {
+    // OTB: port yang sudah meneruskan kabel keluar tertutup; port yang baru menerima kabel masuk tetap bisa diteruskan
+    const jd = jointDirsLocal(currentActiveAsset);
+    fromSelect.innerHTML =
+      '<option value="">-- Pilih Port OTB (belakang) --</option>' +
+      buildPortOptionsHtml(
+        currentActiveAsset,
+        jd.outs,
+        "from",
+        new Set([...jd.ins].filter((p) => !jd.outs.has(p))),
+      );
   } else {
     fromSelect.innerHTML =
       '<option value="">-- Pilih Core/Port Aset Ini --</option>' +
@@ -2556,7 +3129,7 @@ function onTargetAssetChange() {
       if (document.getElementById("splice-to-asset").value !== targetVal)
         return; // pilihan sudah berganti
       const used = new Set();
-      const junction = isJunction(targetAsset);
+      const junction = isJointLike(targetAsset);
       (Array.isArray(conns) ? conns : []).forEach((c) => {
         // closure sebagai tujuan: hanya joint yang sudah MENERIMA kabel hulu yang tertutup
         if (
@@ -2654,21 +3227,98 @@ function submitSplicingConnection() {
 }
 
 // --- RENDER CONNECTION TABLE ---
+// Tabel sambungan aktif: satu baris per sambungan (teks dipotong, nama lengkap di tooltip), dengan pencarian, filter arah & pagination
+const CONNTBL = {
+  rows: [],
+  page: 1,
+  size: 10,
+  q: "",
+  dir: "ALL",
+  key: "",
+  colf: [],
+  sortCol: -1,
+  sortDir: 1,
+};
+
 function renderActiveConnectionsTable(
   connections,
   currentAssetType,
   currentAssetId,
 ) {
-  const tbody = document.getElementById("active-connections-tbody");
-  tbody.innerHTML = "";
-
-  if (!connections || connections.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:12px; color:#94a3b8;">Belum ada sambungan core/port aktif.</td></tr>`;
-    return;
+  const key = `${currentAssetType}:${currentAssetId}`;
+  if (CONNTBL.key !== key) {
+    CONNTBL.key = key;
+    CONNTBL.page = 1;
+    CONNTBL.q = "";
+    CONNTBL.dir = "ALL";
+    CONNTBL.colf = [];
+    CONNTBL.sortCol = -1;
+    ngResetFilters("conn-table");
   }
+  const qEl = document.getElementById("conn-search"),
+    dEl = document.getElementById("conn-dir");
+  if (qEl) qEl.value = CONNTBL.q;
+  if (dEl) dEl.value = CONNTBL.dir;
 
-  let rows = "";
-  connections.forEach((conn) => {
+  const assetName = (type, id) => {
+    const f = allInventoryData.find(
+      (item) =>
+        String(item.id) === String(id) &&
+        String(item.category).toUpperCase() === String(type).toUpperCase(),
+    );
+    return f && f.name ? f.name : `${type} #${id}`;
+  };
+  const badge = (bg, fg, icon, text) =>
+    `<span style="background:${bg}; color:${fg}; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold;"><i class="fa-solid ${icon}"></i> ${text}</span>`;
+
+  // Peta port lokal -> sambungan hulu/hilir (untuk indikator Jalur: abu bila sisi itu belum terisi)
+  const portMap = {};
+  (connections || []).forEach((cn) => {
+    const fromHere =
+      String(cn.from_asset_type) === String(currentAssetType) &&
+      String(cn.from_asset_id) === String(currentAssetId);
+    const toHere =
+      String(cn.to_asset_type) === String(currentAssetType) &&
+      String(cn.to_asset_id) === String(currentAssetId);
+    if (toHere) {
+      const m = (portMap[cn.to_port_core] = portMap[cn.to_port_core] || {
+        up: [],
+        down: [],
+      });
+      m.up.push(
+        `${assetName(cn.from_asset_type, cn.from_asset_id)} (${cn.from_port_core})`,
+      );
+    }
+    if (fromHere) {
+      const m = (portMap[cn.from_port_core] = portMap[cn.from_port_core] || {
+        up: [],
+        down: [],
+      });
+      m.down.push(
+        `${assetName(cn.to_asset_type, cn.to_asset_id)} (${cn.to_port_core})`,
+      );
+    }
+  });
+  const jalur = (dir, localPort, fromTxt, toTxt) => {
+    if (dir === "PASS")
+      return {
+        html: `<span class="jl"><span class="jl-chip pass" title="${escapeHtml(fromTxt)} \u2192 ${escapeHtml(toTxt)}"><i class="fa-solid fa-route"></i> Melintas</span></span>`,
+        text: "Melintas",
+      };
+    const m = portMap[localPort] || { up: [], down: [] };
+    const upOn = m.up.length > 0,
+      dnOn = m.down.length > 0;
+    const tip = (on, list, lab) =>
+      on ? `${lab}: ${list.join(", ")}` : `${lab}: belum tersambung`;
+    return {
+      html:
+        `<span class="jl"><span class="jl-chip up ${upOn ? "on" : "off"}" title="${escapeHtml(tip(upOn, m.up, "Upstream"))}">Upstream</span>` +
+        `<span class="jl-eq ${upOn && dnOn ? "on" : "off"}"></span>` +
+        `<span class="jl-chip down ${dnOn ? "on" : "off"}" title="${escapeHtml(tip(dnOn, m.down, "Downstream"))}">Downstream</span></span>`,
+      text: `${upOn ? "Upstream" : "-"} ${dnOn ? "Downstream" : "-"} ${m.up.concat(m.down).join(" ")}`,
+    };
+  };
+  CONNTBL.rows = (connections || []).map((conn) => {
     const isFromHere =
       String(conn.from_asset_type) === String(currentAssetType) &&
       String(conn.from_asset_id) === String(currentAssetId);
@@ -2677,70 +3327,169 @@ function renderActiveConnectionsTable(
       String(conn.to_asset_id) === String(currentAssetId);
     // Aset ini hanya DILEWATI sambungan (kabel media) -> bukan ujung sambungan
     const isPassThrough = !isFromHere && !isToHere;
+    const dir = isPassThrough ? "PASS" : isFromHere ? "DOWN" : "UP";
 
-    const assetName = (type, id) => {
-      const f = allInventoryData.find(
-        (item) =>
-          String(item.id) === String(id) &&
-          String(item.category).toUpperCase() === String(type).toUpperCase(),
-      );
-      return f && f.name ? f.name : `${type} #${id}`;
-    };
-
-    let localPort, targetAssetHtml, targetPort;
+    let localPort, targetHtml, targetText, targetPort;
     if (isPassThrough) {
+      const fn = assetName(conn.from_asset_type, conn.from_asset_id),
+        tn = assetName(conn.to_asset_type, conn.to_asset_id);
       localPort = conn.via_core || "-";
-      targetAssetHtml = `${assetLinkHtml(conn.from_asset_type, conn.from_asset_id, assetName(conn.from_asset_type, conn.from_asset_id))} \u2192 ${assetLinkHtml(conn.to_asset_type, conn.to_asset_id, assetName(conn.to_asset_type, conn.to_asset_id))}`;
+      targetHtml = `${assetLinkHtml(conn.from_asset_type, conn.from_asset_id, fn)} \u2192 ${assetLinkHtml(conn.to_asset_type, conn.to_asset_id, tn)}`;
+      targetText = `${fn} \u2192 ${tn}`;
       targetPort = `${conn.from_port_core} \u2192 ${conn.to_port_core}`;
     } else {
       localPort = isFromHere ? conn.from_port_core : conn.to_port_core;
-      const targetAssetType = isFromHere
-        ? conn.to_asset_type
-        : conn.from_asset_type;
-      const targetAssetId = isFromHere ? conn.to_asset_id : conn.from_asset_id;
+      const tType = isFromHere ? conn.to_asset_type : conn.from_asset_type;
+      const tId = isFromHere ? conn.to_asset_id : conn.from_asset_id;
       targetPort = isFromHere ? conn.to_port_core : conn.from_port_core;
-      targetAssetHtml = assetLinkHtml(
-        targetAssetType,
-        targetAssetId,
-        assetName(targetAssetType, targetAssetId),
-      );
+      targetText = assetName(tType, tId);
+      targetHtml = assetLinkHtml(tType, tId, targetText);
     }
-
-    const directionBadge = isPassThrough
-      ? `<span style="background:#fef3c7; color:#b45309; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold;"><i class="fa-solid fa-route"></i> Melintas</span>`
-      : isFromHere
-        ? `<span style="background:#dcfce7; color:#15803d; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold;"><i class="fa-solid fa-arrow-right"></i> Downstream</span>`
-        : `<span style="background:#e0f2fe; color:#0369a1; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold;"><i class="fa-solid fa-arrow-left"></i> Upstream</span>`;
-
-    const viaLabel = isPassThrough
-      ? "Kabel ini"
-      : conn.via_cable_name
-        ? assetLinkHtml("CABLE", conn.via_cable_id, conn.via_cable_name) +
-          (conn.via_core ? ` (${escapeHtml(conn.via_core)})` : "")
-        : conn.via_cable_id
-          ? "Kabel #" + Number(conn.via_cable_id)
-          : "Langsung / Direct";
-
-    rows += `
-      <tr style="border-bottom: 1px solid #f1f5f9;">
-        <td style="padding: 8px; font-weight: 600; color: #1e293b;">${escapeHtml(localPort)}</td>
-        <td style="padding: 8px; text-align: center;">${directionBadge}</td>
-        <td style="padding: 8px; color: #0284c7; font-weight: 500;">${viaLabel}</td>
-        <td style="padding: 8px; font-weight: 500;">${targetAssetHtml}</td>
-        <td style="padding: 8px; font-weight: 500;">${escapeHtml(targetPort)}</td>
-        <td style="padding: 8px; text-align: center;">
-          ${
-            can("connection.delete")
-              ? `<button onclick="disconnectCore(${Number(conn.id)})" style="background:#ef4444; color:white; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:11px;">
-            <i class="fa-solid fa-trash"></i> Putus
-          </button>`
-              : ""
-          }
-        </td>
-      </tr>
-    `;
+    const dirBadge =
+      dir === "PASS"
+        ? badge("#fef3c7", "#b45309", "fa-route", "Melintas")
+        : dir === "DOWN"
+          ? badge("#dcfce7", "#15803d", "fa-arrow-right", "Downstream")
+          : badge("#e0f2fe", "#0369a1", "fa-arrow-left", "Upstream");
+    let viaHtml, viaText;
+    if (dir === "PASS") {
+      viaHtml = "Kabel ini";
+      viaText = "Kabel ini";
+    } else if (conn.via_cable_name) {
+      viaHtml =
+        assetLinkHtml("CABLE", conn.via_cable_id, conn.via_cable_name) +
+        (conn.via_core ? ` (${escapeHtml(conn.via_core)})` : "");
+      viaText =
+        conn.via_cable_name + (conn.via_core ? ` (${conn.via_core})` : "");
+    } else if (conn.via_cable_id) {
+      viaHtml = "Kabel #" + Number(conn.via_cable_id);
+      viaText = viaHtml;
+    } else {
+      viaHtml = "Langsung / Direct";
+      viaText = viaHtml;
+    }
+    const del = can("connection.delete")
+      ? `<button onclick="disconnectCore(${Number(conn.id)})" title="Putus sambungan ini" style="background:#ef4444; color:white; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:11px;"><i class="fa-solid fa-trash"></i> Putus</button>`
+      : "";
+    const jl = jalur(
+      dir,
+      localPort,
+      assetName(conn.from_asset_type, conn.from_asset_id),
+      assetName(conn.to_asset_type, conn.to_asset_id),
+    );
+    const dirLabel =
+      dir === "PASS" ? "Melintas" : dir === "DOWN" ? "Downstream" : "Upstream";
+    return {
+      dir,
+      cells: [
+        localPort,
+        dirLabel,
+        jl.text,
+        viaText,
+        targetText,
+        targetPort,
+        "",
+      ].map((x) => String(x == null ? "" : x)),
+      text: `${localPort} ${viaText} ${targetText} ${targetPort}`.toLowerCase(),
+      html:
+        `<tr style="border-bottom: 1px solid #f1f5f9;">` +
+        `<td title="${escapeHtml(localPort)}" style="padding: 8px; font-weight: 600; color: #1e293b;">${escapeHtml(localPort)}</td>` +
+        `<td style="padding: 8px; text-align: center;">${dirBadge}</td>` +
+        `<td class="jl-cell" style="padding: 8px; text-align: center;">${jl.html}</td>` +
+        `<td title="${escapeHtml(viaText)}" style="padding: 8px; color: #0284c7; font-weight: 500;">${viaHtml}</td>` +
+        `<td title="${escapeHtml(targetText)}" style="padding: 8px; font-weight: 500;">${targetHtml}</td>` +
+        `<td title="${escapeHtml(targetPort)}" style="padding: 8px; font-weight: 500;">${escapeHtml(targetPort)}</td>` +
+        `<td style="padding: 8px; text-align: center;">${del}</td></tr>`,
+    };
   });
-  tbody.innerHTML = rows;
+  renderConnPage();
+}
+
+function renderConnPage() {
+  const tbody = document.getElementById("active-connections-tbody");
+  if (!tbody) return;
+  const all = CONNTBL.rows;
+  const q = CONNTBL.q.trim().toLowerCase();
+  const cf = CONNTBL.colf.map((x) =>
+    String(x || "")
+      .trim()
+      .toLowerCase(),
+  );
+  let list = all.filter(
+    (r) =>
+      (CONNTBL.dir === "ALL" || r.dir === CONNTBL.dir) &&
+      (!q || r.text.includes(q)) &&
+      cf.every((f, c) => !f || (r.cells[c] || "").toLowerCase().includes(f)),
+  );
+  if (CONNTBL.sortCol >= 0) {
+    const c = CONNTBL.sortCol,
+      d = CONNTBL.sortDir;
+    list = list
+      .slice()
+      .sort(
+        (x, y) =>
+          d *
+          String(x.cells[c] || "").localeCompare(
+            String(y.cells[c] || ""),
+            "id",
+            { numeric: true, sensitivity: "base" },
+          ),
+      );
+  }
+  const pages = Math.max(1, Math.ceil(list.length / CONNTBL.size));
+  if (CONNTBL.page > pages) CONNTBL.page = pages;
+  if (CONNTBL.page < 1) CONNTBL.page = 1;
+  const start = (CONNTBL.page - 1) * CONNTBL.size;
+  const slice = list.slice(start, start + CONNTBL.size);
+  if (!all.length) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:12px; color:#94a3b8;">Belum ada sambungan core/port aktif.</td></tr>`;
+  } else if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:12px; color:#94a3b8;">Tidak ada sambungan yang cocok dengan filter.</td></tr>`;
+  } else {
+    tbody.innerHTML = slice.map((r) => r.html).join("");
+  }
+  const info = document.getElementById("conn-page-info"),
+    prev = document.getElementById("conn-prev"),
+    next = document.getElementById("conn-next");
+  const counts = { UP: 0, DOWN: 0, PASS: 0 };
+  all.forEach((r) => {
+    counts[r.dir]++;
+  });
+  if (info) {
+    info.textContent = list.length
+      ? `${start + 1}\u2013${start + slice.length} dari ${list.length}${list.length !== all.length ? ` (terfilter dari ${all.length})` : ""} \u00b7 halaman ${CONNTBL.page}/${pages}`
+      : `0 dari ${all.length}`;
+  }
+  const sum = document.getElementById("conn-summary");
+  if (sum)
+    sum.textContent = all.length
+      ? `${counts.UP} upstream \u00b7 ${counts.DOWN} downstream${counts.PASS ? ` \u00b7 ${counts.PASS} melintas` : ""}`
+      : "";
+  if (prev) prev.disabled = CONNTBL.page <= 1;
+  if (next) next.disabled = CONNTBL.page >= pages;
+  const pager = document.getElementById("conn-pager");
+  if (pager)
+    pager.style.display =
+      all.length > 10 || list.length !== all.length ? "" : "none";
+}
+function onConnSearch(v) {
+  CONNTBL.q = String(v || "");
+  CONNTBL.page = 1;
+  renderConnPage();
+}
+function onConnDir(v) {
+  CONNTBL.dir = v || "ALL";
+  CONNTBL.page = 1;
+  renderConnPage();
+}
+function onConnPageSize(v) {
+  CONNTBL.size = Number(v) || 10;
+  CONNTBL.page = 1;
+  renderConnPage();
+}
+function goConnPage(d) {
+  CONNTBL.page += d;
+  renderConnPage();
 }
 
 // --- JALUR & DAMPAK (hulu / hilir) ---
@@ -2890,8 +3639,7 @@ function traceTrunc(t, n) {
 const TRACE_DEV_LINES = 4;
 const TRACE_CG = 11,
   TRACE_TG = 26,
-  TRACE_SHOW = 12,
-  TRACE_SPARE_MAX = 24,
+  TRACE_FOLD_MIN = 48,
   TRACE_TOPZ = 56,
   TRACE_BOTZ = 12,
   TRACE_LANE_GAP = 6;
@@ -2928,25 +3676,63 @@ function traceEdgeGeom(e, spare) {
     })
     .filter(Boolean)
     .sort((p, q) => p.tube - q.tube || p.core - q.core);
-  const usedShown = used.slice(0, TRACE_SHOW);
-  const cab = e.cab || null,
-    spareList = [];
-  if (spare && cab && cab.total <= TRACE_SPARE_MAX) {
-    const usedSet = new Set(cab.used_cores || []);
-    used.forEach((u) => usedSet.add(`Tube ${u.tube} - Core ${u.core}`));
-    for (let i = 1; i <= cab.total; i++) {
-      const lab = `Tube ${Math.floor((i - 1) / 12) + 1} - Core ${i}`;
-      if (!usedSet.has(lab)) {
-        const c = isoOfCore(lab);
-        c.spare = true;
-        spareList.push(c);
+  const cab = e.cab || null;
+  let entries = used.slice();
+  let tubeFold = {};
+  // Mode kapasitas: seluruh core kabel digambar (terpakai = warna ISO, cadangan = abu-abu putus-putus).
+  // Kabel >= 48 core: tube yang seluruhnya cadangan dilipat menjadi satu pita (klik untuk membuka).
+  if (spare && cab && cab.total) {
+    const usedNums = new Map(used.map((u) => [u.core, u]));
+    const otherNums = new Set();
+    (Array.isArray(cab.used_cores) ? cab.used_cores : []).forEach((l) => {
+      const c = isoOfCore(l);
+      if (c && !usedNums.has(c.core)) otherNums.add(c.core);
+    });
+    entries = [];
+    const tubesN = Math.ceil(cab.total / 12);
+    for (let t = 1; t <= tubesN; t++) {
+      const lo = (t - 1) * 12 + 1,
+        hi = Math.min(t * 12, cab.total),
+        nums = [];
+      for (let n = lo; n <= hi; n++) nums.push(n);
+      const key = `${e.ck || ""}:${t}`;
+      const usedHere = nums.filter(
+        (n) => usedNums.has(n) || otherNums.has(n),
+      ).length;
+      const st = TRACE_VIEW.tubeState && TRACE_VIEW.tubeState[key];
+      const fold = st
+        ? st === "fold"
+        : cab.total >= TRACE_FOLD_MIN && usedHere === 0;
+      const tc = ISO_FIBER_COLORS[(t - 1) % 12];
+      if (fold) {
+        entries.push({
+          fold: true,
+          tube: t,
+          core: lo,
+          tc,
+          cc: tc,
+          count: nums.length,
+          usedN: usedHere,
+          lo,
+          hi,
+          key,
+        });
+        tubeFold[t] = true;
+        continue;
       }
+      nums.forEach((n) => {
+        if (usedNums.has(n)) {
+          entries.push(usedNums.get(n));
+          return;
+        }
+        const c = isoOfCore(`Tube ${t} - Core ${n}`);
+        if (otherNums.has(n)) c.other = true;
+        else c.spare = true;
+        entries.push(c);
+      });
     }
   }
-  const shown = usedShown
-    .concat(spareList)
-    .sort((p, q) => p.tube - q.tube || p.core - q.core)
-    .slice(0, TRACE_SPARE_MAX);
+  const shown = entries;
   const offs = [],
     tubes = [];
   let o = 0;
@@ -2956,13 +3742,31 @@ function traceEdgeGeom(e, spare) {
     offs.push(o);
     let tb = tubes[tubes.length - 1];
     if (!tb || tb.tube !== c.tube) {
-      tb = { tube: c.tube, tc: c.tc, idx: [], cores: [], used: 0, spare: 0 };
+      tb = {
+        tube: c.tube,
+        tc: c.tc,
+        idx: [],
+        cores: [],
+        used: 0,
+        spare: 0,
+        key: `${e.ck || ""}:${c.tube}`,
+        foldable: !!(spare && cab && cab.total),
+      };
       tubes.push(tb);
     }
     tb.idx.push(i);
-    tb.cores.push(c.core);
-    if (c.spare) tb.spare++;
-    else tb.used++;
+    if (c.fold) {
+      tb.fold = true;
+      tb.lo = c.lo;
+      tb.hi = c.hi;
+      tb.count = c.count;
+      tb.usedN = c.usedN;
+      for (let n = c.lo; n <= c.hi; n++) tb.cores.push(n);
+    } else {
+      tb.cores.push(c.core);
+      if (c.spare) tb.spare++;
+      else if (!c.other) tb.used++;
+    }
   });
   const span = offs.length ? offs[offs.length - 1] : 0;
   offs.forEach((v, i) => {
@@ -2978,8 +3782,8 @@ function traceEdgeGeom(e, spare) {
     offs,
     tubes,
     span,
-    extra: Math.max(0, used.length - usedShown.length),
-    spareCount: spareList.length,
+    extra: 0,
+    spareCount: shown.filter((c) => c.spare || c.fold).length,
     height: shown.length ? span + TRACE_TOPZ + TRACE_BOTZ : 24,
   };
 }
@@ -3060,6 +3864,7 @@ function buildTraceGraph(d) {
         a: e.a,
         b: e.b,
         via: e.via,
+        ck: e.via ? String(e.via.cable_id || e.via.name || "") : "",
         cores: [],
         fromPorts: [],
         toPorts: [],
@@ -3079,6 +3884,7 @@ function buildTraceGraph(d) {
         bad,
         fdev: e.fdev,
         tdev: e.tdev,
+        uid: `${k}#${e.via.core}`,
       });
     }
     [
@@ -3318,6 +4124,15 @@ function traceDiagramSvg(g, zoom) {
       });
       geom.shown.forEach((c, i) => {
         const off = geom.offs[i];
+        if (c.fold) {
+          // tube cadangan dilipat: satu pita untuk 12 core (klik label tube untuk membuka)
+          svg += `<path d="${pathAt(off)}" fill="none" stroke="${c.tc.hex}" stroke-opacity="0.55" stroke-width="7" stroke-dasharray="6 4" stroke-linecap="round"><title>${escapeHtml(`Tube ${c.tube} - Core ${c.lo}-${c.hi}: ${c.usedN ? c.usedN + " terpakai, dilipat" : "seluruhnya cadangan (belum dipakai)"} - klik label tube untuk membuka`)}</title></path>`;
+          return;
+        }
+        if (c.other) {
+          svg += `<path d="${pathAt(off)}" fill="none" stroke="#93c5fd" stroke-width="2" stroke-dasharray="2 3" stroke-linecap="round"><title>${escapeHtml(`Tube ${c.tube} - Core ${c.core} (${c.cc.name}) - dipakai sambungan lain pada kabel ini`)}</title></path>`;
+          return;
+        }
         if (c.spare) {
           svg += `<path d="${pathAt(off)}" fill="none" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="4 3" stroke-linecap="round"><title>${escapeHtml(`Tube ${c.tube} - Core ${c.core} (${c.cc.name}) - cadangan (belum dipakai)`)}</title></path>`;
           return;
@@ -3336,9 +4151,15 @@ function traceDiagramSvg(g, zoom) {
                 ` | perangkat: ${dv.device_name} ${dv.interface} (${dv.purpose}${dv.vlan ? ", VLAN " + dv.vlan : ""}${dv.service ? ", " + dv.service : ""}${dv.customer_name ? ", pelanggan " + dv.customer_name : ""})`,
             )
             .join("");
+        const uidA = it.uid
+          ? ` data-uid="${escapeHtml(it.uid)}" onclick="event.stopPropagation();traceCoreClick(this.getAttribute('data-uid'))" style="cursor:pointer"`
+          : "";
         svg +=
-          `<path d="${pathAt(off)}" fill="none" stroke="#94a3b8" stroke-width="4.6"${dash} stroke-linecap="round" />` +
-          `<path d="${pathAt(off)}" fill="none" stroke="${c.cc.hex}" stroke-width="2.8"${dash} stroke-linecap="round"><title>${escapeHtml(tip)}</title></path>`;
+          `<g class="tr-core"${uidA}><path class="tr-halo" d="${pathAt(off)}" fill="none" stroke="#94a3b8" stroke-width="4.6"${dash} stroke-linecap="round" />` +
+          `<path class="tr-main" d="${pathAt(off)}" fill="none" stroke="${c.cc.hex}" stroke-width="2.8"${dash} stroke-linecap="round"><title>${escapeHtml(tip + (it.uid ? " | klik untuk menyorot jalur" : ""))}</title></path>` +
+          (it.uid
+            ? `<path d="${pathAt(off)}" fill="none" stroke="transparent" stroke-width="10" pointer-events="stroke" />`
+            : "");
         // nomor port/core di ujung zona mendatar (latar putih agar terbaca)
         const yy = y1 + LA + off + 3;
         const lt = traceShortPort(it.from || it.core),
@@ -3347,18 +4168,29 @@ function traceDiagramSvg(g, zoom) {
           `<text x="${x}" y="${yy}" text-anchor="${anc}" font-size="8.5" font-weight="600" fill="#1e293b" stroke="#fff" stroke-width="3" paint-order="stroke" stroke-linejoin="round">${escapeHtml(t)}</text>`;
         svg +=
           tx(xa + dir * 8, dir > 0 ? "start" : "end", lt) +
-          tx(xb - dir * 8, dir > 0 ? "end" : "start", rt);
+          tx(xb - dir * 8, dir > 0 ? "end" : "start", rt) +
+          `</g>`;
       });
       // satu label per Tube, tepat di atas berkas core miliknya
       geom.tubes.forEach((tb, ti) => {
         const txt =
           `Tube ${tb.tube} ${tb.tc.name.split("/")[0]} · Core ${traceRanges(tb.cores)}` +
-          (tb.spare ? ` · ${tb.used} pakai` : "");
-        const w = Math.min(210, txt.length * 5.4 + 22),
+          (tb.fold
+            ? tb.usedN
+              ? ` · ${tb.usedN} pakai · dilipat`
+              : " · cadangan · dilipat"
+            : tb.spare
+              ? ` · ${tb.used} pakai`
+              : "") +
+          (tb.foldable ? (tb.fold ? " ▸" : " ▾") : "");
+        const w = Math.min(250, txt.length * 5.4 + 22),
           cy = y1 + LA + tb.top - 24;
         if (ti === 0) chipTop = cy - 34;
+        const tgl = tb.foldable
+          ? ` onclick="event.stopPropagation();traceTubeToggle('${escapeHtml(tb.key)}', ${tb.fold ? 1 : 0})" style="cursor:pointer"`
+          : "";
         svg +=
-          `<g><rect x="${cx - w / 2}" y="${cy}" width="${w}" height="15" rx="4" fill="#fff" stroke="${tb.tc.hex}" stroke-width="1.4" />` +
+          `<g class="tr-tube"${tgl}><title>${tb.foldable ? (tb.fold ? "Klik untuk membuka tube" : "Klik untuk melipat tube") : ""}</title><rect x="${cx - w / 2}" y="${cy}" width="${w}" height="15" rx="4" fill="#fff" stroke="${tb.tc.hex}" stroke-width="1.4" />` +
           `<rect x="${cx - w / 2 + 4}" y="${cy + 3.5}" width="8" height="8" rx="2" fill="${tb.tc.hex}" stroke="#334155" stroke-width="0.6" />` +
           `<text x="${cx + 5}" y="${cy + 11}" text-anchor="middle" font-size="9.5" fill="#0f172a">${escapeHtml(txt)}</text></g>`;
       });
@@ -3410,7 +4242,7 @@ function traceDiagramSvg(g, zoom) {
     const nm = escapeHtml(traceTrunc(n.name, 20));
     const stColor = n.status ? traceStatusColor(n.status) : null;
     svg +=
-      `<g class="tn${link ? " tn-link" : ""}"${link ? ` onclick="openLinkedAsset('${n.type === "CABLE" ? "CABLE" : "NODE"}', ${Number(n.id)})" style="cursor:pointer"` : ""}>` +
+      `<g class="tn${link ? " tn-link" : ""}" data-nk="${escapeHtml(n.key)}"${link ? ` onclick="openLinkedAsset('${n.type === "CABLE" ? "CABLE" : "NODE"}', ${Number(n.id)})" style="cursor:pointer"` : ""}>` +
       `<title>${escapeHtml(n.name)} (${escapeHtml(s.label)})${n.status ? " - status " + escapeHtml(n.status) : ""}${n.atype === "POP" && n.capacity ? " - " + otbSizes(n.capacity).length + " OTB (" + otbSizes(n.capacity).join(" + ") + " port)" : ""}${n.cust ? " - " + n.cust + " pelanggan di bawah" : ""}</title>` +
       `<rect x="${n.x}" y="${n.y}" width="${g.BW}" height="${g.BH}" rx="8" fill="${s.fill}" stroke="${stColor && stColor === "#dc2626" ? "#dc2626" : s.stroke}" stroke-width="${n.isStart ? 3.5 : 1.6}"${n.type === "CABLE" ? ' stroke-dasharray="5 3"' : ""} />` +
       `<text x="${n.x + 10}" y="${n.y + 17}" font-size="9" font-weight="700" fill="${s.stroke}">${escapeHtml(s.label)}${n.isStart ? " · aset ini" : ""}</text>` +
@@ -3449,7 +4281,7 @@ function traceDiagramSvg(g, zoom) {
     }
   });
   const z = zoom || 1;
-  return `<svg xmlns="http://www.w3.org/2000/svg" class="trace-svg" width="${Math.round(g.W * z)}" height="${Math.round(g.H * z)}" viewBox="0 0 ${g.W} ${g.H}" font-family="Inter, Arial, sans-serif"><rect width="${g.W}" height="${g.H}" fill="#ffffff" />${svg}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" class="trace-svg" width="${Math.round(g.W * z)}" height="${Math.round(g.H * z)}" viewBox="0 0 ${g.W} ${g.H}" font-family="Inter, Arial, sans-serif"><rect width="${g.W}" height="${g.H}" fill="#ffffff" onclick="traceCoreClear()" />${svg}</svg>`;
 }
 function traceIsoLegendHtml() {
   return (
@@ -3469,17 +4301,45 @@ function traceLegendHtml() {
           `<span class="tl-sw"><i style="background:${TRACE_TYPE_STYLE[k].fill};border-color:${TRACE_TYPE_STYLE[k].stroke}"></i>${TRACE_TYPE_STYLE[k].label}</span>`,
       )
       .join("") +
-    `<span class="tl-sw"><i class="tl-line"></i>Sambungan core (kabel · core)</span><span class="tl-sw"><i class="tl-line off"></i>Tidak Connected</span><span class="tl-sw"><i class="tl-line spare"></i>Core cadangan</span><span class="tl-sw"><i class="tl-dot" style="background:#16a34a"></i>Aktif</span><span class="tl-sw"><i class="tl-dot" style="background:#dc2626"></i>Putus/Gangguan</span><span class="tl-sw"><b class="tl-tg">&minus;/+N</b>Lipat/buka cabang</span><span class="tl-sw"><b class="tl-cust">N plg</b>Pelanggan terdampak</span>`
+    `<span class="tl-sw"><i class="tl-line"></i>Sambungan core (kabel · core)</span><span class="tl-sw"><i class="tl-line off"></i>Tidak Connected</span><span class="tl-sw"><i class="tl-line spare"></i>Core cadangan</span><span class="tl-sw"><i class="tl-line other"></i>Dipakai sambungan lain</span><span class="tl-sw"><i class="fa-solid fa-hand-pointer" style="border:0;width:auto;height:auto"></i>Klik core = sorot jalur</span><span class="tl-sw"><i class="tl-dot" style="background:#16a34a"></i>Aktif</span><span class="tl-sw"><i class="tl-dot" style="background:#dc2626"></i>Putus/Gangguan</span><span class="tl-sw"><b class="tl-tg">&minus;/+N</b>Lipat/buka cabang</span><span class="tl-sw"><b class="tl-cust">N plg</b>Pelanggan terdampak</span>`
   );
 }
 function renderTraceDiagramInto() {
   const box = document.getElementById("trace-diagram");
   if (!box || !TRACE_VIEW.d) return;
+  // pertahankan posisi gulir kanvas saat render ulang (zoom, lipat tube, sorot core)
+  const q = (s) => (document.querySelector ? document.querySelector(s) : null);
+  const oldCv = q("#trace-diagram .trace-canvas");
+  const keep =
+    oldCv && TRACE_VIEW.lastZoom
+      ? {
+          l: oldCv.scrollLeft / TRACE_VIEW.lastZoom,
+          t: oldCv.scrollTop / TRACE_VIEW.lastZoom,
+        }
+      : null;
   const g = buildTraceGraph(TRACE_VIEW.d);
   TRACE_VIEW.g = g;
   box.innerHTML = g.nodes.length
-    ? `<div class="trace-canvas keep-color">${traceDiagramSvg(g, TRACE_VIEW.zoom)}</div><div class="trace-legend">${traceLegendHtml()}</div><div class="trace-legend trace-legend-iso">${traceIsoLegendHtml()}</div>`
+    ? `<div class="trace-canvas keep-color">${traceDiagramSvg(g, TRACE_VIEW.zoom)}</div><div id="trace-core-info" class="trace-core-info" style="display:none"></div><div class="trace-legend">${traceLegendHtml()}</div><div class="trace-legend trace-legend-iso">${traceIsoLegendHtml()}</div>`
     : `<div style="color:#94a3b8;padding:8px;">Belum ada sambungan core untuk digambar.</div>`;
+  if (g.nodes.length) traceApplyFocus();
+  const cv = q("#trace-diagram .trace-canvas"),
+    z = TRACE_VIEW.zoom || 1;
+  if (cv && g.nodes.length) {
+    if (keep && !TRACE_VIEW.centerStart) {
+      cv.scrollLeft = keep.l * z;
+      cv.scrollTop = keep.t * z;
+    } else {
+      // pertama dibuka: arahkan pandangan ke aset yang sedang dilihat (diagram bisa sangat tinggi)
+      const s = g.nodes.find((n) => n.isStart) || g.nodes[0];
+      if (s && cv.clientHeight) {
+        cv.scrollTop = Math.max(0, (s.y + g.BH / 2) * z - cv.clientHeight / 2);
+        cv.scrollLeft = Math.max(0, (s.x - 40) * z);
+      }
+    }
+    TRACE_VIEW.centerStart = false;
+    TRACE_VIEW.lastZoom = z;
+  }
 }
 function setTraceView(mode) {
   TRACE_VIEW.mode = mode === "list" ? "list" : "diagram";
@@ -3515,6 +4375,170 @@ function traceToggle(key) {
   const c = TRACE_VIEW.collapsed || (TRACE_VIEW.collapsed = new Set());
   if (c.has(key)) c.delete(key);
   else c.add(key);
+  renderTraceDiagramInto();
+}
+// ---- Klik core: sorot seluruh jalur sirkuitnya (hulu sampai POP, hilir sampai pelanggan)
+const TRACE_JOINT = new Set(["CLOSURE", "SLACK", "HH", "TIANG"]);
+function traceCircuit(g, uid) {
+  const all = [];
+  g.edges.forEach((e) =>
+    (e.items || []).forEach((it) => {
+      if (it.uid) all.push({ it, e });
+    }),
+  );
+  const start = all.find((x) => x.it.uid === uid);
+  if (!start) return null;
+  const nodeOf = new Map(g.nodes.map((n) => [n.key, n]));
+  const strict = (nk) => {
+    const n = nodeOf.get(nk);
+    return !!n && TRACE_JOINT.has(String(n.atype || "").toUpperCase());
+  };
+  // pada closure/slack hanya joint yang sama yang meneruskan; pada ODP/POP semua port (splitter berbagi serat)
+  const pick = (cands, port, getPort, nk) => {
+    if (!strict(nk) || !port) return cands;
+    const same = cands.filter((x) => getPort(x) === port);
+    return same.length ? same : cands;
+  };
+  const set = new Set([start.it.uid]),
+    order = [start];
+  const walk = (dirDown) => {
+    const q = [start];
+    while (q.length) {
+      const x = q.shift();
+      const nk = dirDown ? x.e.b : x.e.a;
+      const cur = dirDown ? x.it.to : x.it.from;
+      const cands = all.filter(
+        (y) => !set.has(y.it.uid) && (dirDown ? y.e.a === nk : y.e.b === nk),
+      );
+      pick(cands, cur, (y) => (dirDown ? y.it.from : y.it.to), nk).forEach(
+        (y) => {
+          set.add(y.it.uid);
+          order.push(y);
+          q.push(y);
+        },
+      );
+    }
+  };
+  walk(false);
+  walk(true);
+  const nodes = new Set();
+  order.forEach((x) => {
+    nodes.add(x.e.a);
+    nodes.add(x.e.b);
+  });
+  return { uids: set, nodes, items: order };
+}
+function traceApplyFocus() {
+  const box = document.getElementById("trace-diagram");
+  if (!box || !box.querySelector) return;
+  const svg = box.querySelector(".trace-svg"),
+    info = document.getElementById("trace-core-info");
+  const f =
+    TRACE_VIEW.focus && TRACE_VIEW.g
+      ? traceCircuit(TRACE_VIEW.g, TRACE_VIEW.focus)
+      : null;
+  if (!f) {
+    TRACE_VIEW.focus = null;
+    if (svg && svg.classList) svg.classList.remove("tr-focus");
+    if (info) {
+      info.style.display = "none";
+      info.innerHTML = "";
+    }
+    return;
+  }
+  if (svg) {
+    svg.classList.add("tr-focus");
+    svg
+      .querySelectorAll(".tr-core")
+      .forEach((el) =>
+        el.classList.toggle("on", f.uids.has(el.getAttribute("data-uid"))),
+      );
+    svg
+      .querySelectorAll(".tn")
+      .forEach((el) =>
+        el.classList.toggle("on", f.nodes.has(el.getAttribute("data-nk"))),
+      );
+  }
+  if (info) {
+    info.innerHTML = traceCoreInfoHtml(f);
+    info.style.display = "";
+  }
+}
+function traceCoreInfoHtml(f) {
+  const g = TRACE_VIEW.g,
+    nodeOf = new Map(g.nodes.map((n) => [n.key, n]));
+  const first =
+    f.items.find((x) => x.it.uid === TRACE_VIEW.focus) || f.items[0];
+  const iso = isoOfCore(first.it.core);
+  const chain = Array.from(f.nodes)
+    .map((k) => nodeOf.get(k))
+    .filter(Boolean)
+    .sort((p, q) => p.layer - q.layer || p.order - q.order);
+  const names = chain.map((n) => escapeHtml(traceTrunc(n.name, 18)));
+  const shownNames =
+    names.length > 8 ? names.slice(0, 5).concat(["…"], names.slice(-2)) : names;
+  const cust = chain.filter(
+    (n) => String(n.atype || "").toUpperCase() === "PELANGGAN",
+  ).length;
+  const bad = f.items.filter((x) => x.it.bad).length;
+  const cabName = first.e.via && first.e.via.name ? first.e.via.name : "";
+  return (
+    `<div class="tci-head"><span class="tci-sw" style="background:${iso ? iso.cc.hex : "#94a3b8"}"></span><b>${escapeHtml(first.it.core)}</b>` +
+    `${iso ? ` <span class="tci-muted">(${escapeHtml(iso.tc.name.split("/")[0])} / ${escapeHtml(iso.cc.name.split("/")[0])})</span>` : ""}` +
+    `${cabName ? ` <span class="tci-muted">pada ${escapeHtml(cabName)}</span>` : ""}` +
+    `<span class="tci-actions"><button type="button" onclick="traceZoomToCircuit()"><i class="fa-solid fa-magnifying-glass-plus"></i> Zoom ke jalur</button>` +
+    `<button type="button" onclick="traceCoreClear()"><i class="fa-solid fa-xmark"></i> Hapus sorotan</button></span></div>` +
+    `<div class="tci-path">${shownNames.join(' <i class="fa-solid fa-arrow-right"></i> ')}</div>` +
+    `<div class="tci-badges"><span>${f.items.length} sambungan</span><span>${chain.length} aset</span><span class="${cust ? "red" : ""}">${cust} pelanggan</span>` +
+    `<span class="${bad ? "red" : "green"}">${bad ? bad + " tidak connected" : "semua connected"}</span></div>`
+  );
+}
+function traceCoreClick(uid) {
+  TRACE_VIEW.focus = TRACE_VIEW.focus === uid ? null : uid;
+  traceApplyFocus();
+}
+function traceCoreClear() {
+  if (!TRACE_VIEW.focus) return;
+  TRACE_VIEW.focus = null;
+  traceApplyFocus();
+}
+// zoom diagram supaya seluruh jalur sorotan memenuhi kanvas, lalu gulir ke sana
+function traceZoomToCircuit() {
+  const g = TRACE_VIEW.g;
+  const f = TRACE_VIEW.focus && g ? traceCircuit(g, TRACE_VIEW.focus) : null;
+  if (!f) return;
+  const ns = g.nodes.filter((n) => f.nodes.has(n.key));
+  if (!ns.length) return;
+  const x0 = Math.min(...ns.map((n) => n.x)) - 30,
+    x1 = Math.max(...ns.map((n) => n.x + g.BW)) + 30;
+  const y0 = Math.min(...ns.map((n) => n.y)) - 90,
+    y1 = Math.max(...ns.map((n) => n.y + g.BH)) + 90;
+  const cv = document.querySelector
+    ? document.querySelector("#trace-diagram .trace-canvas")
+    : null;
+  const cw = cv && cv.clientWidth ? cv.clientWidth - 8 : 0,
+    ch = cv && cv.clientHeight ? cv.clientHeight - 8 : 0;
+  if (cw && ch)
+    TRACE_VIEW.zoom = Math.max(
+      0.4,
+      Math.min(
+        1.6,
+        Math.floor(Math.min(cw / (x1 - x0), ch / (y1 - y0)) * 20) / 20,
+      ),
+    );
+  renderTraceDiagramInto();
+  const cv2 = document.querySelector
+    ? document.querySelector("#trace-diagram .trace-canvas")
+    : null;
+  if (cv2) {
+    cv2.scrollLeft = Math.max(0, x0 * TRACE_VIEW.zoom);
+    cv2.scrollTop = Math.max(0, y0 * TRACE_VIEW.zoom);
+  }
+}
+// buka/lipat satu tube pada kabel (kunci = "kabel:tube")
+function traceTubeToggle(key, isFolded) {
+  const s = TRACE_VIEW.tubeState || (TRACE_VIEW.tubeState = {});
+  s[key] = isFolded ? "open" : "fold";
   renderTraceDiagramInto();
 }
 function traceSpare() {
@@ -3651,14 +4675,17 @@ function renderTraceHtml(d) {
   }
   TRACE_VIEW.d = d;
   TRACE_VIEW.zoom = 1;
-  TRACE_VIEW.spare = false;
+  TRACE_VIEW.spare = true; // gambar sesuai kapasitas kabel (cadangan abu-abu)
+  TRACE_VIEW.tubeState = {};
+  TRACE_VIEW.focus = null;
+  TRACE_VIEW.centerStart = true;
   TRACE_VIEW.collapsed = new Set();
   html += `<div class="trace-toolbar">
       <span class="trace-tabs"><button type="button" id="trace-tab-diagram" class="on" onclick="setTraceView('diagram')"><i class="fa-solid fa-diagram-project"></i> Diagram</button>
       <button type="button" id="trace-tab-list" onclick="setTraceView('list')"><i class="fa-solid fa-list"></i> Daftar</button></span>
       <span class="trace-tools"><button type="button" onclick="traceZoom(-0.2)" title="Perkecil">&minus;</button><button type="button" onclick="traceZoom(0.2)" title="Perbesar">+</button>
       <button type="button" onclick="traceFit()" title="Muat pas ke lebar layar"><i class="fa-solid fa-expand"></i> Muat</button>
-      <button type="button" id="trace-spare-btn" onclick="traceSpare()" title="Tampilkan core cadangan (belum dipakai) pada kabel berkapasitas sampai 24 core"><i class="fa-solid fa-grip-lines"></i> Cadangan</button>
+      <button type="button" id="trace-spare-btn" class="on" onclick="traceSpare()" title="Gambar seluruh core sesuai kapasitas kabel (core cadangan abu-abu putus-putus; kabel 48 core ke atas: tube cadangan dilipat)"><i class="fa-solid fa-grip-lines"></i> Cadangan</button>
       <button type="button" onclick="traceExport('svg')" title="Unduh diagram sebagai SVG (bisa dibuka di Visio/Inkscape)"><i class="fa-solid fa-download"></i> SVG</button>
       <button type="button" onclick="traceExport('png')" title="Unduh sebagai gambar PNG"><i class="fa-solid fa-image"></i> PNG</button></span></div>
     <div id="trace-diagram"></div><div id="trace-list" style="display:none">${list}</div>`;
@@ -3680,6 +4707,128 @@ function closeCoreDetailModal() {
   coreNav.length = 0;
   updateCoreBack();
   document.getElementById("modal-core-detail").style.display = "none";
+}
+
+// --- KAPASITAS TRUNK POP ---
+const POPTRUNK = { id: null, data: null, edit: false, draft: null };
+function popTrunkLoad(item, container) {
+  return apiRequest(`/api/nodes/${Number(item.id)}/trunk`)
+    .then((d) => {
+      if (!d || d.delivered_mbps === undefined) return;
+      if (
+        !currentActiveAsset ||
+        String(currentActiveAsset.id) !== String(item.id)
+      )
+        return;
+      POPTRUNK.id = item.id;
+      POPTRUNK.data = d;
+      renderPopOtb(item, container);
+    })
+    .catch(() => {});
+}
+const POPTRUNK_LABEL = {
+  ok: "Normal",
+  warn: "Hampir penuh",
+  over: "Melebihi kapasitas",
+  unset: "Belum diisi",
+};
+function popTrunkReadForm() {
+  const g = (i) => (document.getElementById(i) || {}).value;
+  if (g("pt-val") === undefined) return;
+  POPTRUNK.draft = { val: g("pt-val"), unit: g("pt-unit"), ob: g("pt-ob") };
+}
+function popTrunkHtml(item, canEdit) {
+  const d =
+    POPTRUNK.id != null && String(POPTRUNK.id) === String(item.id)
+      ? POPTRUNK.data
+      : null;
+  if (!d) return "";
+  const pct = Math.max(0, Math.min(100, d.util_pct || 0));
+  const head =
+    `<div class="trunk-head"><b><i class="fa-solid fa-gauge-high"></i> Kapasitas trunk</b>` +
+    `<span class="trunk-badge">${escapeHtml(POPTRUNK_LABEL[d.status] || d.status)}</span>` +
+    `${canEdit && !POPTRUNK.edit ? `<button type="button" class="btn-mini" onclick="popTrunkEdit()"><i class="fa-solid fa-pen"></i> ${d.trunk_mbps ? "Ubah" : "Atur"}</button>` : ""}</div>`;
+  let body = "";
+  if (d.trunk_mbps) {
+    body +=
+      `<div class="trunk-bar" title="${d.util_pct}%"><i style="width:${pct}%"></i></div>` +
+      `<div class="trunk-line"><b>${escapeHtml(fmtBw(d.effective_mbps))}</b> dari <b>${escapeHtml(fmtBw(d.trunk_mbps))}</b> (${d.util_pct}%) &middot; sisa <b>${escapeHtml(fmtBw(d.free_mbps))}</b>${d.free_mbps < 0 ? " (kekurangan)" : ""}</div>`;
+  } else {
+    body += `<div class="trunk-line">Kapasitas trunk belum diatur. Beban saat ini: <b>${escapeHtml(fmtBw(d.effective_mbps))}</b>.</div>`;
+  }
+  body +=
+    `<div class="trunk-stats"><span>Pelanggan terdeliver <b>${d.delivered_count}</b></span><span>Total BW <b>${escapeHtml(fmtBw(d.delivered_mbps))}</b></span>` +
+    `<span>Overbooking <b>1 : ${d.overbook}</b></span>${d.inactive_count ? `<span class="warn">Tidak aktif <b>${d.inactive_count}</b></span>` : ""}</div>`;
+  const types = Object.keys(d.by_type || {});
+  if (types.length)
+    body += `<div class="trunk-chips">${types.map((k) => `<span class="pd-chip">${escapeHtml(k === "-" ? "Jenis ?" : k)} &middot; ${d.by_type[k].count} &middot; ${escapeHtml(fmtBw(d.by_type[k].mbps))}</span>`).join("")}</div>`;
+  if (d.missing_bw_count)
+    body += `<div class="trunk-note">${d.missing_bw_count} pelanggan aktif belum diisi bandwidth-nya; beban sebenarnya bisa lebih besar.</div>`;
+  if ((d.top || []).length)
+    body += `<details class="trunk-top"><summary>Pelanggan terbesar</summary>${d.top.map((x) => `<div>${escapeHtml(x.name)} <span class="tp-muted">${escapeHtml(x.link_type || "-")} &middot; ${escapeHtml(x.service || "-")}</span> <b>${escapeHtml(fmtBw(x.mbps))}</b></div>`).join("")}</details>`;
+  if (POPTRUNK.edit) {
+    const dr =
+      POPTRUNK.draft ||
+      (() => {
+        const s = bwSplit(d.trunk_mbps);
+        return {
+          val: s.v,
+          unit: d.trunk_mbps == null ? "Gbps" : s.u,
+          ob: d.overbook > 1 ? String(d.overbook) : "",
+        };
+      })();
+    body +=
+      `<div class="trunk-form"><label>Kapasitas trunk<span class="ap-row"><input type="number" id="pt-val" min="0" step="any" value="${escapeHtml(dr.val)}" class="ap-input" />` +
+      `<select id="pt-unit" class="ap-input ap-unit"><option value="Mbps"${dr.unit === "Mbps" ? " selected" : ""}>Mbps</option><option value="Gbps"${dr.unit === "Gbps" ? " selected" : ""}>Gbps</option></select></span></label>` +
+      `<label>Overbooking 1 : n<input type="number" id="pt-ob" min="1" max="100" step="any" value="${escapeHtml(dr.ob)}" placeholder="1" class="ap-input" /></label>` +
+      `<span class="pd-actions"><button type="button" class="btn-ok" onclick="popTrunkSave()"><i class="fa-solid fa-check"></i> Simpan</button><button type="button" class="btn-mini" onclick="popTrunkCancel()">Batal</button></span></div>`;
+  }
+  return `<div class="trunk-card trunk-${escapeHtml(d.status)}">${head}${body}</div>`;
+}
+function popTrunkEdit() {
+  POPTRUNK.edit = true;
+  POPTRUNK.draft = null;
+  const it = currentActiveAsset,
+    c = document.getElementById("core-grid-container");
+  if (it && c) renderPopOtb(it, c);
+}
+function popTrunkCancel() {
+  POPTRUNK.edit = false;
+  POPTRUNK.draft = null;
+  const it = currentActiveAsset,
+    c = document.getElementById("core-grid-container");
+  if (it && c) renderPopOtb(it, c);
+}
+function popTrunkSave() {
+  const item = currentActiveAsset;
+  if (!item) return;
+  popTrunkReadForm();
+  const dr = POPTRUNK.draft || {};
+  let trunk = null,
+    ob = null;
+  if ((dr.val || "").trim()) {
+    trunk = bwToMbps(dr.val, dr.unit);
+    if (trunk == null || trunk <= 0)
+      return alert("Kapasitas trunk harus berupa angka lebih dari 0.");
+  }
+  if ((dr.ob || "").trim()) {
+    ob = parseFloat(String(dr.ob).replace(",", "."));
+    if (!isFinite(ob) || ob < 1 || ob > 100)
+      return alert("Rasio overbooking harus 1 sampai 100.");
+  }
+  return apiRequest(`/api/nodes/${Number(item.id)}`, "PUT", {
+    trunk_mbps: trunk,
+    trunk_overbook: ob,
+  })
+    .then(() => {
+      item.trunk_mbps = trunk;
+      item.trunk_overbook = ob;
+      POPTRUNK.edit = false;
+      POPTRUNK.draft = null;
+      const c = document.getElementById("core-grid-container");
+      return popTrunkLoad(item, c);
+    })
+    .catch((err) => alert("Gagal menyimpan trunk: " + err.message));
 }
 
 // --- RENDER POP: tiap OTB berisi grid port (OTB-n / Pxx) + posisi fisik opsional + perangkat yang dipatch ---
@@ -3734,34 +4883,51 @@ function popDevLoad(item, container) {
     .catch(() => {});
 }
 function popDevSummary(d) {
-  const bits = [d.device_name, d.interface];
+  const bits = [
+    d.device_name,
+    d.slot ? `slot ${d.slot}` : null,
+    d.interface,
+  ].filter(Boolean);
   if (d.vlan) bits.push(`VLAN ${d.vlan}`);
   if (d.customer_name) bits.push(d.customer_name);
   return bits.join(" · ");
 }
 function renderPopOtb(item, container) {
+  if (POPTRUNK.edit) popTrunkReadForm();
   const sizes = otbSizes(item.capacity),
     det = otbDetails(item);
   const pd = popDevFor(item);
   const canEdit = can("asset.write");
-  const byPort = new Map();
+  // sisi belakang port OTB seperti joint closure: kabel MASUK (dari hulu/feeder) dan kabel KELUAR (ke hilir/distribusi)
+  const inMap = new Map(),
+    outMap = new Map(),
+    byPort = new Map();
   activeConnections.forEach((c) => {
     if (
       String(c.from_asset_type) === "NODE" &&
       String(c.from_asset_id) === String(item.id)
-    )
+    ) {
+      outMap.set(c.from_port_core, c);
       byPort.set(c.from_port_core, c);
+    }
     if (
       String(c.to_asset_type) === "NODE" &&
       String(c.to_asset_id) === String(item.id)
-    )
+    ) {
+      inMap.set(c.to_port_core, c);
       byPort.set(c.to_port_core, c);
+    }
   });
   const total = sizes.reduce((a, b) => a + b, 0);
   const usedAll = otbPortLabels(item).filter((l) => byPort.has(l)).length;
+  const fullAll = otbPortLabels(item).filter(
+    (l) => inMap.has(l) && outMap.has(l),
+  ).length;
   let html =
+    popTrunkHtml(item, canEdit) +
     `<h4 style="margin-bottom: 4px; font-size: 14px; color: #334155;">Visualisasi OTB POP (${sizes.length} OTB &middot; ${total} port)</h4>` +
     `<div style="margin-bottom: 12px; font-size: 12px; color: #475569;">Terpakai: <b style="color:#2563eb;">${usedAll}</b> &middot; Tersedia: <b style="color:#16a34a;">${total - usedAll}</b> &middot; Total: <b>${total}</b> port` +
+    ` &middot; Masuk+keluar lengkap: <b>${fullAll}</b>` +
     ` &middot; Perangkat terhubung: <b>${pd.list.length}</b>${canEdit ? ' <span class="otb-hint">(klik port untuk mencatat perangkat / interface)</span>' : ""}</div>`;
   sizes.forEach((sz, k) => {
     const d = det[k] || {};
@@ -3777,16 +4943,39 @@ function renderPopOtb(item, container) {
       `${d.kind ? `<small class="otb-pos">${escapeHtml(kind)}${pos ? " &middot; " + escapeHtml(pos) : ""}</small>` : ""}</div><div class="otb-grid">`;
     for (let p = 1; p <= sz; p++) {
       const lab = otbLabel(k + 1, p),
-        c = byPort.get(lab),
+        ci = inMap.get(lab),
+        co = outMap.get(lab),
+        c = co || ci,
         on = !!c,
         dv = pd.map.get(lab);
+      const coreOf = (x) =>
+        x && x.via_core ? traceShortPort(x.via_core) : "-";
+      const rear =
+        ci && co
+          ? `\u2191${coreOf(ci)} \u2193${coreOf(co)}`
+          : co
+            ? `\u2193${coreOf(co)}`
+            : ci
+              ? `\u2191${coreOf(ci)}`
+              : "Idle";
       const tip =
-        (on ? `${lab} | kabel core: ${c.via_core || "-"}` : `${lab} | kosong`) +
-        (dv ? ` | perangkat: ${popDevSummary(dv)} (${dv.purpose})` : "");
+        `${lab} | belakang (kabel): ` +
+        (on
+          ? [
+              ci ? `masuk core ${ci.via_core || "-"}` : null,
+              co ? `keluar core ${co.via_core || "-"}` : null,
+            ]
+              .filter(Boolean)
+              .join(", ")
+          : "kosong") +
+        ` | depan: ` +
+        (dv
+          ? `${popDevSummary(dv)} (${dv.purpose})${dv.slot ? " slot " + dv.slot : ""}`
+          : "belum ada perangkat");
       html +=
-        `<div class="otb-port${on ? " on" : ""}${dv ? " pd pd-" + escapeHtml(String(dv.purpose).toLowerCase()) : ""}${canEdit ? " clickable" : ""}" title="${escapeHtml(tip)}"${canEdit ? ` onclick="popDevOpen('${lab}')"` : ""}>` +
+        `<div class="otb-port${on ? " on" : ""}${ci && co ? " full" : ""}${dv ? " pd pd-" + escapeHtml(String(dv.purpose).toLowerCase()) : ""}${canEdit ? " clickable" : ""}" title="${escapeHtml(tip)}"${canEdit ? ` onclick="popDevOpen('${lab}')"` : ""}>` +
         `<b>P${String(p).padStart(2, "0")}</b><i class="fa-solid ${on ? "fa-plug-circle-check" : "fa-plug"}"></i>` +
-        `<span>${on ? escapeHtml(c.via_core ? traceShortPort(c.via_core) : "Connected") : "Idle"}</span>` +
+        `<span>${escapeHtml(rear)}</span>` +
         (dv
           ? `<em class="pd-tag">${escapeHtml(POPDEV_SHORT[dv.purpose] || dv.purpose)}</em><small class="pd-dev">${escapeHtml(traceTrunc(dv.device_name, 12))}</small>`
           : "") +
@@ -3798,12 +4987,12 @@ function renderPopOtb(item, container) {
   html += `<div class="pd-section"><div class="pd-title"><i class="fa-solid fa-server"></i> Perangkat terhubung ke port OTB</div>`;
   if (pd.list.length) {
     html +=
-      `<table class="data-table pd-table"><thead><tr><th>Port OTB</th><th>Peruntukan</th><th>Perangkat</th><th>Interface</th><th>VLAN</th><th>Service</th><th>Pelanggan</th>${canEdit ? "<th></th>" : ""}</tr></thead><tbody>` +
+      `<table class="data-table pd-table"><thead><tr><th>Port OTB</th><th>Peruntukan</th><th>Perangkat</th><th>Slot</th><th>Interface</th><th>VLAN</th><th>Service</th><th>Pelanggan</th>${canEdit ? "<th></th>" : ""}</tr></thead><tbody>` +
       pd.list
         .map(
           (d) =>
             `<tr><td>${escapeHtml(d.port_core)}</td><td><span class="pd-chip pd-${escapeHtml(String(d.purpose).toLowerCase())}">${escapeHtml(POPDEV_SHORT[d.purpose] || d.purpose)}</span></td>` +
-            `<td>${escapeHtml(d.device_name)}<small class="pd-sub">${escapeHtml([d.device_type, d.vendor].filter(Boolean).join(" · "))}</small></td><td>${escapeHtml(d.interface)}</td>` +
+            `<td>${escapeHtml(d.device_name)}<small class="pd-sub">${escapeHtml([d.device_type, d.vendor].filter(Boolean).join(" · "))}</small></td><td>${escapeHtml(d.slot || "-")}</td><td>${escapeHtml(d.interface)}</td>` +
             `<td>${escapeHtml(d.vlan || "-")}</td><td>${escapeHtml(d.service || "-")}</td><td>${escapeHtml(d.customer_name || "-")}</td>` +
             `${canEdit ? `<td><button type="button" class="btn-mini" onclick="popDevOpen('${escapeHtml(d.port_core)}')" title="Ubah"><i class="fa-solid fa-pen"></i></button></td>` : ""}</tr>`,
         )
@@ -3856,6 +5045,7 @@ function popDevReadForm() {
     "device_type",
     "vendor",
     "device_name",
+    "slot",
     "interface",
     "vlan",
     "service",
@@ -3913,7 +5103,7 @@ function popDevRenderForm(item) {
   const ptp = d.purpose === "PTP";
   box.innerHTML =
     `<div class="pd-form"><div class="pd-form-h"><b><i class="fa-solid fa-plug"></i> ${escapeHtml(POPDEV.editPort)}</b>` +
-    `<span class="pd-sub">${c ? "Tersambung ke kabel core " + escapeHtml(c.via_core || "-") : "Belum disambung ke kabel"}</span></div>` +
+    `<span class="pd-sub">${c ? "Belakang: kabel core " + escapeHtml(c.via_core || "-") : "Belakang: belum disambung ke kabel"} &middot; Depan: 1 perangkat per port</span></div>` +
     `<div class="pd-grid">` +
     `<label>Peruntukan<select id="pd-purpose" onchange="popDevOnPurpose()">${Object.keys(
       cat.purposes,
@@ -3926,6 +5116,7 @@ function popDevRenderForm(item) {
     `<label>Jenis perangkat<select id="pd-device_type">${opts(cat.device_types, d.device_type)}</select></label>` +
     `<label>Merek / vendor<select id="pd-vendor"><option value=""${d.vendor ? "" : " selected"}>-</option>${opts(vend, d.vendor)}</select></label>` +
     `<label>Nama perangkat<input id="pd-device_name" list="pd-devnames" value="${escapeHtml(d.device_name || "")}" placeholder="mis. OLT-BJM-1 / RTR-CORE-2"><datalist id="pd-devnames">${devNames.map((n) => `<option value="${escapeHtml(n)}">`).join("")}</datalist></label>` +
+    `<label>Slot / PON (manual)<input id="pd-slot" value="${escapeHtml(d.slot || "")}" placeholder="mis. 1/1 (Raisecom) atau 1/1/3 (ADTRAN)"></label>` +
     `<label>Interface / port perangkat<input id="pd-interface" value="${escapeHtml(d.interface || "")}" placeholder="mis. 0/1/1 atau GigabitEthernet0/0/1"></label>` +
     `<label>VLAN<input id="pd-vlan" value="${escapeHtml(d.vlan || "")}" placeholder="mis. 100 atau 100,200 atau 100-110"></label>` +
     `<label class="pd-wide">Service<input id="pd-service" value="${escapeHtml(d.service || "")}" placeholder="mis. Dedicated Internet 100M / VPN L2"></label>` +
@@ -3963,6 +5154,7 @@ function popDevSave() {
     device_type: d.device_type,
     vendor: d.vendor || null,
     device_name: (d.device_name || "").trim(),
+    slot: (d.slot || "").trim() || null,
     interface: (d.interface || "").trim(),
     vlan: (d.vlan || "").trim() || null,
     service: (d.service || "").trim() || null,
@@ -4437,7 +5629,10 @@ function applyIncidentLocateSuggestion() {
   const loc = incidentLocate || {};
   let value = "",
     text = "";
-  if (wantCable && loc.cable) {
+  if (incidentPreset && wantCable) {
+    value = `CABLE:${incidentPreset.cableId}`;
+    text = `Kabel ${incidentPreset.name} dipilih dari tombol Report Cable Cut. Pilih core yang bermasalah, atau biarkan kosong bila seluruh kabel putus.`;
+  } else if (wantCable && loc.cable) {
     value = `CABLE:${Number(loc.cable.id)}`;
     text = `Terdeteksi di kabel ${loc.cable.name}, ${loc.cable.offset_m} m dari jalur, posisi ±${Math.round(loc.cable.position_m)} m dari ujung awal. Titik akan ditempelkan ke jalur.`;
   } else if (!wantCable && loc.node) {
@@ -4456,15 +5651,154 @@ function onIncidentTypeChange() {
   applyIncidentLocateSuggestion();
 }
 
+// --- Pemilih core terdampak (daftar centang + pratinjau dampak) ---
+const INCCORE = { cableId: null, cores: [], seq: 0, prevSeq: 0 };
+
+function incSelectedCores() {
+  const el = document.getElementById("inc-cores");
+  const raw = el ? el.value : "";
+  return raw
+    .split(/[,\s]+/)
+    .map((x) => parseInt(x, 10))
+    .filter((n) => !Number.isNaN(n));
+}
+
+function renderIncCoreList() {
+  const box = document.getElementById("inc-core-list");
+  if (!box) return;
+  const sel = new Set(incSelectedCores());
+  if (!INCCORE.cores.length) {
+    box.innerHTML = '<div class="inc-core-empty">Memuat core...</div>';
+    return;
+  }
+  const dest = (c) => {
+    if (!c.used) return "belum terpakai";
+    const parts = [];
+    if (c.odps && c.odps.length) parts.push(c.odps.join(", "));
+    else if (c.ends && c.ends.length) parts.push(c.ends.join(", "));
+    if (c.customers) parts.push(`${c.customers} pelanggan`);
+    return parts.length ? parts.join(" · ") : "tersambung";
+  };
+  box.innerHTML = INCCORE.cores
+    .map((c) => {
+      const n = Number(c.number);
+      return (
+        `<label class="inc-core-item${c.used ? "" : " unused"}${c.down ? " has-fault" : ""}">` +
+        `<input type="checkbox" value="${n}"${sel.has(n) ? " checked" : ""}${c.used ? "" : " disabled"} onchange="onIncCoreToggle()">` +
+        `<span class="inc-core-no">Core ${n}</span>` +
+        `<span class="inc-core-dest">&rarr; ${escapeHtml(dest(c))}</span>` +
+        (c.down
+          ? `<span class="inc-core-badge" title="Tiket aktif">down ${escapeHtml((c.tickets || []).join(", "))}</span>`
+          : "") +
+        `</label>`
+      );
+    })
+    .join("");
+}
+
+function onIncCoreToggle() {
+  const box = document.getElementById("inc-core-list");
+  const el = document.getElementById("inc-cores");
+  if (!box || !el) return;
+  const nums = Array.from(box.querySelectorAll("input[type=checkbox]"))
+    .filter((x) => x.checked)
+    .map((x) => Number(x.value));
+  el.value = nums.join(", ");
+  updateIncidentPreview();
+}
+
+function incCoreSelectAll(on) {
+  const box = document.getElementById("inc-core-list");
+  if (!box) return;
+  box.querySelectorAll("input[type=checkbox]").forEach((x) => {
+    if (!x.disabled) x.checked = !!on;
+  });
+  onIncCoreToggle();
+}
+
+function updateIncidentPreview() {
+  const out = document.getElementById("inc-preview");
+  const linked = document.getElementById("inc-linked-asset");
+  if (!out || !linked) return;
+  const [t, idRaw] = (linked.value || "").split(":");
+  const id = intOrNull(idRaw);
+  if (!t || id == null) {
+    out.style.display = "none";
+    out.innerHTML = "";
+    return;
+  }
+  const payload =
+    t === "CABLE" ? { linked_cable_id: id } : { linked_node_id: id };
+  const cores = incSelectedCores();
+  if (t === "CABLE" && cores.length) payload.affected_cores = cores;
+  const my = ++INCCORE.prevSeq;
+  out.style.display = "block";
+  out.className = "inc-preview";
+  out.innerHTML = "Menghitung dampak...";
+  apiRequest("/api/incidents/preview-impact", "POST", payload)
+    .then((r) => {
+      if (my !== INCCORE.prevSeq) return;
+      const c = r.counts || {};
+      const scope =
+        r.scope === "core"
+          ? `Core ${(cores || []).join(", ")} saja`
+          : r.scope === "kabel"
+            ? "SELURUH kabel (semua core)"
+            : r.scope === "node"
+              ? "Node ini dan semua di hilirnya"
+              : "";
+      const odp = (r.odp_names || []).length
+        ? `<div>ODP terdampak: <b>${r.odp_names.map(escapeHtml).join(", ")}</b></div>`
+        : "";
+      out.className =
+        "inc-preview" + (r.scope === "core" ? " is-core" : " is-wide");
+      out.innerHTML =
+        `<div class="inc-preview-title">Pratinjau dampak &mdash; ${escapeHtml(scope)}</div>` +
+        `<div><b>${Number(c.nodes || 0)}</b> node, <b>${Number(c.customers || 0)}</b> pelanggan, <b>${Number(c.odp || 0)}</b> ODP, <b>${Number(c.cables || 0)}</b> kabel akan ditandai Cut/Broken.</div>` +
+        odp;
+    })
+    .catch((err) => {
+      if (my !== INCCORE.prevSeq) return;
+      out.className = "inc-preview is-err";
+      out.textContent =
+        "Pratinjau gagal: " + (err && err.message ? err.message : err);
+    });
+}
+
 function onIncidentLinkedChange() {
   const linked = document.getElementById("inc-linked-asset");
   const wrap = document.getElementById("inc-cores-wrap");
-  if (wrap)
-    wrap.style.display =
-      linked && linked.value.startsWith("CABLE:") ? "block" : "none";
+  const isCable = !!(linked && linked.value.startsWith("CABLE:"));
+  if (wrap) wrap.style.display = isCable ? "block" : "none";
+  const el = document.getElementById("inc-cores");
+  const cableId = isCable ? intOrNull(linked.value.split(":")[1]) : null;
+  if (cableId !== INCCORE.cableId) {
+    if (el) el.value = "";
+    INCCORE.cableId = cableId;
+    INCCORE.cores = [];
+    renderIncCoreList();
+    if (cableId != null) {
+      const my = ++INCCORE.seq;
+      apiRequest(`/api/cables/${cableId}/core-routes`)
+        .then((r) => {
+          if (my !== INCCORE.seq) return;
+          INCCORE.cores = r.cores || [];
+          const sum = document.getElementById("inc-core-summary");
+          if (sum) sum.textContent = `${r.used} dari ${r.total} core terpakai`;
+          renderIncCoreList();
+        })
+        .catch((err) => {
+          const box = document.getElementById("inc-core-list");
+          if (box && my === INCCORE.seq)
+            box.innerHTML = `<div class="inc-core-empty">Gagal memuat core: ${escapeHtml((err && err.message) || "")}</div>`;
+        });
+    }
+  }
+  updateIncidentPreview();
 }
 
-function openAddIncidentModal(lat, lng) {
+function openAddIncidentModal(lat, lng, preset) {
+  incidentPreset = preset || null;
   document.getElementById("modal-add-incident").style.display = "flex";
   document.getElementById("inc-lat").value = lat;
   document.getElementById("inc-lng").value = lng;
@@ -4474,6 +5808,8 @@ function openAddIncidentModal(lat, lng) {
   document.getElementById("inc-description").value = "";
   const coresEl = document.getElementById("inc-cores");
   if (coresEl) coresEl.value = "";
+  INCCORE.cableId = null;
+  INCCORE.cores = [];
   const repEl = document.getElementById("inc-reporter");
   if (repEl) repEl.value = "";
   const hintEl = document.getElementById("inc-locate-hint");
@@ -4515,6 +5851,7 @@ function openAddIncidentModal(lat, lng) {
 }
 
 function closeAddIncidentModal() {
+  incidentPreset = null;
   document.getElementById("modal-add-incident").style.display = "none";
 }
 
@@ -4743,9 +6080,11 @@ function renderIncidentDetail(d) {
   if (groups.length) {
     impHtml +=
       `<div style="font-size:11px;color:#64748b;margin-bottom:4px;">` +
-      (loc.cable
-        ? `Semua aset di bawah berada di hilir titik gangguan pada kabel ${escapeHtml(loc.cable.name)}.`
-        : "Aset yang ikut terdampak:") +
+      (inc.affected_cores && loc.cable
+        ? `Hanya aset yang disuplai core terdampak pada kabel ${escapeHtml(loc.cable.name)} (core lain tetap normal).`
+        : loc.cable
+          ? `Semua aset di bawah berada di hilir titik gangguan pada kabel ${escapeHtml(loc.cable.name)}.`
+          : "Aset yang ikut terdampak:") +
       `</div>`;
     groups.forEach((g) => {
       const shown = g.names.slice(0, 40);
@@ -4942,7 +6281,7 @@ function changeIncidentStatus(status) {
 }
 
 // Logika rendering warna jalur kabel berdasarkan status
-function getCableStyle(type, status, installation) {
+function getCableStyle(type, status, installation, coreFault) {
   let color = "#0891b2";
   let weight = 3;
   let dashArray = null;
@@ -4975,6 +6314,14 @@ function getCableStyle(type, status, installation) {
     color = "#ef4444";
     dashArray = "6, 8"; // garis putus-putus
     cls = "cable-down"; // berkedip merah
+  }
+
+  // Gangguan sebagian core (tiket aktif dengan core tertentu): oranye putus-putus; kabel tetap berstatus Active
+  if (coreFault && status !== "Cut/Broken") {
+    color = "#f97316";
+    dashArray = "3, 7";
+    weight = Math.max(weight, 4);
+    cls = "cable-partial";
   }
 
   return { color, weight, dashArray, opacity: 0.9, className: cls };
@@ -5325,14 +6672,177 @@ function clearRecentSearches() {
   renderSearchDropdown();
 }
 
+// Koordinat dari kotak pencarian. Mendukung:
+//  desimal           -3.3186, 114.5944 | 3.3186 S, 114.5944 E | -3,3186 114,5944 (koma desimal)
+//  derajat-menit     3°19.117'S 114°35.667'E | S 3 19.117 E 114 35.667
+//  DMS               3°19'07"S 114°35'40"E | -3 19 07 114 35 40 | S3°19'07" E114°35'40"
+// Huruf arah: N/S/E/W atau bahasa Indonesia U/S/T/B (juga LU/LS/BT/BB). Tidak dikenali -> null (jatuh ke pencarian nama).
+const COORD_DIR = {
+  N: ["lat", 1],
+  U: ["lat", 1],
+  LU: ["lat", 1],
+  S: ["lat", -1],
+  LS: ["lat", -1],
+  E: ["lng", 1],
+  T: ["lng", 1],
+  BT: ["lng", 1],
+  W: ["lng", -1],
+  B: ["lng", -1],
+  BB: ["lng", -1],
+};
+function coordComponent(nums, dir) {
+  // nums: [derajat], [derajat, menit] atau [derajat, menit, detik]; tanda minus hanya pada angka pertama
+  if (!nums.length || nums.length > 3) return null;
+  const neg0 = /^-/.test(nums[0]);
+  if (nums.slice(1).some((s) => /^[+-]/.test(s))) return null;
+  const v = nums.map((s) => parseFloat(s.replace(/^[+-]/, "")));
+  if (v.some((x) => !Number.isFinite(x))) return null;
+  if (v.length > 1 && !Number.isInteger(v[0])) return null; // 3.5 19 tidak masuk akal
+  if (v.length > 2 && !Number.isInteger(v[1])) return null; // menit desimal hanya bila tanpa detik
+  if (v.length > 1 && v[1] >= 60) return null;
+  if (v.length > 2 && v[2] >= 60) return null;
+  let val = v[0] + (v[1] || 0) / 60 + (v[2] || 0) / 3600;
+  let sign = neg0 ? -1 : 1;
+  if (dir) sign = dir[1] === -1 ? -1 : neg0 ? -1 : 1; // S/W selalu negatif; N/E mengikuti angka (tanda ganda tidak dibalik)
+  return { axis: dir ? dir[0] : null, val: sign * val };
+}
 function parseCoordinate(query) {
-  const m = query.match(
-    /^([-+]?\d+(?:\.\d+)?)\s*[,;\s]\s*([-+]?\d+(?:\.\d+)?)$/,
-  );
-  if (!m) return null;
-  const lat = parseFloat(m[1]),
-    lng = parseFloat(m[2]);
+  const q0 = String(query || "").trim();
+  if (!q0) return null;
+  // jalur cepat desimal biasa (perilaku lama)
+  const m = q0.match(/^([-+]?\d+(?:\.\d+)?)\s*[,;\s]\s*([-+]?\d+(?:\.\d+)?)$/);
+  if (m) {
+    const lat = parseFloat(m[1]),
+      lng = parseFloat(m[2]);
+    return { lat, lng, valid: Math.abs(lat) <= 90 && Math.abs(lng) <= 180 };
+  }
+  let s = q0.toUpperCase().replace(/[−–—]/g, "-");
+  if (!/\d/.test(s)) return null;
+  // pemisah antar-komponen: ';' atau satu koma; dua koma atau lebih = koma desimal
+  const commas = (s.match(/,/g) || []).length;
+  if (s.includes(";")) s = s.replace(/;/g, " | ").replace(/,/g, ".");
+  else if (commas === 1) s = s.replace(",", " | ");
+  else if (commas >= 2) s = s.replace(/,/g, ".");
+  // simbol derajat/menit/detik -> spasi
+  s = s
+    .replace(/[°º˚]|DERAJAT|DEG/g, " ")
+    .replace(/[′’´‘`']{2}|[″”“"]/g, " ")
+    .replace(/[′’´‘`']/g, " ");
+  s = s
+    .replace(/(\d)([A-Z])/g, "$1 $2")
+    .replace(/([A-Z])(\d)/g, "$1 $2")
+    .replace(/([A-Z])(?=[-+]\d)/g, "$1 ");
+  // sisa karakter harus hanya angka, tanda, titik, spasi, '|', dan token arah utuh
+  const tokens =
+    s.match(/\||[+-]?\d+(?:\.\d+)?|\.\d+|LU|LS|BT|BB|[NSEWUTB]\b|\S+/g) || [];
+  const TOK = tokens.map((t) => {
+    if (t === "|") return { k: "sep" };
+    if (/^[+-]?(\d+(\.\d+)?|\.\d+)$/.test(t))
+      return { k: "num", s: t.startsWith(".") ? "0" + t : t };
+    if (COORD_DIR[t]) return { k: "dir", d: COORD_DIR[t] };
+    return { k: "bad" };
+  });
+  if (TOK.some((t) => t.k === "bad")) return null;
+  const nNum = TOK.filter((t) => t.k === "num").length;
+  if (nNum < 2) return null;
+  // bentuk grup komponen
+  let groups = [];
+  const seps = TOK.filter((t) => t.k === "sep").length;
+  const nDir = TOK.filter((t) => t.k === "dir").length;
+  if (seps > 1 || nDir > 2) return null;
+  if (seps === 1) {
+    let cur = { nums: [], dir: null };
+    TOK.forEach((t) => {
+      if (t.k === "sep") {
+        groups.push(cur);
+        cur = { nums: [], dir: null };
+      } else if (t.k === "num") cur.nums.push(t.s);
+      else if (t.k === "dir") {
+        if (cur.dir) cur.bad = true;
+        cur.dir = t.d;
+      }
+    });
+    groups.push(cur);
+    if (groups.some((g) => g.bad)) return null;
+  } else if (nDir > 0) {
+    const first = TOK[0].k === "dir"; // huruf di depan (S 3 19 07) atau di belakang (3 19 07 S)
+    let cur = { nums: [], dir: null };
+    TOK.forEach((t) => {
+      if (t.k === "dir") {
+        if (first) {
+          if (cur.nums.length || cur.dir) groups.push(cur);
+          cur = { nums: [], dir: t.d };
+        } else {
+          cur.dir = t.d;
+          groups.push(cur);
+          cur = { nums: [], dir: null };
+        }
+      } else cur.nums.push(t.s);
+    });
+    if (cur.nums.length || cur.dir) groups.push(cur);
+    if (nDir === 1 && groups.length === 1) {
+      // satu huruf saja: bagi dua angka, huruf milik komponen yang dekat
+      const g = groups[0],
+        h = g.nums.length / 2;
+      if (!Number.isInteger(h)) return null;
+      const dir = g.dir,
+        a = { nums: g.nums.slice(0, h), dir: null },
+        b = { nums: g.nums.slice(h), dir: null };
+      if (first) a.dir = dir;
+      else b.dir = dir;
+      groups = [a, b];
+    }
+  } else {
+    if (![2, 4, 6].includes(nNum)) return null;
+    const nums = TOK.map((t) => t.s);
+    const h = nums.length / 2;
+    groups = [
+      { nums: nums.slice(0, h), dir: null },
+      { nums: nums.slice(h), dir: null },
+    ];
+  }
+  if (groups.length !== 2 || groups.some((g) => !g.nums.length)) return null;
+  const comps = groups.map((g) => coordComponent(g.nums, g.dir));
+  if (comps.some((c) => !c)) return null;
+  let lat, lng;
+  const [c1, c2] = comps;
+  if (c1.axis && c2.axis) {
+    if (c1.axis === c2.axis) return null;
+  }
+  const ax1 = c1.axis || (c2.axis === "lat" ? "lng" : "lat");
+  const ax2 = c2.axis || (ax1 === "lat" ? "lng" : "lat");
+  if (ax1 === ax2) return null;
+  if (ax1 === "lat") {
+    lat = c1.val;
+    lng = c2.val;
+  } else {
+    lat = c2.val;
+    lng = c1.val;
+  }
+  const r = (x) => Math.round(x * 1e8) / 1e8;
+  lat = r(lat);
+  lng = r(lng);
   return { lat, lng, valid: Math.abs(lat) <= 90 && Math.abs(lng) <= 180 };
+}
+// Format tampilan: derajat-menit-detik dengan huruf arah (S/N, E/W)
+function formatDMS(lat, lng) {
+  const one = (v, pos, neg) => {
+    const hemi = v < 0 ? neg : pos;
+    let a = Math.abs(v);
+    let d = Math.floor(a);
+    let mi = Math.floor((a - d) * 60);
+    let sec = Math.round(((a - d) * 60 - mi) * 60 * 100) / 100;
+    if (sec >= 60) {
+      sec = 0;
+      mi += 1;
+    }
+    if (mi >= 60) {
+      mi = 0;
+      d += 1;
+    }
+    return `${d}°${String(mi).padStart(2, "0")}'${sec.toFixed(2).padStart(5, "0")}"${hemi}`;
+  };
+  return `${one(lat, "N", "S")} ${one(lng, "E", "W")}`;
 }
 
 // Aset NETGIS terdekat dari sebuah titik (node saja; kabel dihitung dari titik pertama tidak akurat)
@@ -5382,6 +6892,7 @@ function placePopupHtml(r) {
     <div class="popup-row"><span>Koordinat:</span> <b>${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}</b>
       <a href="#" class="popup-mini" onclick="copyCardCoord(${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}); return false;" title="Salin koordinat"><i class="fa-regular fa-copy"></i> Salin</a>
       <a class="popup-mini" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${r.lat.toFixed(6)},${r.lng.toFixed(6)}" title="Buka di Google Maps"><i class="fa-solid fa-up-right-from-square"></i> Maps</a></div>
+    <div class="popup-row"><span>DMS:</span> <b>${escapeHtml(formatDMS(r.lat, r.lng))}</b></div>
     ${r.label ? "" : `<div class="popup-row" id="card-addr"><a href="#" class="popup-mini" onclick="loadCardAddress(${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}); return false;"><i class="fa-solid fa-magnifying-glass-location"></i> Cari alamat</a></div>`}
     ${nearHtml}${acts ? `<div class="popup-actions">${acts}</div>` : ""}`;
 }
@@ -5538,7 +7049,7 @@ function renderSearchDropdown() {
     "autocomplete-item" + (idx === SEARCH.active ? " active" : "");
   const coordItem = items.find((x) => x.t === "coord");
   if (coordItem) {
-    html += `<div class="${cls()}" data-i="${idx}" onclick="chooseSearchItem(${idx})"><div><div class="item-title"><i class="fa-solid fa-crosshairs" style="margin-right:6px;"></i>Ke koordinat ${coordItem.c.lat}, ${coordItem.c.lng}</div></div></div>`;
+    html += `<div class="${cls()}" data-i="${idx}" onclick="chooseSearchItem(${idx})"><div><div class="item-title"><i class="fa-solid fa-crosshairs" style="margin-right:6px;"></i>Ke koordinat ${+coordItem.c.lat.toFixed(6)}, ${+coordItem.c.lng.toFixed(6)}</div><div class="item-subtitle">${escapeHtml(formatDMS(coordItem.c.lat, coordItem.c.lng))}</div></div></div>`;
     idx++;
   }
   if (SEARCH.local.length) {
@@ -6611,6 +8122,11 @@ function openPlanPanel() {
   fillOriginList();
   loadPlanRules();
   loadSavedPlans();
+  const psl = $id("plan-svc-list");
+  if (psl && !psl.innerHTML)
+    psl.innerHTML = ASSET_SERVICES.map(
+      (x) => `<option value="${escapeHtml(x)}">`,
+    ).join("");
   if (typeof onPlanServiceChange === "function") onPlanServiceChange();
 }
 function planToSearch() {
@@ -6675,9 +8191,11 @@ function setPlanOrigin(n) {
     lat: n.lat,
     lng: n.lng,
   };
+  PLANOTB.picked = [];
   $id("plan-origin-input").value = n.name;
   $id("plan-origin-chip").textContent =
     `${n.name} (${TYPE_LABEL[n.type] || n.type})`;
+  planOtbRefresh();
   planDirty();
   drawPlanEndpoints();
 }
@@ -6967,8 +8485,143 @@ function planTerm() {
 function planHubMode() {
   return checkedRadio("plan-hubmode", "NEAREST");
 }
+// --- Port OTB POP asal: otomatis (usulan) atau manual (pilih sendiri) ---
+const PLANOTB = { mode: "AUTO", picked: [], data: null, seq: 0 };
+const OTB_STATE_LABEL = {
+  free: "kosong",
+  in: "sudah ada kabel masuk",
+  out: "kabel keluar terpakai",
+  full: "masuk + keluar terpakai",
+};
+function planOtbIsPop() {
+  const o = TOOL.plan && TOOL.plan.origin;
+  return !!o && String(o.type || "").toUpperCase() === "POP";
+}
+function planOtbCores() {
+  return Number(($id("plan-cores") || { value: 1 }).value) || 1;
+}
+function planOtbRefresh() {
+  const box = $id("plan-otb-box");
+  if (!box) return;
+  if (!planOtbIsPop()) {
+    box.style.display = "none";
+    PLANOTB.data = null;
+    PLANOTB.picked = [];
+    return;
+  }
+  box.style.display = "";
+  const o = TOOL.plan.origin,
+    seq = ++PLANOTB.seq;
+  return apiRequest(`/api/nodes/${Number(o.id)}/otb-ports?n=${planOtbCores()}`)
+    .then((d) => {
+      if (seq !== PLANOTB.seq) return;
+      PLANOTB.data = d;
+      planOtbRender();
+    })
+    .catch((e) => {
+      const l = $id("plan-otb-list");
+      if (l)
+        l.innerHTML = `<span class="tp-muted">Gagal memuat port OTB: ${escapeHtml(e.message)}</span>`;
+    });
+}
+function planOtbMode() {
+  const r = document.querySelectorAll
+    ? document.querySelectorAll('input[name="plan-otbmode"]')
+    : [];
+  PLANOTB.mode = "AUTO";
+  for (const x of r || []) if (x.checked) PLANOTB.mode = x.value;
+  if (PLANOTB.mode === "MANUAL" && !PLANOTB.picked.length && PLANOTB.data)
+    PLANOTB.picked = (PLANOTB.data.suggest || []).slice(0, planOtbCores());
+  planOtbRender();
+  planDirty();
+}
+function planOtbToggle(port) {
+  const need = planOtbCores(),
+    i = PLANOTB.picked.indexOf(port);
+  if (i >= 0) PLANOTB.picked.splice(i, 1);
+  else {
+    if (PLANOTB.picked.length >= need) PLANOTB.picked.shift();
+    PLANOTB.picked.push(port);
+  }
+  planOtbRender();
+  planDirty();
+}
+function planOtbShort(l) {
+  return String(l).replace(/^OTB-(\d+)\s*\/\s*P(\d+)$/i, (m, a, b) => `P${b}`);
+}
+function planOtbRender() {
+  const list = $id("plan-otb-list"),
+    hint = $id("plan-otb-hint"),
+    d = PLANOTB.data;
+  if (!list || !d) return;
+  const need = planOtbCores();
+  if (PLANOTB.mode !== "MANUAL") {
+    const dev = (p) => {
+      const x = d.ports.find((y) => y.port === p);
+      return x && x.device
+        ? ` &middot; ${escapeHtml(x.device.device_name)}${x.device.slot ? " slot " + escapeHtml(x.device.slot) : ""}`
+        : "";
+    };
+    list.innerHTML =
+      d.suggest && d.suggest.length
+        ? `<div class="otb-auto">Usulan: ${d.suggest.map((p) => `<b>${escapeHtml(p)}</b>${dev(p)}`).join("<br>")}</div>`
+        : `<div class="otb-auto bad">${escapeHtml(d.suggest_error || "Tidak ada port yang bisa dipilih otomatis")}</div>`;
+    hint.innerHTML =
+      "Port kosong dengan perangkat PON/OLT di depan didahulukan; port yang dicadangkan PTP/uplink dilewati. Port yang hanya menerima kabel masuk dipakai paling akhir dengan peringatan.";
+    return;
+  }
+  const groups = {};
+  d.ports.forEach((x) => {
+    const k = (/^OTB-(\d+)/i.exec(x.port) || [0, 1])[1];
+    (groups[k] = groups[k] || []).push(x);
+  });
+  list.innerHTML = Object.keys(groups)
+    .map(
+      (k) =>
+        `<div class="otb-pick-g"><b>OTB-${k}</b><div class="otb-pick-grid">` +
+        groups[k]
+          .map((x) => {
+            const blocked = x.state === "out" || x.state === "full",
+              sel = PLANOTB.picked.includes(x.port);
+            const dv = x.device
+              ? ` | depan: ${x.device.device_name}${x.device.slot ? " slot " + x.device.slot : ""} (${x.device.purpose})`
+              : "";
+            return `<button type="button" class="otb-pk st-${x.state}${sel ? " sel" : ""}${x.device ? " dev" : ""}"${blocked ? " disabled" : ""} onclick="planOtbToggle('${escapeHtml(x.port)}')" title="${escapeHtml(x.port + " | " + OTB_STATE_LABEL[x.state] + dv)}">${escapeHtml(planOtbShort(x.port))}</button>`;
+          })
+          .join("") +
+        "</div></div>",
+    )
+    .join("");
+  const ok = PLANOTB.picked.length === need;
+  hint.innerHTML =
+    `Dipilih <b class="${ok ? "ok" : "bad"}">${PLANOTB.picked.length}/${need}</b> port: ${PLANOTB.picked.map(escapeHtml).join(", ") || "-"}.` +
+    ` <span class="otb-lg"><i class="st-free"></i>kosong <i class="st-in"></i>masuk <i class="st-out"></i>terpakai <i class="dev"></i>ada perangkat</span>`;
+}
+function planOtbPayload() {
+  return {
+    pop_ports:
+      planOtbIsPop() && PLANOTB.mode === "MANUAL" && PLANOTB.picked.length
+        ? PLANOTB.picked.slice()
+        : null,
+  };
+}
+function planOtbResultHtml(o) {
+  const pp = o && o.port_plan;
+  if (!pp) return "";
+  const mode = pp.mode === "MANUAL" ? "manual" : "otomatis";
+  return (
+    `<div class="pr-cust"><i class="fa-solid fa-grip"></i> Port OTB (${mode}): ` +
+    (pp.ports && pp.ports.length
+      ? pp.ports.map((p) => `<b>${escapeHtml(p)}</b>`).join(", ")
+      : `<span class="bad">${escapeHtml(pp.error || "belum ada")}</span>`) +
+    `</div>`
+  );
+}
 function onPlanServiceChange() {
   const cores = Number(($id("plan-cores") || { value: 1 }).value);
+  if (PLANOTB.picked.length > cores)
+    PLANOTB.picked = PLANOTB.picked.slice(0, cores);
+  planOtbRefresh();
   const scen = ($id("plan-scen") || { value: "AUTO" }).value;
   const hubBox = $id("plan-hub-box");
   if (hubBox) hubBox.style.display = scen === "DIRECT" ? "none" : "block";
@@ -6995,6 +8648,71 @@ function setPlanHub(lat, lng) {
   planDirty();
   if (TOOL.plan.result && TOOL.plan.origin && TOOL.plan.dest) runPlanPreview();
 }
+function planCustToggle() {
+  const box = $id("plan-cust-box");
+  if (box) box.style.display = $id("plan-customer").checked ? "" : "none";
+  planDirty();
+}
+function planNormCodes() {
+  ["plan-sn", "plan-reg"].forEach((i) => {
+    const e = $id(i);
+    if (e) e.value = assetNormCode(e.value);
+  });
+}
+function planCustPayload() {
+  const v = (id) => (($id(id) || { value: "" }).value || "").trim();
+  const bw = v("plan-bw") ? bwToMbps(v("plan-bw"), v("plan-bw-unit")) : null;
+  return {
+    cust_service: v("plan-svc") || null,
+    cust_bw_mbps: bw,
+    cust_sn: assetNormCode(v("plan-sn")) || null,
+    cust_link_type: v("plan-linktype") || null,
+    cust_reg_code: assetNormCode(v("plan-reg")) || null,
+  };
+}
+function planCustFill(ci) {
+  const set = (i, x) => {
+    const e = $id(i);
+    if (e) e.value = x == null ? "" : String(x);
+  };
+  ci = ci || {};
+  set("plan-svc", ci.service);
+  set("plan-linktype", ci.link_type);
+  set("plan-sn", ci.device_sn);
+  set("plan-reg", ci.reg_code);
+  const b = bwSplit(ci.bandwidth_mbps);
+  set("plan-bw", b.v);
+  set("plan-bw-unit", b.u);
+}
+function planTrunkHtml(list) {
+  return (list || [])
+    .map((t) => {
+      const cls = t.status_after || "ok";
+      if (!t.trunk_mbps)
+        return `<div class="pr-trunk trunk-unset"><b>Trunk ${escapeHtml(t.pop_name)}</b> belum diatur; beban setelah pelanggan ini ${escapeHtml(fmtBw(t.after_mbps))}.</div>`;
+      return (
+        `<div class="pr-trunk trunk-${escapeHtml(cls)}"><div class="pr-trunk-h"><b><i class="fa-solid fa-gauge-high"></i> Trunk ${escapeHtml(t.pop_name)}</b>` +
+        `<span>${t.before_pct}% &rarr; <b>${t.after_pct}%</b></span></div>` +
+        `<div class="trunk-bar"><i style="width:${Math.max(0, Math.min(100, t.after_pct))}%"></i></div>` +
+        `<small>${escapeHtml(fmtBw(t.after_mbps))} dari ${escapeHtml(fmtBw(t.trunk_mbps))} setelah pelanggan ini${t.overbook > 1 ? ` (overbooking 1:${t.overbook})` : ""}</small></div>`
+      );
+    })
+    .join("");
+}
+function planCustInfoHtml(ci) {
+  if (!ci || !Object.keys(ci).length) return "";
+  const rows = [
+    ["Layanan", ci.service],
+    ["Jenis", ci.link_type],
+    ["Bandwidth", ci.bandwidth_mbps != null ? fmtBw(ci.bandwidth_mbps) : null],
+    ["SN perangkat", ci.device_sn],
+    ["Kode registrasi", ci.reg_code],
+  ]
+    .filter((r) => r[1])
+    .map((r) => `<span>${r[0]}: <b>${escapeHtml(String(r[1]))}</b></span>`)
+    .join("");
+  return `<div class="pr-cust"><i class="fa-solid fa-user-tag"></i> ${rows}</div>`;
+}
 function planPayload() {
   const p = TOOL.plan;
   const scen = ($id("plan-scen") || { value: "AUTO" }).value;
@@ -7018,6 +8736,8 @@ function planPayload() {
     create_customer: !!$id("plan-customer").checked,
     use_poles: !!$id("plan-poles").checked,
     use_slack: !!$id("plan-slack").checked,
+    ...planCustPayload(),
+    ...planOtbPayload(),
   };
 }
 function runPlanPreview() {
@@ -7084,6 +8804,7 @@ function renderPlanResult(d) {
       <table class="pr-boq"><thead><tr><th>Kebutuhan aset</th><th>Jumlah</th></tr></thead><tbody>
         ${d.boq_items.map((b) => `<tr><td>${escapeHtml(b.label)}</td><td class="num">${b.unit === "m" ? fmtM(b.qty) : `${b.qty} ${escapeHtml(b.unit)}`}</td></tr>`).join("")}
       </tbody></table>
+      ${planOtbResultHtml(d.origin)}${planCustInfoHtml(d.customer_info)}${planTrunkHtml(d.trunk_check)}
       ${d.loss ? `<div class="pr-loss"><div class="trace-loss-h">Redaman estimasi (POP &rarr; pelanggan)</div>${lossBreakdownHtml(d.loss)}</div>` : ""}
       ${s.segments && s.segments.length > 1 ? `<table class="pr-boq"><thead><tr><th>Segmen</th><th>Kabel</th><th>Panjang</th></tr></thead><tbody>${s.segments.map((g) => `<tr><td>${escapeHtml(g.label)}</td><td>${escapeHtml(g.cable_label)} ${escapeHtml(g.cable_capacity)}</td><td class="num">${fmtM(g.route_length_m)}</td></tr>`).join("")}</tbody></table>` : ""}
       ${(s.notes || []).length ? `<ul class="pr-notes">${s.notes.map((n) => `<li><i class="fa-solid fa-circle-info"></i> ${escapeHtml(n)}</li>`).join("")}</ul>` : ""}
@@ -7192,6 +8913,16 @@ function openSavedPlan(id) {
       $id("plan-dest-name").value =
         r.dest.name === "Pelanggan baru" ? "" : r.dest.name;
       $id("plan-customer").checked = r.create_customer !== false;
+      PLANOTB.picked =
+        r.origin && r.origin.pop_ports ? r.origin.pop_ports.slice() : [];
+      PLANOTB.mode = PLANOTB.picked.length ? "MANUAL" : "AUTO";
+      document.querySelectorAll('input[name="plan-otbmode"]').forEach((x) => {
+        x.checked = x.value === PLANOTB.mode;
+      });
+      planCustFill(r.customer_info);
+      if ($id("plan-cust-box"))
+        $id("plan-cust-box").style.display =
+          r.create_customer === false ? "none" : "";
       $id("plan-poles").checked = r.use_poles !== false;
       $id("plan-slack").checked = r.use_slack !== false;
       document.querySelectorAll('input[name="plan-inst"]').forEach((x) => {
@@ -7846,6 +9577,15 @@ function openDataModal(tab, fromInventory) {
 function closeDataModal() {
   $id("modal-data").style.display = "none";
 }
+// Penutupan oleh pengguna (tombol Tutup, ×, Esc): kosongkan semua tampilan berkas supaya tidak perlu refresh.
+// closeDataModal() murni menyembunyikan dan dipakai alur yang kembali ke modal (pilih jalur di peta, tampil di peta).
+function dismissDataModal() {
+  resetImport();
+  resetOtdr();
+  resetSor();
+  setDataMsg("exp-msg", "", "");
+  closeDataModal();
+}
 function setDataTab(tab) {
   DATA.tab = tab;
   $id("data-export").style.display = tab === "export" ? "" : "none";
@@ -7898,6 +9638,58 @@ function onExportScopeChange() {
     if (el) el.disabled = inc;
   });
 }
+// ---- Indikator progres (persentase nyata atau berjalan/indeterminate) + stopwatch ----
+const DPROG = {};
+function fmtElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  return s < 60 ? `${s} dtk` : `${Math.floor(s / 60)} mnt ${s % 60} dtk`;
+}
+function renderDataProgress(id) {
+  const st = DPROG[id],
+    el = $id(id);
+  if (!el || !st) return;
+  const det = typeof st.pct === "number";
+  el.style.display = "block";
+  el.innerHTML =
+    `<div class="dp-head"><span class="dp-text">${escapeHtml(st.text || "")}</span>` +
+    `<span class="dp-meta">${det ? `<b>${Math.round(st.pct)}%</b> &middot; ` : ""}${fmtElapsed(Date.now() - st.t0)}</span></div>` +
+    `<div class="dp-track"><div class="dp-fill${det ? "" : " indet"}" style="${det ? `width:${Math.max(2, Math.min(100, st.pct))}%` : ""}"></div></div>`;
+}
+// pct: angka 0-100 = persentase nyata; null/undefined = indeterminate
+function startDataProgress(id, text, pct) {
+  stopDataProgress(id);
+  DPROG[id] = {
+    t0: Date.now(),
+    text,
+    pct,
+    timer: setInterval(() => renderDataProgress(id), 500),
+  };
+  renderDataProgress(id);
+}
+function updateDataProgress(id, text, pct) {
+  const st = DPROG[id];
+  if (!st) return;
+  if (text != null) st.text = text;
+  st.pct = pct;
+  renderDataProgress(id);
+}
+function stopDataProgress(id) {
+  const st = DPROG[id];
+  if (st && st.timer) clearInterval(st.timer);
+  delete DPROG[id];
+  const el = $id(id);
+  if (el) {
+    el.style.display = "none";
+    el.innerHTML = "";
+  }
+}
+function setBtnBusy(btn, on) {
+  if (!btn) return;
+  btn.disabled = !!on;
+  btn.className =
+    (btn.className || "").replace(/\bis-busy\b/g, "").trim() +
+    (on ? " is-busy" : "");
+}
 function setDataMsg(id, text, cls) {
   const el = $id(id);
   if (!el) return;
@@ -7913,8 +9705,14 @@ function bufToBase64(buf) {
   return btoa(bin);
 }
 // Unduh berkas dari API (cookie sesi ikut terkirim) lalu simpan lewat tautan sementara
-async function downloadFromApi(url, init) {
-  const res = await fetch(url, { credentials: "same-origin", ...(init || {}) });
+async function downloadFromApi(url, init, onProgress) {
+  netBarStart();
+  let res;
+  try {
+    res = await fetch(url, { credentials: "same-origin", ...(init || {}) });
+  } finally {
+    netBarEnd();
+  }
   if (!res.ok) {
     let msg = `Permintaan gagal (${res.status})`;
     try {
@@ -7924,7 +9722,29 @@ async function downloadFromApi(url, init) {
     if (res.status === 401) showLogin("Sesi berakhir, silakan masuk lagi.");
     throw new Error(msg);
   }
-  const blob = await res.blob();
+  let blob;
+  const total = Number(
+    (res.headers && res.headers.get && res.headers.get("Content-Length")) || 0,
+  );
+  if (onProgress && res.body && res.body.getReader) {
+    // Baca bertahap supaya persentase unduhan nyata
+    const rd = res.body.getReader(),
+      parts = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await rd.read();
+      if (done) break;
+      parts.push(value);
+      got += value.length;
+      onProgress(got, total);
+    }
+    blob = new Blob(parts, {
+      type: res.headers.get("Content-Type") || "application/octet-stream",
+    });
+  } else {
+    blob = await res.blob();
+    if (onProgress) onProgress(blob.size || total, total || blob.size);
+  }
   const cd =
     (res.headers &&
       res.headers.get &&
@@ -7965,21 +9785,39 @@ function downloadExport() {
     delimiter: $id("exp-delim").value || ",",
   });
   const btn = $id("exp-btn");
-  btn.disabled = true;
-  setDataMsg("exp-msg", "Menyiapkan berkas...", "info");
-  return downloadFromApi("/api/export?" + q.toString())
-    .then((r) =>
+  setBtnBusy(btn, true);
+  setDataMsg("exp-msg", "", "");
+  startDataProgress("exp-prog", "Server menyiapkan berkas...", null);
+  const fmtKb = (n) =>
+    n >= 1048576
+      ? (n / 1048576).toFixed(1) + " MB"
+      : Math.max(1, Math.round(n / 1024)) + " KB";
+  return downloadFromApi(
+    "/api/export?" + q.toString(),
+    undefined,
+    (got, total) =>
+      updateDataProgress(
+        "exp-prog",
+        total
+          ? `Mengunduh ${fmtKb(got)} dari ${fmtKb(total)}`
+          : `Mengunduh ${fmtKb(got)}...`,
+        total ? (got * 100) / total : null,
+      ),
+  )
+    .then((r) => {
+      stopDataProgress("exp-prog");
       setDataMsg(
         "exp-msg",
         `Diunduh: ${r.name}${r.nodes != null ? ` (${r.nodes} node, ${r.cables} kabel${Number(r.incidents) ? `, ${r.incidents} incident` : ""})` : ""}`,
         "ok",
-      ),
-    )
-    .catch((err) =>
-      setDataMsg("exp-msg", "Gagal mengunduh: " + err.message, "err"),
-    )
+      );
+    })
+    .catch((err) => {
+      stopDataProgress("exp-prog");
+      setDataMsg("exp-msg", "Gagal mengunduh: " + err.message, "err");
+    })
     .finally(() => {
-      btn.disabled = false;
+      setBtnBusy(btn, false);
     });
 }
 function downloadTemplate(kind, format) {
@@ -7999,14 +9837,29 @@ function onImportFileChosen(ev) {
       "err",
     );
   const rd = new FileReader();
+  startDataProgress("imp-prog", `Membaca berkas ${f.name}...`, 0);
+  rd.onprogress = (e) => {
+    if (e && e.lengthComputable)
+      updateDataProgress("imp-prog", null, (e.loaded * 100) / e.total);
+  };
   rd.onload = () => {
+    stopDataProgress("imp-prog");
     DATA.name = f.name;
     DATA.b64 = bufToBase64(rd.result);
+    DATA.preview = null;
     $id("imp-file-name").textContent = f.name;
     previewImport();
   };
-  rd.onerror = () => setDataMsg("imp-msg", "Berkas tidak dapat dibaca.", "err");
+  rd.onerror = () => {
+    stopDataProgress("imp-prog");
+    setDataMsg("imp-msg", "Berkas tidak dapat dibaca.", "err");
+  };
   rd.readAsArrayBuffer(f);
+  try {
+    ev.target.value = "";
+  } catch (e) {
+    /* abaikan */
+  }
 }
 function importBody() {
   return {
@@ -8019,17 +9872,20 @@ function previewImport() {
   if (!DATA.b64) return;
   const seq = ++DATA.seq;
   $id("imp-commit").disabled = true;
-  setDataMsg("imp-msg", "Membaca & memeriksa berkas...", "info");
+  setDataMsg("imp-msg", "", "");
+  startDataProgress("imp-prog", "Server memeriksa isi berkas...", null);
   $id("imp-preview").innerHTML = "";
   return apiRequest("/api/import/preview", "POST", importBody())
     .then((d) => {
       if (seq !== DATA.seq) return;
+      stopDataProgress("imp-prog");
       DATA.preview = d;
       setDataMsg("imp-msg", "", "");
       renderImportPreview(d);
     })
     .catch((err) => {
       if (seq !== DATA.seq) return;
+      stopDataProgress("imp-prog");
       DATA.preview = null;
       setDataMsg("imp-msg", err.message, "err");
     });
@@ -8095,25 +9951,45 @@ function commitImport() {
     )
   )
     return;
-  $id("imp-commit").disabled = true;
-  setDataMsg("imp-msg", "Menerapkan impor...", "info");
-  return apiRequest("/api/import/commit", "POST", importBody())
-    .then((r) => {
-      resetImport();
-      setDataMsg(
-        "imp-msg",
-        r.message +
-          (r.unlinked_cables
-            ? ` ${r.unlinked_cables} kabel belum terhubung ke node di ujungnya (tidak ada node dalam 30 m).`
-            : ""),
-        "ok",
+  const btn = $id("imp-commit");
+  setBtnBusy(btn, true);
+  setDataMsg("imp-msg", "", "");
+  startDataProgress("imp-prog", "Memulai impor...", 0);
+  const finishOk = (r) => {
+    stopDataProgress("imp-prog");
+    setBtnBusy(btn, false);
+    resetImport();
+    setDataMsg(
+      "imp-msg",
+      r.message +
+        (r.unlinked_cables
+          ? ` ${r.unlinked_cables} kabel belum terhubung ke node di ujungnya (tidak ada node dalam 30 m).`
+          : ""),
+      "ok",
+    );
+    loadData();
+  };
+  const finishErr = (msg) => {
+    stopDataProgress("imp-prog");
+    setDataMsg("imp-msg", "Gagal menerapkan: " + msg, "err");
+    setBtnBusy(btn, false);
+    btn.disabled = false;
+  };
+  const poll = (jobId) =>
+    apiRequest("/api/import/jobs/" + jobId).then((j) => {
+      if (j.status === "done") return finishOk(j.result);
+      if (j.status === "error") return finishErr(j.error || "tidak diketahui");
+      const det = j.total > 0;
+      updateDataProgress(
+        "imp-prog",
+        det ? `${j.stage} (${j.done} dari ${j.total} data)` : j.stage,
+        det ? j.percent : null,
       );
-      loadData();
-    })
-    .catch((err) => {
-      setDataMsg("imp-msg", "Gagal menerapkan: " + err.message, "err");
-      $id("imp-commit").disabled = false;
+      return new Promise((res) => setTimeout(res, 350)).then(() => poll(jobId));
     });
+  return apiRequest("/api/import/commit-async", "POST", importBody())
+    .then((r) => poll(r.job_id))
+    .catch((err) => finishErr(err.message));
 }
 
 // =====================================================================================
@@ -8130,12 +10006,1115 @@ const OTDR = {
   legend: null,
 };
 
+// ===================== OTDR: berkas SOR =====================
+const SOR = {
+  name: "",
+  b64: "",
+  data: null,
+  savedId: null,
+  view: null,
+  seq: 0,
+  info: {},
+  base: null,
+  list: [],
+};
+const SOR_FIBER = {
+  652: "G.652",
+  651: "G.651",
+  653: "G.653",
+  654: "G.654",
+  655: "G.655",
+  656: "G.656",
+  657: "G.657",
+};
+function sorFmtTs(ts) {
+  if (!ts) return "-";
+  const d = new Date(ts * 1000);
+  return isNaN(d.getTime())
+    ? "-"
+    : d.toISOString().replace("T", " ").slice(0, 16) + " UTC";
+}
+function sorKm(m) {
+  return m == null
+    ? "-"
+    : m >= 2000
+      ? (m / 1000).toFixed(3) + " km"
+      : Math.round(m) + " m";
+}
+function sorEventKind(e) {
+  const c = String(e.type_code || "");
+  const refl = c[0] === "1" || c[0] === "2";
+  const last = c[1] === "E" || c[1] === "O";
+  if (e.no === 1 && e.distance_m === 0) return "Awal (konektor)";
+  if (last) return refl ? "Ujung serat (reflektif)" : "Ujung serat";
+  if (refl) return "Reflektif (konektor/patah)";
+  return "Non-reflektif (splice/tekukan)";
+}
+function onSorFileChosen(ev) {
+  const f = ev && ev.target && ev.target.files && ev.target.files[0];
+  if (!f) return;
+  if (f.size > 8 * 1024 * 1024)
+    return setDataMsg("sor-msg", "Berkas lebih dari 8 MB.", "err");
+  const rd = new FileReader();
+  rd.onload = () => {
+    sorClearView();
+    SOR.name = f.name;
+    SOR.b64 = bufToBase64(rd.result);
+    SOR.savedId = null;
+    $id("sor-file-name").textContent = f.name;
+    parseSor();
+  };
+  rd.onerror = () => setDataMsg("sor-msg", "Berkas tidak dapat dibaca.", "err");
+  rd.readAsArrayBuffer(f);
+  try {
+    ev.target.value = "";
+  } catch (e) {
+    /* abaikan */
+  }
+}
+const SOR_FILE_HINT =
+  "Pilih berkas .sor (Telcordia SR-4731: EXFO, Viavi, Yokogawa, Anritsu, Fujikura, dll.)";
+// kosongkan grafik, perbandingan, analisis, dan gambar di peta (tanpa menyentuh daftar tersimpan)
+function sorClearView() {
+  SOR.seq++;
+  SOR.data = null;
+  SOR.view = null;
+  SOR.info = {};
+  SOR.base = null;
+  if ($id("sor-view")) $id("sor-view").innerHTML = "";
+  if ($id("sor-cmp")) $id("sor-cmp").innerHTML = "";
+  sorAnReset();
+  if (typeof sorMapGroup !== "undefined" && sorMapGroup)
+    sorMapGroup.clearLayers();
+}
+function resetSor() {
+  sorClearView();
+  SOR.name = "";
+  SOR.b64 = "";
+  SOR.savedId = null;
+  if ($id("sor-file")) $id("sor-file").value = "";
+  if ($id("sor-file-name")) $id("sor-file-name").textContent = SOR_FILE_HINT;
+  setDataMsg("sor-msg", "", "");
+}
+function parseSor() {
+  if (!SOR.b64) return;
+  const seq = ++SOR.seq;
+  setDataMsg("sor-msg", "Membaca berkas SOR...", "info");
+  $id("sor-view").innerHTML = "";
+  return apiRequest("/api/otdr/sor/parse", "POST", {
+    filename: SOR.name,
+    content_base64: SOR.b64,
+  })
+    .then((d) => {
+      if (seq !== SOR.seq) return;
+      setDataMsg("sor-msg", "", "");
+      showSor(d, false);
+    })
+    .catch((err) => {
+      if (seq !== SOR.seq) return;
+      SOR.data = null;
+      setDataMsg("sor-msg", err.message, "err");
+    });
+}
+function showSor(d, saved) {
+  SOR.data = d;
+  const pts = (d.trace && d.trace.points) || [];
+  SOR.view = { x0: 0, x1: pts.length ? pts[pts.length - 1][0] : 1 };
+  SOR.info = saved
+    ? { is_baseline: !!d.is_baseline, incident: d.incident || null }
+    : {};
+  SOR.base = null;
+  renderSor(saved);
+  sorAnReset();
+  if (saved && d.analysis) sorRestoreAnalysis(d);
+  sorLoadCompare();
+}
+function sorMetaRows(d) {
+  const g = d.general || {},
+    fx = d.fixed || {},
+    s = d.supplier || {},
+    sm = d.summary || {};
+  const rows = [
+    ["Format", d.format],
+    ["Kabel", g.cable_id],
+    ["Serat / core", g.fiber_id],
+    ["Jenis serat", SOR_FIBER[g.fiber_type] || g.fiber_type || "-"],
+    [
+      "Lokasi A / B",
+      [g.location_a, g.location_b].filter(Boolean).join(" / ") || "-",
+    ],
+    ["Operator", g.operator],
+    ["Waktu ukur", sorFmtTs(fx.timestamp)],
+    [
+      "Panjang gelombang",
+      fx.wavelength_nm != null ? fx.wavelength_nm + " nm" : "-",
+    ],
+    [
+      "Lebar pulsa",
+      fx.pulse_width_ns != null ? fx.pulse_width_ns + " ns" : "-",
+    ],
+    [
+      "Rata-rata",
+      fx.averages != null
+        ? fx.averages + " kali / " + fx.avg_time_s + " dtk"
+        : "-",
+    ],
+    ["Indeks bias (IOR)", fx.group_index],
+    ["Rentang", d.trace && d.trace.length_m ? sorKm(d.trace.length_m) : "-"],
+    [
+      "Resolusi sampel",
+      d.trace && d.trace.spacing_m ? d.trace.spacing_m.toFixed(3) + " m" : "-",
+    ],
+    ["Titik data", d.trace ? d.trace.n : "-"],
+    [
+      "Alat / modul",
+      [s.supplier, s.module, s.module_sn && "SN " + s.module_sn]
+        .filter(Boolean)
+        .join(" · ") || "-",
+    ],
+    ["Perangkat lunak", s.software || "-"],
+    [
+      "Total loss",
+      sm.total_loss_db != null ? sm.total_loss_db.toFixed(3) + " dB" : "-",
+    ],
+    ["ORL", sm.orl_db ? sm.orl_db.toFixed(2) + " dB" : "-"],
+    [
+      "Ambang loss / refl / ujung",
+      `${fx.loss_threshold_db} dB / ${fx.refl_threshold_db} dB / ${fx.eot_threshold_db} dB`,
+    ],
+  ];
+  return rows
+    .map(
+      (r) =>
+        `<tr><th>${escapeHtml(r[0])}</th><td>${escapeHtml(r[1] == null || r[1] === "" ? "-" : String(r[1]))}</td></tr>`,
+    )
+    .join("");
+}
+function sorNiceStep(span, n) {
+  const raw = span / n,
+    p = Math.pow(10, Math.floor(Math.log10(raw))),
+    f = raw / p;
+  return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p;
+}
+function sorChartSvg(d, view, w, h) {
+  const pts = ((d.trace && d.trace.points) || []).filter(
+    (p) => p[0] >= view.x0 - 1e-6 && p[0] <= view.x1 + 1e-6,
+  );
+  const L = 52,
+    R = 12,
+    T = 12,
+    B = 30,
+    pw = w - L - R,
+    ph = h - T - B;
+  if (pts.length < 2)
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"><text x="10" y="20">Tidak ada data pada rentang ini</text></svg>`;
+  const bpts = (SOR.base || []).filter(
+    (p) => p[0] >= view.x0 - 1e-6 && p[0] <= view.x1 + 1e-6,
+  );
+  let y0 = Infinity,
+    y1 = -Infinity;
+  pts.concat(bpts).forEach((p) => {
+    if (p[1] < y0) y0 = p[1];
+    if (p[1] > y1) y1 = p[1];
+  });
+  const pad = (y1 - y0) * 0.05 || 1;
+  y0 -= pad;
+  y1 += pad;
+  const X = (m) => L + ((m - view.x0) / (view.x1 - view.x0 || 1)) * pw;
+  const Y = (v) => T + (1 - (v - y0) / (y1 - y0 || 1)) * ph;
+  let g = `<rect x="${L}" y="${T}" width="${pw}" height="${ph}" fill="#fff" stroke="#cbd5e1"/>`;
+  const sx = sorNiceStep(view.x1 - view.x0, 8),
+    sy = sorNiceStep(y1 - y0, 6);
+  for (let x = Math.ceil(view.x0 / sx) * sx; x <= view.x1 + 1e-6; x += sx) {
+    g += `<line x1="${X(x)}" y1="${T}" x2="${X(x)}" y2="${T + ph}" stroke="#e2e8f0"/><text x="${X(x)}" y="${h - 12}" font-size="10" text-anchor="middle" fill="#475569">${x >= 2000 || view.x1 > 5000 ? (x / 1000).toFixed(sx < 1000 ? 2 : 1) + " km" : Math.round(x) + " m"}</text>`;
+  }
+  for (let y = Math.ceil(y0 / sy) * sy; y <= y1 + 1e-6; y += sy) {
+    g += `<line x1="${L}" y1="${Y(y)}" x2="${L + pw}" y2="${Y(y)}" stroke="#e2e8f0"/><text x="${L - 4}" y="${Y(y) + 3}" font-size="10" text-anchor="end" fill="#475569">${y.toFixed(sy < 1 ? 1 : 0)}</text>`;
+  }
+  g += `<text x="12" y="${T + ph / 2}" font-size="10" fill="#475569" transform="rotate(-90 12 ${T + ph / 2})" text-anchor="middle">Level relatif (dB)</text>`;
+  if (bpts.length > 1)
+    g += `<polyline fill="none" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4 3" points="${bpts.map((p) => X(p[0]).toFixed(1) + "," + Y(p[1]).toFixed(1)).join(" ")}"/>`;
+  g += `<polyline fill="none" stroke="#0f766e" stroke-width="1.2" points="${pts.map((p) => X(p[0]).toFixed(1) + "," + Y(p[1]).toFixed(1)).join(" ")}"/>`;
+  (d.events || []).forEach((e) => {
+    if (e.distance_m < view.x0 || e.distance_m > view.x1) return;
+    const x = X(e.distance_m);
+    g += `<line x1="${x}" y1="${T}" x2="${x}" y2="${T + ph}" stroke="#db2777" stroke-dasharray="4 3"/><circle cx="${x}" cy="${T + 8}" r="8" fill="#db2777"/><text x="${x}" y="${T + 12}" font-size="10" text-anchor="middle" fill="#fff">${Number(e.no)}</text>`;
+  });
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" font-family="sans-serif">${g}</svg>`;
+}
+function renderSor(saved) {
+  const d = SOR.data;
+  if (!d) return;
+  const ev = (d.events || [])
+    .map(
+      (
+        e,
+      ) => `<tr><td>${Number(e.no)}</td><td>${escapeHtml(sorKm(e.distance_m))}</td><td>${escapeHtml(sorEventKind(e))}<br><small>${escapeHtml(e.type_code)}</small></td>
+    <td class="num">${e.splice_loss_db != null ? e.splice_loss_db.toFixed(3) : "-"}</td><td class="num">${e.reflectance_db != null && e.reflectance_db > -1000 ? e.reflectance_db.toFixed(2) : "-"}</td><td class="num">${e.slope_db_km != null ? e.slope_db_km.toFixed(3) : "-"}</td>
+    <td><button type="button" class="data-ghost" onclick="sorZoomEvent(${Number(e.no)})" title="Perbesar ke event ini">Zoom</button></td></tr>`,
+    )
+    .join("");
+  const canSave = can("otdr.upload") && !saved && !SOR.savedId;
+  $id("sor-view").innerHTML = `
+    <div class="sor-chart" id="sor-chart" onwheel="sorWheel(event)">${sorChartSvg(d, SOR.view, 760, 280)}</div>
+    <div class="sor-zoom">
+      <button type="button" class="data-ghost" onclick="sorZoom(0.5)" title="Perbesar">Perbesar +</button>
+      <button type="button" class="data-ghost" onclick="sorZoom(2)" title="Perkecil">Perkecil &minus;</button>
+      <button type="button" class="data-ghost" onclick="sorPan(-0.3)" title="Geser kiri">&larr;</button>
+      <button type="button" class="data-ghost" onclick="sorPan(0.3)" title="Geser kanan">&rarr;</button>
+      <button type="button" class="data-ghost" onclick="sorZoomReset()">Penuh</button>
+      <button type="button" class="data-ghost" onclick="sorExportPng()">PNG</button>
+      ${canSave ? '<button type="button" class="data-primary" onclick="saveSor()">Simpan</button>' : ""}
+      ${can("otdr.upload") && (SOR.savedId || saved) ? (SOR.info.is_baseline ? '<button type="button" class="data-ghost" onclick="sorSetBaseline(false)">Lepas baseline</button>' : '<button type="button" class="data-ghost" onclick="sorSetBaseline(true)">Jadikan baseline</button>') : ""}
+      ${SOR.info.is_baseline ? '<span class="sor-badge">Baseline</span>' : ""}
+    </div>
+    <h4 class="otdr-h">Event (${(d.events || []).length})</h4>
+    <div class="imp-scroll"><table class="imp-table"><thead><tr><th>#</th><th>Jarak</th><th>Jenis</th><th>Loss (dB)</th><th>Refl. (dB)</th><th>Redaman (dB/km)</th><th></th></tr></thead><tbody>${ev || '<tr><td colspan="7">Tidak ada event tercatat</td></tr>'}</tbody></table></div>
+    <h4 class="otdr-h">Informasi pengukuran</h4>
+    <div class="imp-scroll"><table class="imp-table sor-meta"><tbody>${sorMetaRows(d)}</tbody></table></div>`;
+}
+function sorRedraw() {
+  const el = $id("sor-chart");
+  if (el && SOR.data) el.innerHTML = sorChartSvg(SOR.data, SOR.view, 760, 280);
+}
+function sorFull() {
+  const p = (SOR.data.trace && SOR.data.trace.points) || [];
+  return p.length ? p[p.length - 1][0] : 1;
+}
+function sorClamp(x0, x1) {
+  const full = sorFull();
+  let span = Math.max(5, Math.min(x1 - x0, full));
+  x0 = Math.max(0, Math.min(x0, full - span));
+  SOR.view = { x0, x1: x0 + span };
+}
+function sorZoom(f, center) {
+  if (!SOR.data) return;
+  const v = SOR.view,
+    c = center != null ? center : (v.x0 + v.x1) / 2,
+    span = (v.x1 - v.x0) * f;
+  const ratio = (c - v.x0) / (v.x1 - v.x0 || 1);
+  sorClamp(c - span * ratio, c - span * ratio + span);
+  sorRedraw();
+}
+function sorPan(f) {
+  if (!SOR.data) return;
+  const s = SOR.view.x1 - SOR.view.x0;
+  sorClamp(SOR.view.x0 + s * f, SOR.view.x1 + s * f);
+  sorRedraw();
+}
+function sorZoomReset() {
+  if (!SOR.data) return;
+  SOR.view = { x0: 0, x1: sorFull() };
+  sorRedraw();
+}
+function sorZoomEvent(no) {
+  const e = ((SOR.data || {}).events || []).find((x) => x.no === no);
+  if (!e) return;
+  const span = Math.max(40, sorFull() / 20);
+  sorClamp(e.distance_m - span / 2, e.distance_m + span / 2);
+  sorRedraw();
+}
+function sorWheel(ev) {
+  if (!SOR.data || !ev) return;
+  if (ev.preventDefault) ev.preventDefault();
+  const box =
+    ev.currentTarget && ev.currentTarget.getBoundingClientRect
+      ? ev.currentTarget.getBoundingClientRect()
+      : null;
+  let c = null;
+  if (box && box.width) {
+    const fx = Math.min(
+      1,
+      Math.max(
+        0,
+        (((ev.clientX - box.left) / box.width) * 760 - 52) / (760 - 64),
+      ),
+    );
+    c = SOR.view.x0 + fx * (SOR.view.x1 - SOR.view.x0);
+  }
+  sorZoom(ev.deltaY < 0 ? 0.7 : 1.4, c);
+}
+function sorExportPng() {
+  if (!SOR.data) return;
+  const svg = sorChartSvg(SOR.data, SOR.view, 1200, 440);
+  const name = (SOR.name || "trace").replace(/\.sor$/i, "") + ".png";
+  try {
+    const img = new Image();
+    img.onload = () => {
+      const cv = document.createElement("canvas");
+      cv.width = 1200;
+      cv.height = 440;
+      const cx = cv.getContext("2d");
+      cx.fillStyle = "#fff";
+      cx.fillRect(0, 0, 1200, 440);
+      cx.drawImage(img, 0, 0);
+      cv.toBlob((b) => b && downloadBlobFile(b, name), "image/png");
+    };
+    img.onerror = () => setDataMsg("sor-msg", "Gagal membuat PNG.", "err");
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+  } catch (e) {
+    setDataMsg("sor-msg", "Gagal membuat PNG.", "err");
+  }
+}
+function saveSor() {
+  if (!SOR.b64) return;
+  return apiRequest("/api/otdr/sor", "POST", {
+    filename: SOR.name,
+    content_base64: SOR.b64,
+  })
+    .then((r) => {
+      SOR.savedId = r.id;
+      SOR.info = { is_baseline: false, incident: null };
+      setDataMsg("sor-msg", r.message || "Tersimpan", "ok");
+      renderSor(true);
+      sorLoadCompare();
+      if (SORAN.data) renderSorAnalysis();
+      loadSorList();
+    })
+    .catch((err) => setDataMsg("sor-msg", err.message, "err"));
+}
+function loadSorList() {
+  return apiRequest("/api/otdr/sor")
+    .then((list) => {
+      SOR.list = list;
+      sorFillTwoSelect();
+      const el = $id("sor-list");
+      if (!el) return;
+      if (!list.length) {
+        el.innerHTML =
+          '<div class="data-hint">Belum ada berkas SOR tersimpan.</div>';
+        return;
+      }
+      const del = can("otdr.upload");
+      el.innerHTML =
+        `<table class="imp-table"><thead><tr><th>Berkas</th><th>Kabel / serat</th><th>Waktu ukur</th><th>Event</th><th></th></tr></thead><tbody>` +
+        list
+          .map((r) => {
+            const g = r.general || {},
+              fx = r.fixed || {};
+            return `<tr><td><b>${escapeHtml(r.filename)}</b>${r.is_baseline ? ' <span class="sor-badge">Baseline</span>' : ""}${r.analysis && r.analysis.method === "TWOWAY" ? ' <span class="sor-badge">2 arah</span>' : ""}${r.incident ? ` <span class="sor-badge warn">${escapeHtml(r.incident.ticket_number)}</span>` : ""}<br><small>${escapeHtml(r.uploaded_by || "")}</small></td><td>${escapeHtml(g.cable_id || "-")}<br><small>${escapeHtml(g.fiber_id || "")} &middot; ${fx.wavelength_nm != null ? Number(fx.wavelength_nm) + " nm" : ""}</small></td>
+      <td>${escapeHtml(sorFmtTs(fx.timestamp))}</td><td class="num">${Number(r.n_events)}</td>
+      <td><button type="button" class="data-ghost" onclick="openSor(${Number(r.id)})">Buka</button>
+      ${r.analysis ? `<button type="button" class="data-ghost" onclick="sorShowSavedOnMap(${Number(r.id)})">Peta</button>` : ""}
+      <a class="data-ghost" href="/api/otdr/sor/${Number(r.id)}/file" download>SOR</a>
+      ${del ? `<button type="button" class="data-ghost" onclick="deleteSor(${Number(r.id)})">Hapus</button>` : ""}</td></tr>`;
+          })
+          .join("") +
+        "</tbody></table>";
+    })
+    .catch(() => {});
+}
+function openSor(id) {
+  return apiRequest("/api/otdr/sor/" + id)
+    .then((d) => {
+      SOR.name = d.filename;
+      SOR.b64 = "";
+      SOR.savedId = id;
+      setDataMsg("sor-msg", "", "");
+      showSor(d, true);
+    })
+    .catch((err) => setDataMsg("sor-msg", err.message, "err"));
+}
+function deleteSor(id) {
+  if (!confirm("Hapus berkas SOR ini?")) return;
+  return apiRequest("/api/otdr/sor/" + id, "DELETE")
+    .then(() => {
+      if (SOR.savedId === id) {
+        SOR.data = null;
+        $id("sor-view").innerHTML = "";
+      }
+      loadSorList();
+    })
+    .catch((err) => setDataMsg("sor-msg", err.message, "err"));
+}
+
+// ----- OTDR SOR: jalur, slack, estimasi titik cut -----
+const SORAN = {
+  starts: [],
+  nodeId: null,
+  data: null,
+  seq: 0,
+  nodes: [],
+  mode: "one",
+  manualIds: null,
+  manualNames: null,
+};
+let sorMapGroup = null;
+const SOR_KIND = {
+  NORMAL: ["Normal", "ok"],
+  BREAK: ["Putus / patah", "bad"],
+  BEND: ["Tekukan / sambungan buruk", "warn"],
+  LONGER: ["Data jalur belum lengkap", "warn"],
+};
+function sorAnReset() {
+  SORAN.data = null;
+  SORAN.nodeId = null;
+  SORAN.starts = [];
+  SORAN.mode = "one";
+  SORAN.manualIds = null;
+  SORAN.manualNames = null;
+  const box = $id("sor-an");
+  if (box) box.style.display = SOR.data ? "" : "none";
+  if ($id("sor-an-result")) $id("sor-an-result").innerHTML = "";
+  if ($id("sor-start-q")) $id("sor-start-q").value = "";
+  if ($id("sor-start-port"))
+    $id("sor-start-port").innerHTML =
+      '<option value="">-- pilih aset awal dahulu --</option>';
+  setDataMsg("sor-an-msg", "", "");
+}
+let sorStartTimer = null;
+function onSorStartInput() {
+  clearTimeout(sorStartTimer);
+  sorStartTimer = setTimeout(() => {
+    const q = ($id("sor-start-q").value || "").trim();
+    if (!q) return;
+    apiRequest("/api/otdr/sor/start-nodes?q=" + encodeURIComponent(q))
+      .then((list) => {
+        SORAN.nodes = list;
+        $id("sor-start-dl").innerHTML = list
+          .map(
+            (n) =>
+              `<option value="${escapeHtml(n.name)}">${escapeHtml(n.type || "")}</option>`,
+          )
+          .join("");
+      })
+      .catch(() => {});
+  }, 200);
+}
+function onSorStartPick() {
+  const q = ($id("sor-start-q").value || "").trim().toLowerCase();
+  const n = (SORAN.nodes || []).find((x) => (x.name || "").toLowerCase() === q);
+  const sel = $id("sor-start-port");
+  if (!n) {
+    SORAN.nodeId = null;
+    sel.innerHTML = '<option value="">-- pilih aset awal dahulu --</option>';
+    return Promise.resolve();
+  }
+  SORAN.nodeId = n.id;
+  return apiRequest(`/api/nodes/${Number(n.id)}/otdr-starts`)
+    .then((d) => {
+      SORAN.starts = d.starts || [];
+      sel.innerHTML = SORAN.starts.length
+        ? SORAN.starts
+            .map(
+              (s, i) =>
+                `<option value="${i}">${escapeHtml(s.port || "-")} ${s.direction === "down" ? "&rarr;" : "&larr;"} ${escapeHtml(s.to || "?")}${s.cable ? ` (kabel ${escapeHtml(s.cable)}${s.core ? " core " + escapeHtml(String(s.core)) : ""})` : ""}</option>`,
+            )
+            .join("")
+        : '<option value="">Aset ini belum punya sambungan (pakai jalur manual)</option>';
+    })
+    .catch((err) => setDataMsg("sor-an-msg", err.message, "err"));
+}
+function sorAnBody(save) {
+  const body = { start_node_id: SORAN.nodeId, save: !!save };
+  const manual = ($id("sor-manual").value || "").trim();
+  const sel = $id("sor-start-port").value;
+  const st = sel !== "" ? SORAN.starts[Number(sel)] : null;
+  if (st) {
+    body.start_port = st.port;
+    body.direction = st.direction;
+  }
+  if (
+    manual &&
+    SORAN.manualIds &&
+    SORAN.manualNames &&
+    manual === SORAN.manualNames.join(", ")
+  ) {
+    body.cable_ids = SORAN.manualIds.slice();
+  } else if (manual) {
+    const segs = OTDR.segs || [];
+    const ids = [];
+    for (const nm of manual
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean)) {
+      const s = segs.find(
+        (x) => (x.name || "").toLowerCase() === nm.toLowerCase(),
+      );
+      if (!s) return { error: `Kabel '${nm}' tidak ditemukan` };
+      ids.push(s.id);
+    }
+    body.cable_ids = ids;
+  } else if (!st)
+    return { error: "Pilih port/arah pada aset awal, atau isi jalur manual." };
+  const sl = $id("sor-slack").value;
+  if (sl !== "") body.slack_m = Number(sl);
+  body.launch_offset_m = Number($id("sor-launch").value || 0);
+  if (SOR.savedId) body.sor_id = SOR.savedId;
+  else body.content_base64 = SOR.b64;
+  return { body };
+}
+function runSorAnalysis(save) {
+  if (!SOR.data) return;
+  if (!SORAN.nodeId)
+    return setDataMsg(
+      "sor-an-msg",
+      "Pilih aset awal dari daftar saran.",
+      "err",
+    );
+  const b = sorAnBody(save);
+  if (b.error) return setDataMsg("sor-an-msg", b.error, "err");
+  const seq = ++SORAN.seq;
+  setDataMsg("sor-an-msg", "Menganalisis jalur...", "info");
+  return apiRequest("/api/otdr/sor/analyze", "POST", b.body)
+    .then((d) => {
+      if (seq !== SORAN.seq) return;
+      SORAN.mode = "one";
+      setDataMsg(
+        "sor-an-msg",
+        save ? "Analisis tersimpan" : "",
+        save ? "ok" : "",
+      );
+      SORAN.data = d;
+      renderSorAnalysis();
+    })
+    .catch((err) => {
+      if (seq !== SORAN.seq) return;
+      setDataMsg("sor-an-msg", err.message, "err");
+    });
+}
+function sorIncidentBtn(e) {
+  if (
+    !SOR.savedId ||
+    !can("incident.write") ||
+    !e ||
+    e.lat == null ||
+    !(e.kind === "BREAK" || e.kind === "BEND")
+  )
+    return "";
+  if (SOR.info.incident)
+    return `<button type="button" class="data-ghost" onclick="sorOpenIncident()">Tiket ${escapeHtml(SOR.info.incident.ticket_number)}</button>`;
+  return `<select id="sor-sev"><option value="Critical">Critical</option><option value="Major">Major</option><option value="Minor">Minor</option></select> <button type="button" class="data-primary" onclick="sorCreateIncident()">Buat tiket gangguan</button>`;
+}
+function renderSorAnalysis() {
+  const d = SORAN.data;
+  if (!d) return;
+  const p = d.path,
+    e = d.end;
+  const k = e ? SOR_KIND[e.kind] || [e.kind, "warn"] : null;
+  const endHtml = e
+    ? `<div class="loc-card sor-end sor-${k[1]}"><b>${escapeHtml(k[0])}</b><div>${escapeHtml(e.message)}</div>
+      <div class="cov-meta">Event akhir #${Number(e.event_no)} pada ${escapeHtml(sorKm(e.end_m))} &middot; jalur ${escapeHtml(sorKm(e.path_m))} &middot; selisih ${e.diff_m} m (${e.diff_pct}%, toleransi &plusmn;${e.tolerance_pct}%)</div>
+      ${e.twoway ? `<div class="cov-meta"><b>Dua arah</b>: A ${escapeHtml(sorKm(e.twoway.x_a_m))} (&plusmn;${e.twoway.uncertainty_a_m}) &middot; B ${escapeHtml(sorKm(e.twoway.x_b_m))} (&plusmn;${e.twoway.uncertainty_b_m}) &middot; gabungan ${escapeHtml(sorKm(e.twoway.fused_m))} (&plusmn;${e.twoway.uncertainty_fused_m}) &middot; ${e.twoway.consistent ? "konsisten" : "<b>TIDAK konsisten</b>"}</div>` : ""}${
+        e.lat != null
+          ? `<div><b>${e.lat.toFixed(6)}, ${e.lng.toFixed(6)}</b> <button type="button" class="data-ghost" onclick="copyText('${e.lat.toFixed(6)}, ${e.lng.toFixed(6)}')">Salin</button>
+        <div class="cov-meta">&plusmn;${Number(e.uncertainty_m)} m (95%) &middot; ${Number(e.slack_passed)} slack terlewati &middot; dekat ${escapeHtml(e.near_node || "?")} (${e.near_gap_m >= 0 ? "+" : ""}${e.near_gap_m} m)</div></div>`
+          : ""
+      }</div>`
+    : "";
+  const rows = (d.events || [])
+    .map((x) =>
+      x.before_start
+        ? `<tr><td>${Number(x.no)}</td><td colspan="6"><small>sebelum titik awal (launch)</small></td></tr>`
+        : `<tr><td>${Number(x.no)}</td><td>${escapeHtml(sorKm(x.optical_m))}</td><td>${escapeHtml(sorKm(x.path_m))}</td><td class="num">${Number(x.slack_passed)}</td>
+      <td class="num">&plusmn;${Number(x.uncertainty_m)}</td><td>${x.lat != null && !x.beyond_path ? `${x.lat.toFixed(5)}, ${x.lng.toFixed(5)}` : "&ndash;"}</td><td>${escapeHtml(x.near_node || "")}<br><small>${x.near_gap_m >= 0 ? "+" : ""}${x.near_gap_m} m</small></td></tr>`,
+    )
+    .join("");
+  const nodes = p.nodes
+    .map(
+      (n) =>
+        `${escapeHtml(n.name)} <small>(${escapeHtml(sorKm(n.optical_m))}${n.slack ? ", slack" : ""})</small>`,
+    )
+    .join(" &rarr; ");
+  $id("sor-an-result").innerHTML = `${endHtml}
+    <div class="cov-meta">Jalur: ${nodes}<br>Panjang optik ${escapeHtml(sorKm(p.optical_total_m))} (peta ${escapeHtml(sorKm(p.geo_total_m))} + helix ${p.helix_pct}% + ${Number(p.slack_count)} slack &times; ${p.slack_m} m)${p.manual ? " &middot; jalur manual" : ""}</div>
+    ${(d.notes || []).map((w) => `<div class="pr-suggest">${escapeHtml(w)}</div>`).join("")}
+    <div class="imp-scroll"><table class="imp-table"><thead><tr><th>#</th><th>Jarak OTDR</th><th>Jarak jalur</th><th>Slack</th><th>Galat 95% (m)</th><th>Lat, Lng</th><th>Dekat aset</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="sor-zoom"><button type="button" class="data-primary" onclick="sorShowOnMap()">Tampilkan di peta</button>
+      ${can("otdr.upload") && SOR.savedId ? `<button type="button" class="data-ghost" onclick="${SORAN.mode === "two" ? "runSorTwoWay(true)" : "runSorAnalysis(true)"}">Simpan analisis</button>` : SOR.savedId ? "" : "<small>Simpan berkas SOR untuk menyimpan analisis.</small>"}
+      <button type="button" class="data-ghost" onclick="sorOpenReport()">Laporan (PDF)</button>
+      ${sorIncidentBtn(e)}</div>`;
+}
+function sorDrawOnMap(a, label) {
+  if (!a || !a.path) return false;
+  if (!sorMapGroup) sorMapGroup = L.layerGroup().addTo(map);
+  sorMapGroup.clearLayers();
+  const bounds = [];
+  (a.path.segments || []).forEach((s) => {
+    if (!s.line || s.line.length < 2) return;
+    sorMapGroup.addLayer(
+      L.polyline(s.line, { color: "#7c3aed", weight: 5, opacity: 0.75 }),
+    );
+    s.line.forEach((pt) => bounds.push(pt));
+  });
+  const st = a.path.start;
+  if (st)
+    sorMapGroup.addLayer(
+      L.circleMarker([st.lat, st.lng], {
+        radius: 8,
+        color: "#fff",
+        weight: 2,
+        fillColor: "#16a34a",
+        fillOpacity: 1,
+      }).bindPopup(`<b>Titik awal ukur</b><br>${escapeHtml(st.name)}`),
+    );
+  (a.events || []).forEach((x) => {
+    if (x.lat == null || x.beyond_path || x.before_start) return;
+    sorMapGroup.addLayer(
+      L.circleMarker([x.lat, x.lng], {
+        radius: 5,
+        color: "#fff",
+        weight: 1.5,
+        fillColor: "#db2777",
+        fillOpacity: 1,
+      }).bindPopup(
+        `<b>Event #${Number(x.no)}</b><br>${escapeHtml(sorKm(x.optical_m))} &middot; ${Number(x.slack_passed)} slack<br>&plusmn;${Number(x.uncertainty_m)} m<br>Dekat ${escapeHtml(x.near_node || "?")}`,
+      ),
+    );
+  });
+  const e = a.end;
+  if (e && e.lat != null) {
+    const k = SOR_KIND[e.kind] || [e.kind];
+    sorMapGroup.addLayer(
+      L.circle([e.lat, e.lng], {
+        radius: Math.max(5, e.uncertainty_m || 0),
+        color: "#dc2626",
+        weight: 1.5,
+        fillColor: "#dc2626",
+        fillOpacity: 0.12,
+      }),
+    );
+    const mk = L.circleMarker([e.lat, e.lng], {
+      radius: 11,
+      color: "#fff",
+      weight: 3,
+      fillColor: "#dc2626",
+      fillOpacity: 1,
+    }).bindPopup(
+      `<b>${escapeHtml(k[0])}</b> ${label ? "&middot; " + escapeHtml(label) : ""}<br>${escapeHtml(e.message)}<br>&plusmn;${Number(e.uncertainty_m)} m (95%) &middot; ${Number(e.slack_passed)} slack terlewati<br>Dekat ${escapeHtml(e.near_node || "?")} (${e.near_gap_m} m)`,
+    );
+    sorMapGroup.addLayer(mk);
+    bounds.push([e.lat, e.lng]);
+    setTimeout(() => mk.openPopup(), 300);
+  }
+  if (bounds.length) map.fitBounds(bounds, { padding: [60, 60], maxZoom: 18 });
+  return true;
+}
+function sorShowOnMap() {
+  if (!SORAN.data) return;
+  sorDrawOnMap(SORAN.data, SOR.name);
+  closeDataModal();
+}
+function sorShowSavedOnMap(id) {
+  return apiRequest("/api/otdr/sor/" + id)
+    .then((d) => {
+      if (!d.analysis)
+        return setDataMsg(
+          "sor-msg",
+          "Berkas ini belum punya analisis tersimpan.",
+          "err",
+        );
+      sorDrawOnMap(d.analysis, d.filename);
+      closeDataModal();
+    })
+    .catch((err) => setDataMsg("sor-msg", err.message, "err"));
+}
+function sorRestoreAnalysis(d) {
+  sorAnReset();
+  const a = d.analysis;
+  if (!a) return;
+  SORAN.data = a;
+  const rq = a.request || {};
+  SORAN.nodeId = rq.start_node_id || null;
+  if (a.path && a.path.start) $id("sor-start-q").value = a.path.start.name;
+  if (rq.slack_m != null) $id("sor-slack").value = rq.slack_m;
+  $id("sor-launch").value = rq.launch_offset_m || 0;
+  renderSorAnalysis();
+}
+
+// ----- SOR lanjutan: baseline, perbandingan, tiket, dua arah, jalur lewat peta, laporan -----
+function sorFillTwoSelect() {
+  const sel = $id("sor-b-sel");
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML =
+    '<option value="">-- pilih berkas --</option>' +
+    (SOR.list || [])
+      .filter((r) => r.id !== SOR.savedId)
+      .map((r) => {
+        const g = r.general || {};
+        return `<option value="${Number(r.id)}">${escapeHtml(r.filename)} (${escapeHtml(g.cable_id || "-")} / ${escapeHtml(g.fiber_id || "-")})</option>`;
+      })
+      .join("");
+  if (cur) sel.value = cur;
+}
+function sorSetBaseline(on) {
+  if (!SOR.savedId)
+    return setDataMsg("sor-msg", "Simpan berkas SOR dahulu.", "err");
+  return apiRequest(
+    `/api/otdr/sor/${Number(SOR.savedId)}/baseline`,
+    on ? "POST" : "DELETE",
+  )
+    .then((r) => {
+      SOR.info.is_baseline = !!on;
+      setDataMsg("sor-msg", r.message || "", "ok");
+      SOR.base = null;
+      renderSor(true);
+      loadSorList();
+      return sorLoadCompare();
+    })
+    .catch((err) => setDataMsg("sor-msg", err.message, "err"));
+}
+const CMP_LABEL = {
+  SAME: "Sama",
+  CHANGED: "Berubah",
+  NEW: "Baru",
+  LOST: "Hilang",
+};
+function sorLoadCompare() {
+  const box = $id("sor-cmp");
+  if (!box) return Promise.resolve();
+  if (!SOR.savedId) {
+    box.innerHTML = "";
+    return Promise.resolve();
+  }
+  if (SOR.info.is_baseline) {
+    box.innerHTML =
+      '<div class="data-hint">Berkas ini adalah baseline untuk kabel/serat/panjang gelombangnya. Ukur ulang, unggah, lalu bandingkan.</div>';
+    return Promise.resolve();
+  }
+  const id = SOR.savedId;
+  return apiRequest(`/api/otdr/sor/${Number(id)}/compare`)
+    .then((r) => {
+      if (id !== SOR.savedId) return;
+      SOR.base = r.base_trace || null;
+      SOR.cmp = r;
+      sorRedraw();
+      box.innerHTML = sorCompareHtml(r);
+    })
+    .catch((err) => {
+      if (id !== SOR.savedId) return;
+      SOR.base = null;
+      SOR.cmp = null;
+      sorRedraw();
+      box.innerHTML = `<div class="data-hint">${escapeHtml(err.message)}</div>`;
+    });
+}
+function sorCompareHtml(r) {
+  const t = r.total || {},
+    e = r.end || {};
+  const rows = (r.events || [])
+    .map(
+      (
+        x,
+      ) => `<tr class="${x.status === "BAD" ? "cmp-bad" : x.status === "WARN" ? "cmp-warn" : ""}"><td>${escapeHtml(CMP_LABEL[x.kind] || x.kind)}</td><td>${escapeHtml(sorKm(x.distance_m))}${x.shift_m ? `<br><small>${x.shift_m > 0 ? "+" : ""}${x.shift_m} m</small>` : ""}</td>
+    <td class="num">${x.base_loss != null ? Number(x.base_loss).toFixed(3) : "&ndash;"}</td><td class="num">${x.new_loss != null ? Number(x.new_loss).toFixed(3) : "&ndash;"}</td>
+    <td class="num">${x.delta_loss != null ? (x.delta_loss > 0 ? "+" : "") + x.delta_loss : "&ndash;"}</td><td class="num">${x.delta_refl != null ? (x.delta_refl > 0 ? "+" : "") + x.delta_refl : "&ndash;"}</td><td>${otdrBadge(x.status)}</td></tr>`,
+    )
+    .join("");
+  return `<h4 class="otdr-h">Perbandingan dengan baseline ${otdrBadge(r.overall)}</h4>
+    <div class="cov-meta">Baseline: <b>${escapeHtml(r.base_filename || "")}</b> (${escapeHtml(sorFmtTs(r.base_time))}) &middot; garis abu-abu putus-putus pada grafik${r.wavelength_diff_nm && Math.abs(r.wavelength_diff_nm) > 10 ? " &middot; <b>panjang gelombang berbeda " + escapeHtml(String(r.wavelength_diff_nm)) + " nm</b>" : ""}<br>
+    Total loss: ${t.base != null ? Number(t.base).toFixed(3) : "-"} &rarr; ${t.new != null ? Number(t.new).toFixed(3) : "-"} dB (${t.delta != null ? (t.delta > 0 ? "+" : "") + t.delta : "-"}) ${otdrBadge(t.status)}<br>
+    Ujung serat: ${escapeHtml(sorKm(e.base_m))} &rarr; ${escapeHtml(sorKm(e.new_m))} (${e.delta_m != null ? (e.delta_m > 0 ? "+" : "") + e.delta_m + " m" : "-"}) ${otdrBadge(e.status)}</div>
+    <div class="imp-scroll"><table class="imp-table"><thead><tr><th>Status</th><th>Jarak</th><th>Loss lama</th><th>Loss baru</th><th>&Delta; loss</th><th>&Delta; refl.</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="7">Tidak ada event</td></tr>'}</tbody></table></div>`;
+}
+
+// tiket gangguan
+function sorCreateIncident() {
+  if (!SOR.savedId || !SORAN.data) return;
+  const sev = ($id("sor-sev") || {}).value || "Critical";
+  const run = SORAN.mode === "two" ? runSorTwoWay(true) : runSorAnalysis(true);
+  return Promise.resolve(run)
+    .then(() =>
+      apiRequest(`/api/otdr/sor/${Number(SOR.savedId)}/incident`, "POST", {
+        severity: sev,
+      }),
+    )
+    .then((r) => {
+      SOR.info.incident = { id: r.id, ticket_number: r.ticket_number };
+      setDataMsg("sor-an-msg", `Tiket ${r.ticket_number} dibuat.`, "ok");
+      renderSorAnalysis();
+      loadSorList();
+      try {
+        loadData();
+      } catch (_) {
+        /* peta dimuat ulang bila tersedia */
+      }
+    })
+    .catch((err) => setDataMsg("sor-an-msg", err.message, "err"));
+}
+function sorOpenIncident() {
+  const i = SOR.info.incident;
+  if (!i) return;
+  closeDataModal();
+  openIncidentDetail(i.id);
+}
+
+// dua arah
+function runSorTwoWay(save) {
+  if (!SOR.data) return;
+  if (!SOR.savedId)
+    return setDataMsg(
+      "sor-an-msg",
+      "Simpan berkas SOR ini dahulu (dua arah memakai dua berkas tersimpan).",
+      "err",
+    );
+  const bid = Number(($id("sor-b-sel") || {}).value || 0);
+  if (!bid)
+    return setDataMsg("sor-an-msg", "Pilih SOR dari ujung seberang.", "err");
+  if (!SORAN.nodeId)
+    return setDataMsg(
+      "sor-an-msg",
+      "Pilih aset awal dari daftar saran.",
+      "err",
+    );
+  const b = sorAnBody(false);
+  if (b.error) return setDataMsg("sor-an-msg", b.error, "err");
+  const body = Object.assign({}, b.body, {
+    sor_id: SOR.savedId,
+    sor_id_b: bid,
+    launch_offset_b_m: Number($id("sor-launch-b").value || 0),
+    save: !!save === true,
+  });
+  delete body.content_base64;
+  const seq = ++SORAN.seq;
+  setDataMsg("sor-an-msg", "Menganalisis dua arah...", "info");
+  return apiRequest("/api/otdr/sor/analyze2", "POST", body)
+    .then((d) => {
+      if (seq !== SORAN.seq) return;
+      SORAN.mode = "two";
+      setDataMsg(
+        "sor-an-msg",
+        save === true ? "Analisis dua arah tersimpan" : "",
+        save === true ? "ok" : "",
+      );
+      SORAN.data = d;
+      renderSorAnalysis();
+    })
+    .catch((err) => {
+      if (seq !== SORAN.seq) return;
+      setDataMsg("sor-an-msg", err.message, "err");
+    });
+}
+
+// jalur manual lewat peta
+const SORPICK = { on: false, start: null, cables: [], layers: [] };
+function sorPickBanner() {
+  const names =
+    SORPICK.cables.map((c) => escapeHtml(c.name)).join(" &rarr; ") || "&ndash;";
+  connectBanner(`<i class="fa-solid fa-route"></i> Jalur OTDR: ${SORPICK.start ? "awal <b>" + escapeHtml(SORPICK.start.name) + "</b>" : "klik <b>aset awal</b> dahulu"} &middot; kabel: ${names}
+    <button type="button" class="data-ghost" onclick="sorPickUndo()">Urungkan</button> <button type="button" class="data-primary" onclick="sorPickDone()">Selesai</button> <button type="button" class="data-ghost" onclick="sorPickCancel()">Batal</button> <small>(Esc)</small>`);
+}
+function sorPickStart() {
+  if (CONNECT.active)
+    return setDataMsg(
+      "sor-an-msg",
+      "Selesaikan mode Hubungkan aset dahulu.",
+      "err",
+    );
+  SORPICK.on = true;
+  SORPICK.start = null;
+  SORPICK.cables = [];
+  SORPICK.layers = [];
+  closeDataModal();
+  sorPickBanner();
+}
+function sorPickNode(p) {
+  if (!SORPICK.on) return;
+  if (SORPICK.start) {
+    sorPickBanner();
+    return;
+  }
+  SORPICK.start = { id: Number(p.id), name: p.name };
+  sorPickBanner();
+}
+function sorPickCable(layer) {
+  if (!SORPICK.on) return;
+  const p = layer.metaData || {};
+  if (!SORPICK.start) {
+    sorPickBanner();
+    return;
+  }
+  const last = SORPICK.cables[SORPICK.cables.length - 1];
+  if (last && last.id === Number(p.id)) return;
+  SORPICK.cables.push({ id: Number(p.id), name: p.name });
+  if (layer.setStyle) {
+    layer._sorOrig = layer._sorOrig || {
+      color: layer.options.color,
+      weight: layer.options.weight,
+    };
+    layer.setStyle({ color: "#7c3aed", weight: 7 });
+    SORPICK.layers.push(layer);
+  }
+  sorPickBanner();
+}
+function sorPickUndo() {
+  if (SORPICK.cables.length) SORPICK.cables.pop();
+  else SORPICK.start = null;
+  sorPickBanner();
+}
+function sorPickRestore() {
+  SORPICK.layers.forEach((l) => {
+    if (l._sorOrig && l.setStyle) l.setStyle(l._sorOrig);
+  });
+  SORPICK.layers = [];
+}
+function sorPickCancel() {
+  SORPICK.on = false;
+  sorPickRestore();
+  connectBanner("");
+  $id("modal-data").style.display = "flex";
+}
+function sorPickDone() {
+  if (!SORPICK.start) return sorPickBanner();
+  const picked = { start: SORPICK.start, cables: SORPICK.cables.slice() };
+  SORPICK.on = false;
+  sorPickRestore();
+  connectBanner("");
+  $id("modal-data").style.display = "flex";
+  setDataTab("otdr");
+  SORAN.nodeId = picked.start.id;
+  $id("sor-start-q").value = picked.start.name;
+  SORAN.nodes = [{ id: picked.start.id, name: picked.start.name }];
+  SORAN.manualIds = picked.cables.map((c) => c.id);
+  SORAN.manualNames = picked.cables.map((c) => c.name);
+  $id("sor-manual").value = SORAN.manualNames.join(", ");
+  $id("sor-start-port").innerHTML = '<option value="">(jalur manual)</option>';
+  SORAN.starts = [];
+  setDataMsg(
+    "sor-an-msg",
+    picked.cables.length
+      ? "Jalur manual terisi dari peta. Klik Analisis."
+      : "Pilih minimal satu kabel.",
+    picked.cables.length ? "info" : "err",
+  );
+}
+document.addEventListener("keydown", (e) => {
+  if (e && e.key === "Escape" && SORPICK.on) sorPickCancel();
+});
+
+// laporan cetak / PDF
+function sorPathSvg(a, w, h) {
+  const segs = ((a.path || {}).segments || []).filter(
+    (s) => s.line && s.line.length > 1,
+  );
+  const all = [];
+  segs.forEach((s) => s.line.forEach((p) => all.push(p)));
+  const e = a.end || {};
+  if (e.lat != null) all.push([e.lat, e.lng]);
+  if (!all.length) return "";
+  const lat0 = all.reduce((t, p) => t + p[0], 0) / all.length,
+    kx = Math.cos((lat0 * Math.PI) / 180);
+  let minX = Infinity,
+    maxX = -Infinity,
+    minY = Infinity,
+    maxY = -Infinity;
+  all.forEach((p) => {
+    const x = p[1] * kx,
+      y = -p[0];
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  });
+  const pad = 30,
+    sx = (w - 2 * pad) / (maxX - minX || 1e-9),
+    sy = (h - 2 * pad) / (maxY - minY || 1e-9),
+    s = Math.min(sx, sy);
+  const X = (p) =>
+    pad + (p[1] * kx - minX) * s + (w - 2 * pad - (maxX - minX) * s) / 2;
+  const Y = (p) =>
+    pad + (-p[0] - minY) * s + (h - 2 * pad - (maxY - minY) * s) / 2;
+  const pxPerM = s / (110540 / 1); // derajat lintang -> meter
+  let g = `<rect width="${w}" height="${h}" fill="#f8fafc" stroke="#cbd5e1"/>`;
+  segs.forEach((sg) => {
+    g += `<polyline fill="none" stroke="#7c3aed" stroke-width="3" points="${sg.line.map((p) => X(p).toFixed(1) + "," + Y(p).toFixed(1)).join(" ")}"/>`;
+  });
+  ((a.path || {}).nodes || []).forEach((n) => {
+    if (n.lat == null) return;
+    g += `<circle cx="${X([n.lat, n.lng]).toFixed(1)}" cy="${Y([n.lat, n.lng]).toFixed(1)}" r="5" fill="${n.slack ? "#f59e0b" : "#16a34a"}" stroke="#fff"/><text x="${(X([n.lat, n.lng]) + 8).toFixed(1)}" y="${(Y([n.lat, n.lng]) - 6).toFixed(1)}" font-size="11" fill="#334155">${escapeHtml(n.name)}</text>`;
+  });
+  if (e.lat != null) {
+    const cx = X([e.lat, e.lng]),
+      cy = Y([e.lat, e.lng]),
+      r = Math.max(6, (e.uncertainty_m || 0) * pxPerM);
+    g += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" fill="#dc2626" fill-opacity="0.12" stroke="#dc2626"/><circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="6" fill="#dc2626" stroke="#fff" stroke-width="2"/>`;
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" style="max-width:${w}px">${g}</svg>`;
+}
+function sorReportHtml() {
+  const d = SOR.data,
+    a = SORAN.data;
+  const e = a.end || {},
+    k = SOR_KIND[e.kind] || [e.kind || "-"];
+  const full = { x0: 0, x1: sorFull() };
+  const links =
+    e.lat != null
+      ? `<a href="https://www.google.com/maps?q=${e.lat.toFixed(6)},${e.lng.toFixed(6)}">Google Maps</a> &middot; <a href="https://www.openstreetmap.org/?mlat=${e.lat.toFixed(6)}&amp;mlon=${e.lng.toFixed(6)}#map=18/${e.lat.toFixed(6)}/${e.lng.toFixed(6)}">OpenStreetMap</a>`
+      : "";
+  const tw = e.twoway
+    ? `<p><b>Dua arah:</b> A ${escapeHtml(sorKm(e.twoway.x_a_m))} &middot; B ${escapeHtml(sorKm(e.twoway.x_b_m))} &middot; gabungan ${escapeHtml(sorKm(e.twoway.fused_m))} (&plusmn;${e.twoway.uncertainty_fused_m} m) &middot; ${e.twoway.consistent ? "konsisten" : "<b>TIDAK konsisten</b>"}</p>`
+    : "";
+  const evRows = (a.events || [])
+    .map((x) =>
+      x.before_start
+        ? ""
+        : `<tr><td>${Number(x.no)}</td><td>${escapeHtml(sorKm(x.optical_m))}</td><td>${escapeHtml(sorKm(x.path_m))}</td><td>${Number(x.slack_passed)}</td><td>&plusmn;${Number(x.uncertainty_m)}</td><td>${x.lat != null && !x.beyond_path ? x.lat.toFixed(6) + ", " + x.lng.toFixed(6) : "&ndash;"}</td><td>${escapeHtml(x.near_node || "")} (${x.near_gap_m} m)</td></tr>`,
+    )
+    .join("");
+  const segRows = ((a.path || {}).segments || [])
+    .map(
+      (s, i) =>
+        `<tr><td>${i + 1}</td><td>${escapeHtml(s.cable || "-")}</td><td>${escapeHtml(s.core || "-")}</td><td>${escapeHtml(s.from)} &rarr; ${escapeHtml(s.to || "?")}</td><td>${escapeHtml(sorKm(s.geo_m))}</td></tr>`,
+    )
+    .join("");
+  const cmp = SOR.cmp
+    ? `<h2>Perbandingan dengan baseline</h2>${sorCompareHtml(SOR.cmp).replace(/<h4[^>]*>.*?<\/h4>/, "")}`
+    : "";
+  const css =
+    "body{font:13px/1.45 Arial,sans-serif;color:#0f172a;margin:24px}h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:18px 0 6px;border-bottom:1px solid #cbd5e1;padding-bottom:3px}table{border-collapse:collapse;width:100%;margin:4px 0}th,td{border:1px solid #cbd5e1;padding:4px 6px;text-align:left;vertical-align:top}th{background:#f1f5f9}.card{border:2px solid #dc2626;border-radius:6px;padding:10px 14px;margin:10px 0;background:#fef2f2}.ok{border-color:#16a34a;background:#f0fdf4}.warn{border-color:#f59e0b;background:#fffbeb}small{color:#64748b}svg{max-width:100%;height:auto}@media print{body{margin:10mm}.noprint{display:none}h2{page-break-after:avoid}table,svg{page-break-inside:avoid}}";
+  const cls =
+    (SOR_KIND[e.kind] || [0, "warn"])[1] === "ok"
+      ? "ok"
+      : (SOR_KIND[e.kind] || [0, "warn"])[1] === "warn"
+        ? "warn"
+        : "";
+  return `<!doctype html><html lang="id"><head><meta charset="utf-8"><title>Laporan titik cut - ${escapeHtml(SOR.name || "OTDR")}</title><style>${css}</style></head><body>
+    <button class="noprint" onclick="window.print()">Cetak / Simpan PDF</button>
+    <h1>Laporan Estimasi Titik Cut OTDR</h1><small>Dibuat ${escapeHtml(new Date().toISOString().replace("T", " ").slice(0, 16))} UTC &middot; berkas ${escapeHtml(SOR.name || "-")}</small>
+    <div class="card ${cls}"><b style="font-size:16px">${escapeHtml(k[0])}</b><br>${escapeHtml(e.message || "")}
+      ${e.lat != null ? `<p style="font-size:16px;margin:8px 0 2px"><b>${e.lat.toFixed(6)}, ${e.lng.toFixed(6)}</b></p><div>&plusmn;${Number(e.uncertainty_m)} m (95%) &middot; ${Number(e.slack_passed)} slack terlewati &middot; dekat ${escapeHtml(e.near_node || "?")} (${e.near_gap_m} m)${e.segment_cable ? " &middot; kabel " + escapeHtml(e.segment_cable) : ""}</div><div>${links}</div>` : ""}
+      ${tw}</div>
+    <h2>Jalur ukur</h2>${sorPathSvg(a, 700, 300)}<p><small>Ungu = jalur kabel, hijau = aset, oranye = aset dengan slack, merah = titik cut dan lingkaran galat. Skema tanpa peta dasar.</small></p>
+    <p>${((a.path || {}).nodes || []).map((n) => escapeHtml(n.name) + " <small>(" + escapeHtml(sorKm(n.optical_m)) + ")</small>").join(" &rarr; ")}<br>Panjang optik ${escapeHtml(sorKm((a.path || {}).optical_total_m))} (peta ${escapeHtml(sorKm((a.path || {}).geo_total_m))} + helix ${(a.path || {}).helix_pct}% + ${Number((a.path || {}).slack_count)} slack &times; ${(a.path || {}).slack_m} m)</p>
+    <table><thead><tr><th>#</th><th>Kabel</th><th>Core</th><th>Segmen</th><th>Panjang peta</th></tr></thead><tbody>${segRows}</tbody></table>
+    <h2>Trace OTDR</h2>${sorChartSvg(d, full, 760, 280)}
+    <h2>Event</h2><table><thead><tr><th>#</th><th>Jarak OTDR</th><th>Jarak jalur</th><th>Slack</th><th>Galat 95% (m)</th><th>Lat, Lng</th><th>Dekat aset</th></tr></thead><tbody>${evRows}</tbody></table>
+    ${cmp}
+    <h2>Informasi pengukuran</h2><table><tbody>${sorMetaRows(d)}</tbody></table>
+    <p><small>Estimasi berdasarkan data jalur kabel di sistem. Galat 95% menggabungkan galat slack, rute peta, helix, dan resolusi alat. Verifikasi di lapangan sebelum penggalian.</small></p></body></html>`;
+}
+function sorOpenReport() {
+  if (!SOR.data || !SORAN.data)
+    return setDataMsg("sor-an-msg", "Jalankan analisis jalur dahulu.", "err");
+  const html = sorReportHtml();
+  const w = window.open("", "_blank");
+  if (!w)
+    return setDataMsg(
+      "sor-an-msg",
+      "Peramban memblokir jendela laporan; izinkan pop-up lalu coba lagi.",
+      "err",
+    );
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  setTimeout(() => {
+    try {
+      w.focus();
+      w.print();
+    } catch (_) {
+      /* pengguna bisa cetak manual */
+    }
+  }, 500);
+}
 function initOtdrTab() {
   const ok = can("otdr.upload");
   $id("otdr-denied").style.display = ok ? "none" : "block";
   $id("otdr-form").style.display = ok ? "" : "none";
   loadOtdrSegments();
   loadOtdrList();
+  $id("sor-form").style.display = ok ? "" : "none";
+  loadSorList();
   $id("loss-admin").style.display = can("loss.edit") ? "" : "none";
   if (can("loss.edit")) loadLossParams();
 }
@@ -8154,6 +11133,11 @@ function onOtdrFileChosen(ev) {
   rd.onerror = () =>
     setDataMsg("otdr-msg", "Berkas tidak dapat dibaca.", "err");
   rd.readAsArrayBuffer(f);
+  try {
+    ev.target.value = "";
+  } catch (e) {
+    /* abaikan */
+  }
 }
 function otdrSeg() {
   const id = ($id("otdr-seg") || {}).value;
@@ -8539,6 +11523,10 @@ const LOSS_FIELDS = [
   ["otdr_bad_db", "OTDR: selisih bermasalah (dB)"],
   ["event_warn_db", "Event cek (dB)"],
   ["event_bad_db", "Event bermasalah (dB)"],
+  ["otdr_slack_m", "SOR: slack per titik (m)"],
+  ["otdr_normal_pct", "SOR: toleransi ujung normal (%)"],
+  ["otdr_helix_pct", "SOR: helix serat (%)"],
+  ["otdr_route_err_pct", "SOR: galat rute peta (%)"],
   ["mm_fiber_db_km_850", "Multimode 850 nm (dB/km)"],
   ["mm_fiber_db_km_1300", "Multimode 1300 nm (dB/km)"],
   ["mm_tx_dbm", "Daya kirim MM (dBm)"],
@@ -8998,6 +11986,7 @@ const CONNECT_CABLE_TYPES = [
   ["Backbone", "Backbone"],
   ["Drop", "Dropcore"],
 ];
+const CONNECT_MANUAL_MAX = 12;
 const CONNECT_CAPS = ["2C", "4C", "8C", "12C", "24C", "48C", "96C", "144C"];
 let connectLayer = L.layerGroup().addTo(map);
 
@@ -9039,6 +12028,7 @@ function connectReset(keepActive) {
   CONNECT.opts = null;
   CONNECT.reverse = false;
   CONNECT.busy = false;
+  CONNECT.feedCable = null;
   // kompatibilitas: alias untuk kabel tunggal
   CONNECT.start = CONNECT.end = CONNECT.line = null;
   CONNECT.handles = [];
@@ -9450,10 +12440,35 @@ function connectUpdateInfo() {
       " m";
 }
 
+// Jumlah core dipakai: berurutan 1..kapasitas kabel (dropdown sampai 48; di atasnya input angka)
+const CONNECT_CORE_SELECT_MAX = 48;
+function connectCoreChoices(cap) {
+  const total = Math.max(1, parseInt(cap) || 12);
+  return Array.from({ length: total }, (_, k) => k + 1);
+}
+function connectClampCores(n, cap) {
+  const total = Math.max(1, parseInt(cap) || 12);
+  return Math.min(total, Math.max(1, parseInt(n) || 1));
+}
+// Kontrol pilih jumlah core: <select> bila kapasitas kecil, <input number> bila besar
+function connectCoreControl(id, cap, n, onchange, disabled) {
+  const total = Math.max(1, parseInt(cap) || 12);
+  const dis = disabled ? " disabled" : "";
+  if (total <= CONNECT_CORE_SELECT_MAX) {
+    return `<select id="${id}" onchange="${onchange}"${dis}>${connectCoreChoices(
+      total,
+    )
+      .map((c) => `<option${c === n ? " selected" : ""}>${c}</option>`)
+      .join("")}</select>`;
+  }
+  return `<input type="number" id="${id}" min="1" max="${total}" step="1" value="${n}" onchange="${onchange}"${dis} title="1 sampai ${total}">`;
+}
 function connectCoresNeeded() {
-  return (
-    parseInt((document.getElementById("cn-cores") || { value: "1" }).value) || 1
-  );
+  const n =
+    parseInt((document.getElementById("cn-cores") || { value: "1" }).value) ||
+    1;
+  const capEl = document.getElementById("cn-cap");
+  return capEl ? connectClampCores(n, capEl.value) : n;
 }
 function connectIsFull() {
   const el = document.getElementById("cn-full");
@@ -9549,14 +12564,19 @@ function connectSegRows() {
       const caps = CONNECT_CAPS.map(
         (x) => `<option${x === c.cap ? " selected" : ""}>${x}</option>`,
       ).join("");
-      const cores = [1, 2, 3, 4, 6, 8, 12]
-        .map((x) => `<option${x === c.n ? " selected" : ""}>${x}</option>`)
-        .join("");
+      c.n = connectClampCores(c.n, c.cap);
+      const coreCtl = connectCoreControl(
+        `cn-s${i}-n`,
+        c.cap,
+        c.n,
+        `connectSegSet(${i},'n',this.value)`,
+        c.full,
+      );
       return (
         `<div class="cn-seg" id="cn-seg-${i}"><div class="cn-seg-h"><b>${i + 1}.</b> <span class="cn-a">${escapeHtml(pts[i].name)}</span> &rarr; <span class="cn-b">${escapeHtml(pts[i + 1].name)}</span> <small>${Math.round(connectSegLengthM(sg))} m</small></div>` +
         `<div class="cn-seg-f"><label>Jenis<select id="cn-s${i}-type" onchange="connectSegSet(${i},'type',this.value)">${types}</select></label>` +
         `<label>Kapasitas<select id="cn-s${i}-cap" onchange="connectSegSet(${i},'cap',this.value)">${caps}</select></label>` +
-        `<label>Core<select id="cn-s${i}-n" onchange="connectSegSet(${i},'n',this.value)"${c.full ? " disabled" : ""}>${cores}</select></label>` +
+        `<label>Core${coreCtl}</label>` +
         `<label class="cn-seg-full"><input type="checkbox" id="cn-s${i}-full" onchange="connectSegSet(${i},'full',this.checked)"${c.full ? " checked" : ""}> Sambung penuh</label></div></div>`
       );
     })
@@ -9620,7 +12640,7 @@ function connectRenderPanel() {
   if (!multi)
     h += `<label>Kapasitas kabel<select id="cn-cap" onchange="connectReload()">${CONNECT_CAPS.map((c) => `<option${c === cap ? " selected" : ""}>${c}</option>`).join("")}</select></label>`;
   if (!multi)
-    h += `<label>Jumlah core dipakai<select id="cn-cores" onchange="connectReload()"${full ? " disabled" : ""}>${[1, 2, 3, 4, 6, 8, 12].map((c) => `<option${c === n ? " selected" : ""}>${c}</option>`).join("")}</select></label>`;
+    h += `<label>Jumlah core dipakai${connectCoreControl("cn-cores", cap, n, "connectReload()", full)}</label>`;
   h += `<label>Pemasangan<select id="cn-inst"><option${inst === "Udara" ? " selected" : ""}>Udara</option><option${inst === "Tanah" ? " selected" : ""}>Tanah</option></select></label>`;
   h += `<label>Panjang rute<b id="cn-len">${Math.round(CONNECT.segs.reduce((t, sg) => t + connectSegLengthM(sg), 0))} m</b><small>${escapeHtml(CONNECT.segs[0].note || "")}</small></label>`;
   h += "</div>";
@@ -9633,33 +12653,188 @@ function connectRenderPanel() {
     h += `<div class="cn-note">Kabel disimpan berurutan sesuai pengaturan tiap segmen; core dipilih sistem (core terendah yang masih kosong).</div>`;
   } else if (!o.ok) {
     h += `<div class="cn-warn"><i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(o.reason || "Tidak bisa menentukan core")}<br><small>Kabel tetap bisa disimpan tanpa sambungan core (manual nanti).</small></div>`;
-  } else if (full) {
-    h +=
-      `<div class="cn-cores"><div class="cn-note"><b>${Number(o.cores || (o.defaults.via_cores || []).length)} core</b> akan tersambung otomatis (${escapeHtml((o.defaults.via_cores || [])[0] || "")} ... ${escapeHtml((o.defaults.via_cores || []).slice(-1)[0] || "")}).</div>` +
-      (o.warnings || [])
-        .map((w) => `<div class="cn-note">&bull; ${escapeHtml(w)}</div>`)
-        .join("") +
-      "</div>";
   } else {
-    const m = (o.defaults.via_cores || []).length || n;
-    h += '<div class="cn-cores">';
-    h += `<div class="cn-row"><b>Port/core di ${escapeHtml(up.name)}</b><div>${connectSelOpts("cn-from", o.from_options || [], o.defaults.from_ports || [], m)}</div></div>`;
-    h += `<div class="cn-row"><b>Core kabel</b><div>${connectSelOpts("cn-via", o.cable_cores || [], o.defaults.via_cores || [], m)}</div></div>`;
-    if ((o.to_options || []).length)
-      h += `<div class="cn-row"><b>Port di ${escapeHtml(dn.name)}</b><div>${connectSelOpts("cn-to", o.to_options, o.defaults.to_ports || [], dn.type === "ODP" ? 1 : m)}</div></div>`;
-    else
-      h += `<div class="cn-row"><b>Di ${escapeHtml(dn.name)}</b><div class="cn-note">Joint memakai label core kabel (sambungan menerus)</div></div>`;
-    (o.warnings || []).forEach((w) => {
-      h += `<div class="cn-note">&bull; ${escapeHtml(w)}</div>`;
-    });
-    h +=
-      '<div class="cn-note">Pilihan awal ditentukan sistem (core terendah yang masih kosong); ubah bila perlu.</div></div>';
+    h += connectPairTable(o, up, dn, full);
   }
   const canLinks = multi ? true : !!o.ok;
   h += `</div><div class="cn-actions"><button type="button" class="btn-ok" onclick="connectSave(${canLinks ? "true" : "false"})"><i class="fa-solid fa-check"></i> ${canLinks ? (multi ? "Simpan semua kabel + sambungan" : "Simpan kabel + sambungan") : "Simpan kabel saja"}</button><button type="button" class="btn-mini" onclick="connectCancel()">Batal</button></div>`;
   p.innerHTML = h;
   p.style.display = "block";
   if (p.classList) p.classList.toggle("collapsed", !!CONNECT.collapsed);
+  if (!multi && o.ok && CONNECT.pairRows) connectPairCheck();
+}
+// ---- Tabel pasangan core: core hulu (pilih sendiri) -> core kabel baru (-> port hilir) ----
+CONNECT.feedCable = null;
+CONNECT.pairList = [];
+CONNECT.pairFeed = new Set();
+CONNECT.pairRows = 0;
+function connectFromChoices(o) {
+  const ready = (o.from_options || []).filter((x) => x.port !== "AUTO");
+  const fcs = o.feed_cables || [];
+  const fc = fcs.find((c) => c.id === CONNECT.feedCable) || fcs[0] || null;
+  CONNECT.feedCable = fc ? fc.id : null;
+  const feed = fc
+    ? fc.cores.map((l) => ({
+        port: l,
+        label: `${l} (dari kabel ${fc.name})`,
+        state: "feed",
+      }))
+    : [];
+  return { list: ready.concat(feed), feed, fc, fcs };
+}
+function connectPairTable(o, up, dn, full) {
+  const d = o.defaults || {};
+  const m = (d.via_cores || []).length;
+  const ch = connectFromChoices(o);
+  CONNECT.pairList = ch.list.map((x) => x.port);
+  CONNECT.pairFeed = new Set(ch.feed.map((x) => x.port));
+  CONNECT.pairRows = m;
+  let fromDef = (d.from_ports || []).slice();
+  if (
+    fromDef.length < m ||
+    fromDef.some((x) => x === "AUTO" || !CONNECT.pairList.includes(x))
+  )
+    fromDef = CONNECT.pairList.slice(0, m);
+  const viaOpts = o.cable_cores || [];
+  const toN = (o.to_options || []).length ? (dn.type === "ODP" ? 1 : m) : 0;
+  const short = (t) =>
+    String(t).replace(/Tube (\d+) - Core (\d+)/, "T$1 \u00b7 Core $2");
+  const opt = (arr, sel) =>
+    arr
+      .map((x) => {
+        const v = x.port || x;
+        const lb = x.state === "feed" ? v : x.label || v;
+        return `<option value="${escapeHtml(v)}" title="${escapeHtml(x.label || v)}"${v === sel ? " selected" : ""}>${escapeHtml(short(lb))}</option>`;
+      })
+      .join("");
+  let rows = "";
+  for (let i = 0; i < m; i++) {
+    rows +=
+      `<tr><td class="cn-pn">${full ? `<input type="checkbox" id="cn-use-${i}" checked onchange="connectPairCheck()" title="Pakai core ini">` : ""}${i + 1}</td>` +
+      `<td><select id="cn-from-${i}" onchange="connectPairCheck()">${opt(ch.list, fromDef[i])}</select></td><td class="cn-arr">&rarr;</td>` +
+      `<td><select id="cn-via-${i}" onchange="connectPairCheck()">${opt(viaOpts, (d.via_cores || [])[i])}</select></td>` +
+      (toN
+        ? `<td>${i < toN ? `<select id="cn-to-${i}" onchange="connectPairCheck()">${opt(o.to_options, (d.to_ports || [])[i])}</select>` : ""}</td>`
+        : "") +
+      "</tr>";
+  }
+  const startOpts = ch.list
+    .map((x, k) => `<option value="${k}">${escapeHtml(x.port)}</option>`)
+    .join("");
+  let h = '<div class="cn-cores">';
+  h += `<div class="cn-note">${full ? `<b>Sambung penuh:</b> ${m} core bisa disambung. Hilangkan centang pada core yang tidak dipakai. ` : `<b>${m} core</b> akan disambung. `}Atur pasangan <b>core hulu &rarr; core kabel baru</b> pada tiap baris.</div>`;
+  h += '<div class="cn-pair-tools">';
+  if (ch.fcs.length > 1)
+    h += `<label>Kabel hulu <select id="cn-feedcab" onchange="connectFeedCab(this.value)">${ch.fcs.map((c) => `<option value="${Number(c.id)}"${ch.fc && c.id === ch.fc.id ? " selected" : ""}>${escapeHtml(c.name)} (${escapeHtml(c.capacity || "")})</option>`).join("")}</select></label>`;
+  else if (ch.fc)
+    h += `<span>Kabel hulu: <b>${escapeHtml(ch.fc.name)}</b> (${escapeHtml(ch.fc.capacity || "")})</span>`;
+  if (ch.list.length > m)
+    h += `<label>Mulai dari core hulu <select id="cn-fromstart" onchange="connectPairStart(this.value)">${startOpts}</select></label>`;
+  h +=
+    '<button type="button" class="btn-mini" onclick="connectPairSame()" title="Core kabel baru diberi nomor yang sama dengan core hulu bila ada">Samakan nomor</button>';
+  h += '<span id="cn-pair-count" class="cn-pair-count"></span></div>';
+  h += `<div class="cn-pair"><table><thead><tr><th>#</th><th>Core hulu (${escapeHtml(up.name)})</th><th></th><th>Core kabel baru</th>${toN ? `<th>Port ${escapeHtml(dn.name)}</th>` : ""}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  if (!toN)
+    h += `<div class="cn-note">Di ${escapeHtml(dn.name)}, joint memakai label core kabel baru (sambungan menerus).</div>`;
+  (o.warnings || []).forEach((w) => {
+    h += `<div class="cn-note">&bull; ${escapeHtml(w)}</div>`;
+  });
+  h += "</div>";
+  return h;
+}
+function connectPairCheck() {
+  return connectPairCollect();
+}
+function connectFeedCab(id) {
+  CONNECT.feedCable = parseInt(id) || null;
+  connectRenderPanel();
+}
+function connectPairStart(k) {
+  const start = parseInt(k) || 0;
+  for (let i = 0; i < CONNECT.pairRows; i++) {
+    const el = document.getElementById(`cn-from-${i}`),
+      v = CONNECT.pairList[start + i];
+    if (el && v !== undefined) el.value = v;
+  }
+  connectPairCheck();
+}
+function connectPairSame() {
+  const num = (s) => (String(s).match(/Core\s+(\d+)/i) || [])[1];
+  for (let i = 0; i < CONNECT.pairRows; i++) {
+    const f = document.getElementById(`cn-from-${i}`),
+      v = document.getElementById(`cn-via-${i}`);
+    if (!f || !v) continue;
+    const n = num(f.value);
+    const hit = n && [...v.options].find((op) => num(op.value) === n);
+    if (hit) v.value = hit.value;
+  }
+  connectPairCheck();
+}
+// Kumpulkan pasangan terpilih; tandai nilai ganda. Return {from, via, to, n, upstream} atau {error}
+function connectPairCollect() {
+  const m = CONNECT.pairRows,
+    from = [],
+    via = [],
+    to = [];
+  const dupMark = (prefix, vals) => {
+    const seen = {};
+    vals.forEach((x) => {
+      seen[x.v] = (seen[x.v] || 0) + 1;
+    });
+    let bad = false;
+    vals.forEach((x) => {
+      const el = document.getElementById(`${prefix}-${x.i}`);
+      const dup = seen[x.v] > 1;
+      if (el && el.classList) el.classList.toggle("dup", dup);
+      if (dup) bad = true;
+    });
+    return bad;
+  };
+  const F = [],
+    V = [],
+    T = [];
+  for (let i = 0; i < m; i++) {
+    const use = document.getElementById(`cn-use-${i}`);
+    if (use && !use.checked) {
+      ["from", "via", "to"].forEach((p) => {
+        const e = document.getElementById(`cn-${p}-${i}`);
+        if (e && e.classList) e.classList.remove("dup");
+      });
+      continue;
+    }
+    const f = document.getElementById(`cn-from-${i}`),
+      v = document.getElementById(`cn-via-${i}`),
+      t = document.getElementById(`cn-to-${i}`);
+    if (f) {
+      F.push({ i, v: f.value });
+      from.push(f.value);
+    }
+    if (v) {
+      V.push({ i, v: v.value });
+      via.push(v.value);
+    }
+    if (t) {
+      T.push({ i, v: t.value });
+      to.push(t.value);
+    }
+  }
+  const dup = [
+    dupMark("cn-from", F),
+    dupMark("cn-via", V),
+    dupMark("cn-to", T),
+  ].some(Boolean);
+  const cnt = document.getElementById("cn-pair-count");
+  if (cnt)
+    cnt.textContent = `Dipakai: ${from.length} dari ${m} core${dup ? " \u00b7 ADA NILAI GANDA" : ""}`;
+  const feedUsed = from.some((x) => CONNECT.pairFeed.has(x));
+  return {
+    from,
+    via,
+    to,
+    n: from.length,
+    dup,
+    upstream: feedUsed ? CONNECT.feedCable : null,
+  };
 }
 function connectTogglePanel() {
   CONNECT.collapsed = !CONNECT.collapsed;
@@ -9771,17 +12946,26 @@ function connectSave(withLinks) {
       manual: null,
     };
   };
-  if (withLinks && !multi && !common.full) {
-    const n = (o.defaults && (o.defaults.via_cores || []).length) || common.n;
-    const dn = CONNECT.reverse ? CONNECT.points[0] : CONNECT.points[1];
-    const man = {
-      from_ports: connectSelValues("cn-from", n),
-      via_cores: connectSelValues("cn-via", n),
+  if (withLinks && !multi && o.ok && CONNECT.pairRows) {
+    const sel = connectPairCollect();
+    if (!sel.n) {
+      alert("Pilih minimal 1 core untuk disambung.");
+      return;
+    }
+    if (sel.dup) {
+      alert(
+        "Ada core hulu / core kabel / port yang dipilih lebih dari sekali. Perbaiki baris yang bertanda merah.",
+      );
+      return;
+    }
+    common.manual = {
+      from_ports: sel.from,
+      via_cores: sel.via,
+      upstream_cable_id: sel.upstream,
     };
-    const toN = (o.to_options || []).length ? (dn.type === "ODP" ? 1 : n) : 0;
-    if (toN) man.to_ports = connectSelValues("cn-to", toN);
-    common.manual = man;
-    common.n = n;
+    if (sel.to.length) common.manual.to_ports = sel.to;
+    common.n = sel.n;
+    common.full = false;
   }
   const total = CONNECT.segs.length,
     done = [];
@@ -9846,7 +13030,7 @@ const MODAL_CLOSERS = {
   "modal-khs": () => closeKhsModal(),
   "modal-users": () => closeUsersModal(),
   "modal-audit": () => closeAuditModal(),
-  "modal-data": () => closeDataModal(),
+  "modal-data": () => dismissDataModal(),
   "modal-summary": () => closeSummaryModal(),
   "modal-inventory": () => closeInventoryModal(),
 };
@@ -9943,3 +13127,722 @@ function closeTopModal() {
     true,
   );
 })();
+
+// =====================================================================
+// GRID TABEL (semua tabel data): filter per kolom, urut, atur lebar kolom (tarik pemisah header,
+// klik dua kali = sesuaikan isi), teks penuh / satu baris. Lebar & mode teks diingat per tabel.
+// Tabel dengan data bergulir dari server (mis. Asset Inventory) hanya memakai atur lebar + teks penuh.
+// =====================================================================
+const NG = { hooks: {}, store: null, timer: null, uid: 0 };
+function ngStore() {
+  if (NG.store) return NG.store;
+  try {
+    NG.store = JSON.parse(localStorage.getItem("netgis-grid") || "{}") || {};
+  } catch (_) {
+    NG.store = {};
+  }
+  return NG.store;
+}
+function ngPersist() {
+  try {
+    localStorage.setItem("netgis-grid", JSON.stringify(NG.store || {}));
+  } catch (_) {
+    /* penyimpanan tidak tersedia */
+  }
+}
+function ngHeads(t) {
+  return Array.from(t.tHead.rows[0].cells).filter(
+    (c) => !c.classList.contains("ng-skip"),
+  );
+}
+function ngKey(t) {
+  return t.id
+    ? "id:" + t.id
+    : "h:" +
+        ngHeads(t)
+          .map((c) => c.textContent.trim())
+          .join("|");
+}
+function ngEligible(t) {
+  if (!t.tHead || t.tHead.rows.length !== 1 || t.tHead.rows[0].cells.length < 2)
+    return false;
+  if (t.dataset && t.dataset.ng === "off") return false;
+  if (t.closest && t.closest(".cn-pair, .ng-off")) return false;
+  return true;
+}
+function ngBtn(label, title, onclick) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "ng-btn";
+  b.title = title;
+  b.setAttribute("aria-label", title);
+  b.textContent = label;
+  b.addEventListener("click", onclick);
+  return b;
+}
+function ngEnhance(t) {
+  const dsFeat = (t.dataset && t.dataset.ng) || "filter,sort,resize,wrap";
+  const feats = new Set(dsFeat.split(","));
+  const hook = t.id ? NG.hooks[t.id] : null;
+  const body = t.tBodies[0];
+  if (!hook && body && body.querySelector("input, select, textarea")) {
+    feats.delete("filter");
+    feats.delete("sort");
+  }
+  const heads = Array.from(t.tHead.rows[0].cells);
+  const st = {
+    feats,
+    n: heads.length,
+    fv: heads.map(() => ""),
+    sortCol: -1,
+    sortDir: 1,
+    open: false,
+    ws: null,
+    wrap: false,
+    orig: null,
+    first: null,
+  };
+  t._ng = st;
+  t.classList.add("ng");
+  const cols = Array.from(t.querySelectorAll(":scope > colgroup > col"));
+  st.orig = {
+    layout: t.style.tableLayout,
+    width: t.style.width,
+    cols: cols.map((c) => c.style.width),
+    ths: heads.map((h) => h.style.width),
+  };
+  let cs = null;
+  try {
+    cs = getComputedStyle(t);
+  } catch (_) {
+    /* tidak tersedia */
+  }
+  if (cs && cs.tableLayout === "fixed") t.classList.add("ng-fixed");
+
+  // ---- toolbar kecil di atas tabel ----
+  const bar = document.createElement("div");
+  bar.className = "ng-bar";
+  bar._ngTable = t;
+  if (feats.has("filter")) {
+    st.bFilter = ngBtn("Filter", "Filter per kolom", () => ngToggleFilter(t));
+    bar.appendChild(st.bFilter);
+  }
+  if (feats.has("wrap")) {
+    st.bWrap = ngBtn("Teks penuh", "Tampilkan teks penuh / satu baris", () =>
+      ngToggleWrap(t),
+    );
+    bar.appendChild(st.bWrap);
+  }
+  bar.appendChild(
+    ngBtn("Reset", "Reset lebar kolom, filter, dan urutan", () => ngReset(t)),
+  );
+  let anchor = t;
+  const par = t.parentElement;
+  if (par) {
+    let pcs = null;
+    try {
+      pcs = getComputedStyle(par);
+    } catch (_) {
+      /* abaikan */
+    }
+    if (
+      pcs &&
+      /(auto|scroll)/.test(pcs.overflowX + pcs.overflowY) &&
+      !/modal-body/.test(par.className || "") &&
+      (par.children.length === 1 || /scroll|wrap/.test(par.className || ""))
+    )
+      anchor = par;
+  }
+  if (anchor.parentNode) anchor.parentNode.insertBefore(bar, anchor);
+  st.bar = bar;
+
+  // ---- header: urut + pegangan lebar ----
+  heads.forEach((th, i) => {
+    th.classList.add("ng-th");
+    if (feats.has("sort")) {
+      th.classList.add("ng-sortable");
+      th.addEventListener("click", (e) => {
+        if (
+          e.target &&
+          e.target.classList &&
+          e.target.classList.contains("ng-grip")
+        )
+          return;
+        ngSort(t, i);
+      });
+    }
+    if (feats.has("resize")) {
+      const g = document.createElement("span");
+      g.className = "ng-grip";
+      g.title =
+        "Tarik untuk mengubah lebar · klik dua kali untuk menyesuaikan isi";
+      g.addEventListener("click", (e) => e.stopPropagation());
+      g.addEventListener("dblclick", (e) => {
+        e.stopPropagation();
+        ngAutofit(t, i);
+      });
+      g.addEventListener("pointerdown", (e) => ngDragStart(t, i, e));
+      th.appendChild(g);
+    }
+  });
+
+  // ---- baris filter ----
+  if (feats.has("filter")) {
+    const tr = document.createElement("tr");
+    tr.className = "ng-frow";
+    heads.forEach((th, i) => {
+      const c = document.createElement("th");
+      c.className = "ng-skip";
+      if (th.textContent.trim()) {
+        const inp = document.createElement("input");
+        inp.type = "text";
+        inp.placeholder = "Filter";
+        inp.setAttribute("aria-label", "Filter kolom " + th.textContent.trim());
+        inp.addEventListener("input", () => {
+          st.fv[i] = inp.value;
+          ngApplyFilter(t);
+        });
+        c.appendChild(inp);
+      }
+      tr.appendChild(c);
+    });
+    t.tHead.appendChild(tr);
+    st.frow = tr;
+  }
+  // tooltip isi lengkap untuk sel yang terpotong
+  t.addEventListener("mouseover", (e) => {
+    const td = e.target && e.target.closest ? e.target.closest("td") : null;
+    if (td && !td.title && td.scrollWidth > td.clientWidth + 1)
+      td.title = (td.textContent || "").trim();
+  });
+  // pulihkan lebar tersimpan
+  const saved = ngStore()[ngKey(t)];
+  if (
+    saved &&
+    feats.has("resize") &&
+    Array.isArray(saved.w) &&
+    saved.w.length === st.n
+  )
+    ngSetWidths(t, saved.w);
+  if (saved && saved.wrap && feats.has("wrap")) {
+    st.wrap = true;
+    t.classList.add("ng-wrap");
+    if (st.bWrap) st.bWrap.classList.add("on");
+  }
+  st.first = (body && body.rows[0]) || null;
+}
+function ngSetWidths(t, ws) {
+  const st = t._ng,
+    ths = Array.from(t.tHead.rows[0].cells),
+    cols = Array.from(t.querySelectorAll(":scope > colgroup > col"));
+  ths.forEach((th, i) => {
+    th.style.width = ws[i] + "px";
+    if (cols[i]) cols[i].style.width = ws[i] + "px";
+  });
+  t.style.tableLayout = "fixed";
+  t.style.width = ws.reduce((a, b) => a + b, 0) + "px";
+  t.classList.add("ng-fixed");
+  st.ws = ws.slice();
+  const par = t.parentElement;
+  if (par) {
+    try {
+      if (getComputedStyle(par).overflowX === "visible")
+        par.style.overflowX = "auto";
+    } catch (_) {
+      /* abaikan */
+    }
+  }
+}
+function ngFreeze(t) {
+  const st = t._ng;
+  if (st.ws) return st.ws;
+  const ws = Array.from(t.tHead.rows[0].cells).map(
+    (th) => Math.round(th.getBoundingClientRect().width) || 80,
+  );
+  ngSetWidths(t, ws);
+  return st.ws;
+}
+function ngSaveState(t) {
+  const st = t._ng,
+    s = ngStore();
+  s[ngKey(t)] = { w: st.ws || null, wrap: !!st.wrap };
+  ngPersist();
+}
+function ngDragStart(t, i, e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const st = t._ng,
+    ws0 = ngFreeze(t).slice(),
+    startX = e.clientX,
+    startW = ws0[i];
+  const mv = (ev) => {
+    const ws = ws0.slice();
+    ws[i] = Math.max(48, Math.round(startW + ev.clientX - startX));
+    ngSetWidths(t, ws);
+  };
+  const up = () => {
+    document.removeEventListener("pointermove", mv);
+    document.removeEventListener("pointerup", up);
+    ngSaveState(t);
+  };
+  document.addEventListener("pointermove", mv);
+  document.addEventListener("pointerup", up);
+}
+function ngAutofit(t, i) {
+  const ws = ngFreeze(t).slice();
+  t.classList.add("ng-measure");
+  let max = 48;
+  Array.from(t.rows).forEach((r) => {
+    const c = r.cells[i];
+    if (
+      c &&
+      c.colSpan === 1 &&
+      !(r.classList && r.classList.contains("ng-frow"))
+    )
+      max = Math.max(max, c.scrollWidth + 4);
+  });
+  t.classList.remove("ng-measure");
+  ws[i] = Math.min(640, max);
+  ngSetWidths(t, ws);
+  ngSaveState(t);
+}
+function ngToggleWrap(t) {
+  const st = t._ng;
+  if (!st.ws && !t.classList.contains("ng-fixed")) ngFreeze(t);
+  st.wrap = !st.wrap;
+  t.classList.toggle("ng-wrap", st.wrap);
+  if (st.bWrap) st.bWrap.classList.toggle("on", st.wrap);
+  ngSaveState(t);
+}
+function ngToggleFilter(t) {
+  const st = t._ng;
+  st.open = !st.open;
+  t.classList.toggle("ng-filters-on", st.open);
+  if (st.bFilter) st.bFilter.classList.toggle("on", st.open);
+  if (st.open && st.frow) {
+    const inp = st.frow.querySelector("input");
+    if (inp && inp.focus) inp.focus();
+  }
+}
+function ngDomRows(t) {
+  return Array.from(t.tBodies[0].rows).filter((r) => r.cells.length >= t._ng.n);
+}
+function ngApplyFilter(t) {
+  const st = t._ng,
+    hook = t.id ? NG.hooks[t.id] : null;
+  if (st.bFilter) st.bFilter.classList.toggle("active", st.fv.some(Boolean));
+  if (hook && hook.setFilters) {
+    hook.setFilters(st.fv.slice());
+    return;
+  }
+  const f = st.fv.map((x) =>
+    String(x || "")
+      .trim()
+      .toLowerCase(),
+  );
+  ngDomRows(t).forEach((r) => {
+    const ok = f.every(
+      (x, c) =>
+        !x ||
+        String((r.cells[c] && r.cells[c].textContent) || "")
+          .toLowerCase()
+          .includes(x),
+    );
+    r.style.display = ok ? "" : "none";
+  });
+}
+function ngSort(t, i) {
+  const st = t._ng,
+    hook = t.id ? NG.hooks[t.id] : null;
+  if (st.sortCol === i) {
+    if (st.sortDir === 1) st.sortDir = -1;
+    else {
+      st.sortCol = -1;
+      st.sortDir = 1;
+    }
+  } else {
+    st.sortCol = i;
+    st.sortDir = 1;
+  }
+  Array.from(t.tHead.rows[0].cells).forEach((th, c) => {
+    if (th.removeAttribute) th.removeAttribute("data-sort-dir");
+    if (c === st.sortCol)
+      th.setAttribute("data-sort-dir", st.sortDir === 1 ? "asc" : "desc");
+  });
+  if (hook && hook.setSort) {
+    hook.setSort(st.sortCol, st.sortDir);
+    return;
+  }
+  ngApplySort(t);
+}
+function ngApplySort(t) {
+  const st = t._ng;
+  if (st.sortCol < 0) return;
+  const rows = ngDomRows(t),
+    c = st.sortCol,
+    d = st.sortDir;
+  const val = (r) =>
+    String((r.cells[c] && r.cells[c].textContent) || "").trim();
+  rows.sort(
+    (a, b) =>
+      d *
+      val(a).localeCompare(val(b), "id", {
+        numeric: true,
+        sensitivity: "base",
+      }),
+  );
+  const body = t.tBodies[0];
+  rows.forEach((r) => body.appendChild(r));
+  st.first = body.rows[0] || null;
+}
+function ngReset(t) {
+  const st = t._ng,
+    hook = t.id ? NG.hooks[t.id] : null;
+  Array.from(t.tHead.rows[0].cells).forEach((th, i) => {
+    th.style.width = st.orig.ths[i] || "";
+    if (th.removeAttribute) th.removeAttribute("data-sort-dir");
+  });
+  Array.from(t.querySelectorAll(":scope > colgroup > col")).forEach((c, i) => {
+    c.style.width = st.orig.cols[i] || "";
+  });
+  t.style.tableLayout = st.orig.layout || "";
+  t.style.width = st.orig.width || "";
+  t.classList.remove("ng-wrap");
+  try {
+    if (getComputedStyle(t).tableLayout !== "fixed")
+      t.classList.remove("ng-fixed");
+  } catch (_) {
+    /* abaikan */
+  }
+  st.ws = null;
+  st.wrap = false;
+  st.sortCol = -1;
+  st.sortDir = 1;
+  st.fv = st.fv.map(() => "");
+  if (st.bWrap) st.bWrap.classList.remove("on");
+  if (st.frow)
+    st.frow.querySelectorAll("input").forEach((x) => {
+      x.value = "";
+    });
+  if (hook && hook.setFilters) {
+    hook.setFilters(st.fv.slice());
+    if (hook.setSort) hook.setSort(-1, 1);
+  } else {
+    ngApplyFilter(t);
+    ngDomRows(t).forEach((r) => {
+      r.style.display = "";
+    });
+  }
+  if (st.bFilter) st.bFilter.classList.remove("active");
+  delete ngStore()[ngKey(t)];
+  ngPersist();
+}
+function ngResetFilters(id) {
+  const t =
+    typeof document !== "undefined" && document.getElementById
+      ? document.getElementById(id)
+      : null;
+  if (!t || !t._ng) return;
+  t._ng.fv = t._ng.fv.map(() => "");
+  t._ng.sortCol = -1;
+  t._ng.sortDir = 1;
+  if (t._ng.frow)
+    t._ng.frow.querySelectorAll("input").forEach((x) => {
+      x.value = "";
+    });
+  Array.from(t.tHead.rows[0].cells).forEach((th) => {
+    if (th.removeAttribute) th.removeAttribute("data-sort-dir");
+  });
+  if (t._ng.bFilter) t._ng.bFilter.classList.remove("active");
+}
+// hook data-level untuk tabel yang dipaginasi di sisi klien
+NG.hooks["conn-table"] = {
+  setFilters(arr) {
+    CONNTBL.colf = arr;
+    CONNTBL.page = 1;
+    renderConnPage();
+  },
+  setSort(col, dir) {
+    CONNTBL.sortCol = col;
+    CONNTBL.sortDir = dir;
+    CONNTBL.page = 1;
+    renderConnPage();
+  },
+};
+function ngScan() {
+  if (typeof document === "undefined" || !document.querySelectorAll) return;
+  try {
+    npScan();
+  } catch (_) {
+    /* abaikan */
+  }
+  document.querySelectorAll(".ng-bar").forEach((b) => {
+    if (b._ngTable && b._ngTable.isConnected === false) b.remove();
+  });
+  document.querySelectorAll("table").forEach((t) => {
+    if (t._ng) {
+      const body = t.tBodies[0];
+      if (body && body.rows[0] !== t._ng.first) {
+        // isi tabel dirender ulang oleh aplikasi
+        t._ng.first = body.rows[0] || null;
+        if (!NG.hooks[t.id]) {
+          if (t._ng.fv.some(Boolean)) ngApplyFilter(t);
+          if (t._ng.sortCol >= 0) ngApplySort(t);
+        }
+      }
+      return;
+    }
+    if (ngEligible(t)) {
+      try {
+        ngEnhance(t);
+      } catch (e) {
+        if (typeof console !== "undefined") console.warn("ngEnhance", e);
+      }
+    }
+  });
+}
+function ngSchedule(muts) {
+  if (
+    muts &&
+    muts.every((m) => m.target && m.target.closest && m.target.closest("#map"))
+  )
+    return; // abaikan perubahan peta
+  if (NG.timer) return;
+  NG.timer = setTimeout(() => {
+    NG.timer = null;
+    ngScan();
+  }, 80);
+}
+try {
+  if (typeof MutationObserver !== "undefined" && document.body)
+    new MutationObserver(ngSchedule).observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+  ngSchedule();
+} catch (_) {
+  /* abaikan */
+}
+
+// =====================================================================
+// PANEL BISA DIPINDAH & DIUBAH LEBARNYA (panel melayang di peta + semua modal)
+//  - tarik judul = pindah; tarik tepi kiri/kanan = ubah lebar; klik dua kali judul = kembalikan
+//  - posisi & lebar diingat per panel; dimatikan pada layar sempit (<= 768 px)
+// =====================================================================
+const NP = { store: null };
+function npStore() {
+  if (NP.store) return NP.store;
+  try {
+    NP.store = JSON.parse(localStorage.getItem("netgis-panels") || "{}") || {};
+  } catch (_) {
+    NP.store = {};
+  }
+  return NP.store;
+}
+function npPersist() {
+  try {
+    localStorage.setItem("netgis-panels", JSON.stringify(NP.store || {}));
+  } catch (_) {
+    /* penyimpanan tidak tersedia */
+  }
+}
+function npMobile() {
+  return typeof window !== "undefined" && window.innerWidth <= 768;
+}
+const NP_SKIP =
+  "button, a, input, select, textarea, label, summary, [contenteditable='true']";
+const NP_EDGE = 8;
+function npClamp(v, lo, hi) {
+  return Math.min(Math.max(v, lo), Math.max(lo, hi));
+}
+function npZone(el, e) {
+  const r = el.getBoundingClientRect();
+  const sb = Math.max(0, el.offsetWidth - el.clientWidth - 2); // lebar scrollbar vertikal (bila ada)
+  if (e.clientX - r.left <= NP_EDGE) return "l";
+  const fromRight = r.right - e.clientX;
+  if (fromRight > sb && fromRight <= NP_EDGE + sb) return "r";
+  return "";
+}
+function npGeom(el) {
+  const modal = el._np.kind === "modal";
+  if (modal)
+    return {
+      ox: parseFloat(el.style.left) || 0,
+      oy: parseFloat(el.style.top) || 0,
+      w: el.getBoundingClientRect().width,
+    };
+  const par = el.offsetParent || el.parentElement,
+    pr = par.getBoundingClientRect(),
+    r = el.getBoundingClientRect();
+  return {
+    left: r.left - pr.left,
+    top: r.top - pr.top,
+    w: r.width,
+    pw: pr.width,
+    ph: pr.height,
+  };
+}
+function npFloatPrepare(el, g) {
+  el.style.left = g.left + "px";
+  el.style.top = g.top + "px";
+  el.style.right = "auto";
+  el.style.bottom = "auto";
+}
+function npDown(e) {
+  if (npMobile() || e.button !== 0) return;
+  const el = e.currentTarget,
+    cfg = el._np;
+  if (!cfg) return;
+  let mode = "";
+  const z = el.classList.contains("collapsed") ? "" : npZone(el, e);
+  if (z) mode = "resize-" + z;
+  else {
+    const h = e.target.closest ? e.target.closest(cfg.handle) : null;
+    if (h && el.contains(h) && !(e.target.closest && e.target.closest(NP_SKIP)))
+      mode = "move";
+  }
+  if (!mode) return;
+  e.preventDefault();
+  const g = npGeom(el),
+    x0 = e.clientX,
+    y0 = e.clientY,
+    modal = cfg.kind === "modal";
+  if (modal) el.style.position = "relative";
+  else npFloatPrepare(el, g);
+  const r0 = el.getBoundingClientRect(),
+    vw = window.innerWidth,
+    vh = window.innerHeight;
+  document.body.classList.add(mode === "move" ? "np-dragging" : "np-resizing");
+  const mv = (ev) => {
+    const dx = ev.clientX - x0,
+      dy = ev.clientY - y0;
+    if (mode === "move") {
+      if (modal) {
+        const ddx = npClamp(dx, 80 - r0.width - r0.left, vw - 80 - r0.left),
+          ddy = npClamp(dy, -r0.top, vh - 40 - r0.top);
+        el.style.left = g.ox + ddx + "px";
+        el.style.top = g.oy + ddy + "px";
+      } else {
+        el.style.left = npClamp(g.left + dx, 80 - g.w, g.pw - 80) + "px";
+        el.style.top = npClamp(g.top + dy, 0, g.ph - 40) + "px";
+      }
+      return;
+    }
+    const right = mode === "resize-r";
+    const maxW = modal ? vw - 16 : g.pw - 16;
+    const w = npClamp(Math.round(g.w + (right ? dx : -dx)), 300, maxW);
+    el.style.width = w + "px";
+    el.style.maxWidth = "none";
+    if (modal) el.style.left = g.ox + ((right ? 1 : -1) * (w - g.w)) / 2 + "px";
+    else if (!right)
+      el.style.left = npClamp(g.left + (g.w - w), 0, g.pw - 80) + "px";
+  };
+  const up = () => {
+    document.removeEventListener("pointermove", mv);
+    document.removeEventListener("pointerup", up);
+    document.body.classList.remove("np-dragging", "np-resizing");
+    npSave(el);
+  };
+  document.addEventListener("pointermove", mv);
+  document.addEventListener("pointerup", up);
+}
+function npSave(el) {
+  const cfg = el._np;
+  npStore()[cfg.key] = {
+    left: el.style.left,
+    top: el.style.top,
+    w: el.style.width,
+  };
+  npPersist();
+}
+function npHover(e) {
+  if (npMobile()) {
+    e.currentTarget.style.cursor = "";
+    return;
+  }
+  const el = e.currentTarget;
+  el.style.cursor =
+    !el.classList.contains("collapsed") &&
+    npZone(el, e) &&
+    !(e.target.closest && e.target.closest(NP_SKIP))
+      ? "ew-resize"
+      : "";
+}
+function npReset(el) {
+  const cfg = el._np;
+  ["left", "top", "right", "bottom", "width", "maxWidth", "position"].forEach(
+    (k) => {
+      el.style[k] = "";
+    },
+  );
+  delete npStore()[cfg.key];
+  npPersist();
+}
+function npApply(el) {
+  const s = npStore()[el._np.key];
+  if (!s) return;
+  if (el._np.kind === "modal") {
+    if (s.left || s.top) {
+      el.style.position = "relative";
+      el.style.left = s.left;
+      el.style.top = s.top;
+    }
+    if (s.w) {
+      el.style.width = s.w;
+      el.style.maxWidth = "none";
+    }
+  } else {
+    if (s.left && s.top) {
+      el.style.left = s.left;
+      el.style.top = s.top;
+      el.style.right = "auto";
+      el.style.bottom = "auto";
+    }
+    if (s.w) {
+      el.style.width = s.w;
+      el.style.maxWidth = "none";
+    }
+  }
+}
+function npAttach(el, cfg) {
+  if (!el || el._np) return;
+  el._np = cfg;
+  el.addEventListener("pointerdown", npDown);
+  el.addEventListener("pointermove", npHover);
+  el.addEventListener("dblclick", (e) => {
+    const h = e.target.closest ? e.target.closest(cfg.handle) : null;
+    if (h && !(e.target.closest && e.target.closest(NP_SKIP))) npReset(el);
+  });
+  npApply(el);
+}
+function npScan() {
+  if (typeof document === "undefined" || !document.querySelector) return;
+  [
+    ["#connect-panel", ".cn-head"],
+    ["#tool-panel", ".tp-head"],
+  ].forEach(([sel, handle]) => {
+    const el = document.querySelector(sel);
+    if (el) npAttach(el, { key: sel, handle, kind: "float" });
+  });
+  document.querySelectorAll(".modal-container").forEach((el) => {
+    const ov = el.closest ? el.closest(".modal-overlay") : null;
+    if (
+      !ov ||
+      !ov.id ||
+      ov.id === "modal-password" ||
+      ov.classList.contains("auth-modal-top")
+    )
+      return;
+    npAttach(el, { key: ov.id, handle: ".modal-header", kind: "modal" });
+  });
+}
+
+// Penanda build: arahkan kursor ke badge "GIS Database" untuk memastikan app.js terbaru yang berjalan
+const NETGIS_BUILD = "20261004g";
+try {
+  const _sb = document.querySelector(".status-badge");
+  if (_sb) _sb.title = "Build " + NETGIS_BUILD;
+  console.info("NETGIS build", NETGIS_BUILD);
+} catch (_) {
+  /* abaikan */
+}
