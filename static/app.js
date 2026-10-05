@@ -2921,6 +2921,7 @@ function initCoreDetailLogic(id, category) {
 
   currentActiveAsset = item;
   resetCoreContainers();
+  cxSyncStatic();
 
   document.getElementById("core-modal-title").innerHTML =
     `<i class="fa-solid fa-diagram-project"></i> Detail Status & Splicing: ${escapeHtml(item.name)}`;
@@ -2986,6 +2987,7 @@ function fetchConnectionsAndRender() {
       renderActiveConnectionsTable(activeConnections, asset.category, asset.id);
       loadTracePanel(asset);
       loadAssetLoss(asset);
+      loadAssetSupports(asset);
     })
     .catch((err) => {
       console.error("Gagal memuat koneksi:", err);
@@ -3227,7 +3229,8 @@ function submitSplicingConnection() {
 }
 
 // --- RENDER CONNECTION TABLE ---
-// Tabel sambungan aktif: satu baris per sambungan (teks dipotong, nama lengkap di tooltip), dengan pencarian, filter arah & pagination
+// Tabel "Daftar Core Tersambung": satu baris = satu jalur core yang melewati aset ini.
+// Susunan kolom menyesuaikan data: both (hulu+hilir) | down (hanya hilir) | up (hanya hulu) | cable (kabel: melintas).
 const CONNTBL = {
   rows: [],
   page: 1,
@@ -3238,7 +3241,44 @@ const CONNTBL = {
   colf: [],
   sortCol: -1,
   sortDir: 1,
+  layout: "",
+  built: "",
+  ncols: 7,
 };
+
+function connLayoutCols(layout, assetLabel) {
+  const A = `${assetLabel} (aset ini)`;
+  if (layout === "both")
+    return [
+      ["Node Hulu · Port", 16],
+      ["Melalui Kabel", 11],
+      ["Jalur Upstream", 15],
+      [A, 13],
+      ["Jalur Downstream", 15],
+      ["Melalui Kabel", 11],
+      ["Node Hilir · Port", 19],
+    ];
+  if (layout === "up")
+    return [
+      ["Node Hulu · Port", 32],
+      ["Melalui Kabel", 24],
+      ["Jalur Upstream", 18],
+      [A, 26],
+    ];
+  if (layout === "cable")
+    return [
+      ["Core Kabel", 20],
+      ["Node Hulu · Port", 33],
+      ["Node Hilir · Port", 33],
+      ["Aksi", 14],
+    ];
+  return [
+    [A, 26],
+    ["Jalur Downstream", 18],
+    ["Melalui Kabel", 24],
+    ["Node Hilir · Port", 32],
+  ];
+}
 
 function renderActiveConnectionsTable(
   connections,
@@ -3255,10 +3295,8 @@ function renderActiveConnectionsTable(
     CONNTBL.sortCol = -1;
     ngResetFilters("conn-table");
   }
-  const qEl = document.getElementById("conn-search"),
-    dEl = document.getElementById("conn-dir");
+  const qEl = document.getElementById("conn-search");
   if (qEl) qEl.value = CONNTBL.q;
-  if (dEl) dEl.value = CONNTBL.dir;
 
   const assetName = (type, id) => {
     const f = allInventoryData.find(
@@ -3268,140 +3306,196 @@ function renderActiveConnectionsTable(
     );
     return f && f.name ? f.name : `${type} #${id}`;
   };
-  const badge = (bg, fg, icon, text) =>
-    `<span style="background:${bg}; color:${fg}; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold;"><i class="fa-solid ${icon}"></i> ${text}</span>`;
-
-  // Peta port lokal -> sambungan hulu/hilir (untuk indikator Jalur: abu bila sisi itu belum terisi)
-  const portMap = {};
-  (connections || []).forEach((cn) => {
-    const fromHere =
-      String(cn.from_asset_type) === String(currentAssetType) &&
-      String(cn.from_asset_id) === String(currentAssetId);
-    const toHere =
-      String(cn.to_asset_type) === String(currentAssetType) &&
-      String(cn.to_asset_id) === String(currentAssetId);
-    if (toHere) {
-      const m = (portMap[cn.to_port_core] = portMap[cn.to_port_core] || {
-        up: [],
-        down: [],
-      });
-      m.up.push(
-        `${assetName(cn.from_asset_type, cn.from_asset_id)} (${cn.from_port_core})`,
-      );
-    }
-    if (fromHere) {
-      const m = (portMap[cn.from_port_core] = portMap[cn.from_port_core] || {
-        up: [],
-        down: [],
-      });
-      m.down.push(
-        `${assetName(cn.to_asset_type, cn.to_asset_id)} (${cn.to_port_core})`,
-      );
-    }
+  const here = (t, i) =>
+    String(t) === String(currentAssetType) &&
+    String(i) === String(currentAssetId);
+  const conns = connections || [];
+  const isCable = String(currentAssetType).toUpperCase() === "CABLE";
+  const ups = [],
+    downs = [],
+    passes = [];
+  conns.forEach((c) => {
+    if (here(c.from_asset_type, c.from_asset_id)) downs.push(c);
+    else if (here(c.to_asset_type, c.to_asset_id)) ups.push(c);
+    else passes.push(c);
   });
-  const jalur = (dir, localPort, fromTxt, toTxt) => {
-    if (dir === "PASS")
-      return {
-        html: `<span class="jl"><span class="jl-chip pass" title="${escapeHtml(fromTxt)} \u2192 ${escapeHtml(toTxt)}"><i class="fa-solid fa-route"></i> Melintas</span></span>`,
-        text: "Melintas",
-      };
-    const m = portMap[localPort] || { up: [], down: [] };
-    const upOn = m.up.length > 0,
-      dnOn = m.down.length > 0;
-    const tip = (on, list, lab) =>
-      on ? `${lab}: ${list.join(", ")}` : `${lab}: belum tersambung`;
+  const layout = isCable
+    ? "cable"
+    : ups.length && downs.length
+      ? "both"
+      : ups.length
+        ? "up"
+        : "down";
+  const myName = assetName(currentAssetType, currentAssetId);
+  const canDel = can("connection.delete");
+
+  const lightLink = (type, id, name) => {
+    const nid = Number(id),
+      cat = String(type).toUpperCase() === "CABLE" ? "CABLE" : "NODE";
+    if (!Number.isFinite(nid) || !id) return escapeHtml(name);
+    return `<a class="asset-link" href="#" onclick="openLinkedAsset('${cat}', ${nid}); return false;">${escapeHtml(name)}</a>`;
+  };
+  const node = (type, id, port) => {
+    const n = assetName(type, id),
+      p = port == null || port === "" ? "" : String(port);
     return {
-      html:
-        `<span class="jl"><span class="jl-chip up ${upOn ? "on" : "off"}" title="${escapeHtml(tip(upOn, m.up, "Upstream"))}">Upstream</span>` +
-        `<span class="jl-eq ${upOn && dnOn ? "on" : "off"}"></span>` +
-        `<span class="jl-chip down ${dnOn ? "on" : "off"}" title="${escapeHtml(tip(dnOn, m.down, "Downstream"))}">Downstream</span></span>`,
-      text: `${upOn ? "Upstream" : "-"} ${dnOn ? "Downstream" : "-"} ${m.up.concat(m.down).join(" ")}`,
+      html: `${lightLink(type, id, n)}${p ? `<span class="cn-port"> · ${escapeHtml(p)}</span>` : ""}`,
+      text: p ? `${n} · ${p}` : n,
     };
   };
-  CONNTBL.rows = (connections || []).map((conn) => {
-    const isFromHere =
-      String(conn.from_asset_type) === String(currentAssetType) &&
-      String(conn.from_asset_id) === String(currentAssetId);
-    const isToHere =
-      String(conn.to_asset_type) === String(currentAssetType) &&
-      String(conn.to_asset_id) === String(currentAssetId);
-    // Aset ini hanya DILEWATI sambungan (kabel media) -> bukan ujung sambungan
-    const isPassThrough = !isFromHere && !isToHere;
-    const dir = isPassThrough ? "PASS" : isFromHere ? "DOWN" : "UP";
-
-    let localPort, targetHtml, targetText, targetPort;
-    if (isPassThrough) {
-      const fn = assetName(conn.from_asset_type, conn.from_asset_id),
-        tn = assetName(conn.to_asset_type, conn.to_asset_id);
-      localPort = conn.via_core || "-";
-      targetHtml = `${assetLinkHtml(conn.from_asset_type, conn.from_asset_id, fn)} \u2192 ${assetLinkHtml(conn.to_asset_type, conn.to_asset_id, tn)}`;
-      targetText = `${fn} \u2192 ${tn}`;
-      targetPort = `${conn.from_port_core} \u2192 ${conn.to_port_core}`;
-    } else {
-      localPort = isFromHere ? conn.from_port_core : conn.to_port_core;
-      const tType = isFromHere ? conn.to_asset_type : conn.from_asset_type;
-      const tId = isFromHere ? conn.to_asset_id : conn.from_asset_id;
-      targetPort = isFromHere ? conn.to_port_core : conn.from_port_core;
-      targetText = assetName(tType, tId);
-      targetHtml = assetLinkHtml(tType, tId, targetText);
+  const via = (c) => {
+    if (!c) return { html: `<span class="jl-chip off">—</span>`, text: "—" };
+    if (c.via_cable_name)
+      return {
+        html: lightLink("CABLE", c.via_cable_id, c.via_cable_name),
+        text: c.via_cable_name,
+      };
+    if (c.via_cable_id) {
+      const t = "Kabel #" + Number(c.via_cable_id);
+      return { html: escapeHtml(t), text: t };
     }
-    const dirBadge =
-      dir === "PASS"
-        ? badge("#fef3c7", "#b45309", "fa-route", "Melintas")
-        : dir === "DOWN"
-          ? badge("#dcfce7", "#15803d", "fa-arrow-right", "Downstream")
-          : badge("#e0f2fe", "#0369a1", "fa-arrow-left", "Upstream");
-    let viaHtml, viaText;
-    if (dir === "PASS") {
-      viaHtml = "Kabel ini";
-      viaText = "Kabel ini";
-    } else if (conn.via_cable_name) {
-      viaHtml =
-        assetLinkHtml("CABLE", conn.via_cable_id, conn.via_cable_name) +
-        (conn.via_core ? ` (${escapeHtml(conn.via_core)})` : "");
-      viaText =
-        conn.via_cable_name + (conn.via_core ? ` (${conn.via_core})` : "");
-    } else if (conn.via_cable_id) {
-      viaHtml = "Kabel #" + Number(conn.via_cable_id);
-      viaText = viaHtml;
-    } else {
-      viaHtml = "Langsung / Direct";
-      viaText = viaHtml;
-    }
-    const del = can("connection.delete")
-      ? `<button onclick="disconnectCore(${Number(conn.id)})" title="Putus sambungan ini" style="background:#ef4444; color:white; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:11px;"><i class="fa-solid fa-trash"></i> Putus</button>`
-      : "";
-    const jl = jalur(
-      dir,
-      localPort,
-      assetName(conn.from_asset_type, conn.from_asset_id),
-      assetName(conn.to_asset_type, conn.to_asset_id),
-    );
-    const dirLabel =
-      dir === "PASS" ? "Melintas" : dir === "DOWN" ? "Downstream" : "Upstream";
     return {
-      dir,
-      cells: [
-        localPort,
-        dirLabel,
-        jl.text,
-        viaText,
-        targetText,
-        targetPort,
-        "",
-      ].map((x) => String(x == null ? "" : x)),
-      text: `${localPort} ${viaText} ${targetText} ${targetPort}`.toLowerCase(),
-      html:
-        `<tr style="border-bottom: 1px solid #f1f5f9;">` +
-        `<td title="${escapeHtml(localPort)}" style="padding: 8px; font-weight: 600; color: #1e293b;">${escapeHtml(localPort)}</td>` +
-        `<td style="padding: 8px; text-align: center;">${dirBadge}</td>` +
-        `<td class="jl-cell" style="padding: 8px; text-align: center;">${jl.html}</td>` +
-        `<td title="${escapeHtml(viaText)}" style="padding: 8px; color: #0284c7; font-weight: 500;">${viaHtml}</td>` +
-        `<td title="${escapeHtml(targetText)}" style="padding: 8px; font-weight: 500;">${targetHtml}</td>` +
-        `<td title="${escapeHtml(targetPort)}" style="padding: 8px; font-weight: 500;">${escapeHtml(targetPort)}</td>` +
-        `<td style="padding: 8px; text-align: center;">${del}</td></tr>`,
+      html: `<span class="cn-direct">Langsung</span>`,
+      text: "Langsung",
     };
-  });
+  };
+  const jalur = (c, side) => {
+    if (!c)
+      return {
+        html: `<span class="jl-chip off" title="${side === "up" ? "Upstream" : "Downstream"}: belum tersambung">—</span>`,
+        text: "—",
+      };
+    const core = c.via_core ? String(c.via_core) : "—";
+    const x = canDel
+      ? `<button class="jl-x" onclick="disconnectCore(${Number(c.id)})" title="Putus sambungan ini">✕</button>`
+      : "";
+    const lab =
+      side === "up" ? `${escapeHtml(core)} →` : `→ ${escapeHtml(core)}`;
+    return {
+      html: `<span class="jl"><span class="jl-chip ${side === "up" ? "up" : "down"} on" title="${escapeHtml(core)}">${lab}</span>${x}</span>`,
+      text: core,
+    };
+  };
+  const td = (c, extra) =>
+    `<td title="${escapeHtml(c.text)}"${extra || ""}>${c.html}</td>`;
+
+  let rows = [];
+  if (layout === "cable") {
+    rows = conns.map((c) => {
+      const f = node(c.from_asset_type, c.from_asset_id, c.from_port_core),
+        t = node(c.to_asset_type, c.to_asset_id, c.to_port_core);
+      const core = String(c.via_core || "-");
+      const del = canDel
+        ? `<button onclick="disconnectCore(${Number(c.id)})" title="Putus sambungan ini" class="jl-del"><i class="fa-solid fa-trash"></i> Putus</button>`
+        : "";
+      return {
+        status: "PASS",
+        cells: [core, f.text, t.text, ""],
+        text: `${core} ${f.text} ${t.text}`.toLowerCase(),
+        html: `<tr><td class="cn-b" title="${escapeHtml(core)}">${escapeHtml(core)}</td>${td(f)}${td(t)}<td class="cn-c">${del}</td></tr>`,
+      };
+    });
+  } else {
+    const lab = (c) => String(c.to_port_core == null ? "" : c.to_port_core);
+    const dlab = (c) =>
+      String(c.from_port_core == null ? "" : c.from_port_core);
+    const upBy = {};
+    ups.forEach((c) => {
+      (upBy[lab(c)] = upBy[lab(c)] || []).push(c);
+    });
+    const downLabels = new Set(downs.map(dlab));
+    const used = new Set();
+    // splitter (ODP): satu port IN melayani banyak port OUT -> info hulu diulang di tiap baris
+    const fan =
+      ups.length &&
+      ups.every((c) => /^IN/i.test(lab(c))) &&
+      downs.length &&
+      downs.every((c) => /^OUT/i.test(dlab(c)))
+        ? ups[0]
+        : null;
+    const pairs = [];
+    downs.forEach((d) => {
+      const m = (upBy[dlab(d)] || [])[0] || fan || null;
+      if (m) used.add(m.id);
+      pairs.push({ up: m, down: d });
+    });
+    ups.forEach((u) => {
+      if (!used.has(u.id)) pairs.push({ up: u, down: null });
+    });
+    pairs.sort((a, b) => {
+      const la = a.down ? dlab(a.down) : lab(a.up),
+        lb = b.down ? dlab(b.down) : lab(b.up);
+      return la.localeCompare(lb, "id", { numeric: true, sensitivity: "base" });
+    });
+    rows = pairs.map((p) => {
+      const u = p.up,
+        d = p.down;
+      const status = u && d ? "FULL" : u ? "NO_DOWN" : "NO_UP";
+      const nu = u
+        ? node(u.from_asset_type, u.from_asset_id, u.from_port_core)
+        : { html: `<span class="jl-chip off">—</span>`, text: "—" };
+      const nd = d
+        ? node(d.to_asset_type, d.to_asset_id, d.to_port_core)
+        : { html: `<span class="jl-chip off">—</span>`, text: "—" };
+      const ul = u ? lab(u) : "",
+        dl = d ? dlab(d) : "";
+      const local = u && d && ul !== dl ? `${ul} → ${dl}` : d ? dl : ul;
+      const here_ = { html: `<b>${escapeHtml(local)}</b>`, text: local };
+      const vu = via(u),
+        vd = via(d),
+        ju = jalur(u, "up"),
+        jd = jalur(d, "down");
+      let cs, tds;
+      if (layout === "both") {
+        cs = [nu, vu, ju, here_, jd, vd, nd];
+      } else if (layout === "up") {
+        cs = [nu, vu, ju, here_];
+      } else {
+        cs = [here_, jd, vd, nd];
+      }
+      tds = cs.map((c, i) =>
+        td(
+          c,
+          c === here_
+            ? ' class="cn-here"'
+            : c === ju || c === jd
+              ? ' class="jl-cell"'
+              : "",
+        ),
+      );
+      return {
+        status,
+        cells: cs.map((c) => c.text),
+        text: cs
+          .map((c) => c.text)
+          .join(" ")
+          .toLowerCase(),
+        html: `<tr>${tds.join("")}</tr>`,
+      };
+    });
+  }
+  CONNTBL.rows = rows;
+  CONNTBL.layout = layout;
+
+  // (Re)bangun tabel bila susunan kolom / aset berubah, agar grid (filter/urut/lebar) mengikuti kolom baru
+  const host = document.getElementById("conn-table-host");
+  const built = layout + "|" + key + "|" + myName;
+  if (host && (CONNTBL.built !== built || !host.querySelector("#conn-table"))) {
+    CONNTBL.built = built;
+    const cols = connLayoutCols(layout, myName);
+    CONNTBL.ncols = cols.length;
+    host.innerHTML =
+      `<table id="conn-table" class="conn-table conn-${layout}" data-ng-key="conn-table:${layout}">` +
+      `<colgroup>${cols.map((c) => `<col style="width:${c[1]}%">`).join("")}</colgroup>` +
+      `<thead><tr>${cols.map((c, i) => `<th class="${/aset ini/.test(c[0]) ? "cn-here-h" : ""}" title="${escapeHtml(c[0])}">${escapeHtml(c[0])}</th>`).join("")}</tr></thead>` +
+      `<tbody id="active-connections-tbody"></tbody></table>`;
+  }
+  const dEl = document.getElementById("conn-dir");
+  if (dEl) {
+    dEl.style.display = layout === "both" ? "" : "none";
+    if (layout !== "both") CONNTBL.dir = "ALL";
+    dEl.value = CONNTBL.dir;
+  }
   renderConnPage();
 }
 
@@ -3417,7 +3511,7 @@ function renderConnPage() {
   );
   let list = all.filter(
     (r) =>
-      (CONNTBL.dir === "ALL" || r.dir === CONNTBL.dir) &&
+      (CONNTBL.dir === "ALL" || r.status === CONNTBL.dir) &&
       (!q || r.text.includes(q)) &&
       cf.every((f, c) => !f || (r.cells[c] || "").toLowerCase().includes(f)),
   );
@@ -3441,30 +3535,36 @@ function renderConnPage() {
   if (CONNTBL.page < 1) CONNTBL.page = 1;
   const start = (CONNTBL.page - 1) * CONNTBL.size;
   const slice = list.slice(start, start + CONNTBL.size);
+  const nc = CONNTBL.ncols || 7;
   if (!all.length) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:12px; color:#94a3b8;">Belum ada sambungan core/port aktif.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${nc}" style="text-align:center; padding:12px; color:#94a3b8;">Belum ada sambungan core/port aktif.</td></tr>`;
   } else if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:12px; color:#94a3b8;">Tidak ada sambungan yang cocok dengan filter.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${nc}" style="text-align:center; padding:12px; color:#94a3b8;">Tidak ada sambungan yang cocok dengan filter.</td></tr>`;
   } else {
     tbody.innerHTML = slice.map((r) => r.html).join("");
   }
   const info = document.getElementById("conn-page-info"),
     prev = document.getElementById("conn-prev"),
     next = document.getElementById("conn-next");
-  const counts = { UP: 0, DOWN: 0, PASS: 0 };
+  const counts = { FULL: 0, NO_DOWN: 0, NO_UP: 0, PASS: 0 };
   all.forEach((r) => {
-    counts[r.dir]++;
+    counts[r.status]++;
   });
   if (info) {
     info.textContent = list.length
-      ? `${start + 1}\u2013${start + slice.length} dari ${list.length}${list.length !== all.length ? ` (terfilter dari ${all.length})` : ""} \u00b7 halaman ${CONNTBL.page}/${pages}`
+      ? `${start + 1}–${start + slice.length} dari ${list.length}${list.length !== all.length ? ` (terfilter dari ${all.length})` : ""} · halaman ${CONNTBL.page}/${pages}`
       : `0 dari ${all.length}`;
   }
   const sum = document.getElementById("conn-summary");
-  if (sum)
-    sum.textContent = all.length
-      ? `${counts.UP} upstream \u00b7 ${counts.DOWN} downstream${counts.PASS ? ` \u00b7 ${counts.PASS} melintas` : ""}`
-      : "";
+  if (sum) {
+    if (!all.length) sum.textContent = "";
+    else if (CONNTBL.layout === "both")
+      sum.textContent = `${all.length} jalur · ${counts.FULL} lengkap${counts.NO_DOWN ? ` · ${counts.NO_DOWN} belum ada hilir` : ""}${counts.NO_UP ? ` · ${counts.NO_UP} belum ada hulu` : ""}`;
+    else if (CONNTBL.layout === "cable")
+      sum.textContent = `${all.length} core melintas`;
+    else
+      sum.textContent = `${all.length} jalur ${CONNTBL.layout === "up" ? "upstream" : "downstream"}`;
+  }
   if (prev) prev.disabled = CONNTBL.page <= 1;
   if (next) next.disabled = CONNTBL.page >= pages;
   const pager = document.getElementById("conn-pager");
@@ -4925,7 +5025,13 @@ function renderPopOtb(item, container) {
   ).length;
   let html =
     popTrunkHtml(item, canEdit) +
-    `<h4 style="margin-bottom: 4px; font-size: 14px; color: #334155;">Visualisasi OTB POP (${sizes.length} OTB &middot; ${total} port)</h4>` +
+    cxStart(
+      "otbvis",
+      "h4",
+      `Visualisasi OTB POP (${sizes.length} OTB &middot; ${total} port)`,
+      "margin-bottom: 4px; font-size: 14px; color: #334155;",
+    ) +
+    `<div class="cx-body">` +
     `<div style="margin-bottom: 12px; font-size: 12px; color: #475569;">Terpakai: <b style="color:#2563eb;">${usedAll}</b> &middot; Tersedia: <b style="color:#16a34a;">${total - usedAll}</b> &middot; Total: <b>${total}</b> port` +
     ` &middot; Masuk+keluar lengkap: <b>${fullAll}</b>` +
     ` &middot; Perangkat terhubung: <b>${pd.list.length}</b>${canEdit ? ' <span class="otb-hint">(klik port untuk mencatat perangkat / interface)</span>' : ""}</div>`;
@@ -4983,8 +5089,9 @@ function renderPopOtb(item, container) {
     }
     html += "</div></div>";
   });
+  html += "</div></div>"; // tutup cx-body + cx-sec "otbvis"
   // tabel perangkat yang terhubung ke port OTB
-  html += `<div class="pd-section"><div class="pd-title"><i class="fa-solid fa-server"></i> Perangkat terhubung ke port OTB</div>`;
+  html += `<div class="pd-section cx-sec${cxCls("otbdev")}" data-cx="otbdev"><div class="pd-title cx-head" role="button" tabindex="0" aria-expanded="${cxIsOpen("otbdev")}"><i class="fa-solid fa-server"></i> Perangkat terhubung ke port OTB</div><div class="cx-body">`;
   if (pd.list.length) {
     html +=
       `<table class="data-table pd-table"><thead><tr><th>Port OTB</th><th>Peruntukan</th><th>Perangkat</th><th>Slot</th><th>Interface</th><th>VLAN</th><th>Service</th><th>Pelanggan</th>${canEdit ? "<th></th>" : ""}</tr></thead><tbody>` +
@@ -5001,7 +5108,7 @@ function renderPopOtb(item, container) {
   } else {
     html += `<div class="tp-muted">Belum ada perangkat yang dicatat pada port OTB POP ini.</div>`;
   }
-  html += `</div><div id="pop-dev-form"></div>`;
+  html += `</div></div><div id="pop-dev-form"></div>`;
   container.innerHTML = html;
   if (POPDEV.editPort && pd === POPDEV) popDevRenderForm(item);
 }
@@ -5223,7 +5330,13 @@ function renderCableCores(item, container) {
       connectedPorts.has(`Tube ${Math.floor((i - 1) / 12) + 1} - Core ${i}`),
   ).length;
 
-  let html = `<h4 style="margin-bottom: 4px; font-size: 14px; color: #334155;">Visualisasi ${labelHeader} (${escapeHtml(item.capacity || totalCores + "C")})</h4>`;
+  let html =
+    cxStart(
+      "corevis",
+      "h4",
+      `Visualisasi ${labelHeader} (${escapeHtml(item.capacity || totalCores + "C")})`,
+      "margin-bottom: 4px; font-size: 14px; color: #334155;",
+    ) + `<div class="cx-body">`;
   html += `<div style="margin-bottom: 12px; font-size: 12px; color: #475569;">
     Terpakai: <b style="color:#2563eb;">${usedCount}</b> &middot;
     Tersedia: <b style="color:#16a34a;">${totalCores - usedCount}</b> &middot;
@@ -5269,6 +5382,7 @@ function renderCableCores(item, container) {
 
   html += `</div>`;
   if (jd) html += `<div id="junction-box" style="margin-top:14px;"></div>`;
+  html += `</div></div>`; // tutup cx-body + cx-sec "corevis"
   container.innerHTML = html;
   if (jd) loadJunctionBox(item);
 }
@@ -5350,6 +5464,89 @@ const FIBER_LABEL = { SM: "Single-mode", MM: "Multimode" };
 function modeBadge(mode) {
   return `<span class="mode-badge m-${escapeHtml(mode || "SM")}">${escapeHtml(mode === "MM" ? "MM" : "SM")}</span>`;
 }
+// Relasi tiang/HH <-> kabel: DIHITUNG dari posisi (koridor di sekitar jalur kabel), tidak disimpan di database
+function loadAssetSupports(asset) {
+  const box = document.getElementById("asset-supports-box");
+  if (!box) return;
+  const t = (asset.type || "").toUpperCase();
+  const isCable = asset.category === "CABLE";
+  const isSupport = asset.category === "NODE" && (t === "TIANG" || t === "HH");
+  if (!isCable && !isSupport) {
+    box.innerHTML = "";
+    return;
+  }
+  box.innerHTML = '<small class="muted">Memuat relasi dari posisi...</small>';
+  const url = isCable
+    ? `/api/cables/${Number(asset.id)}/supports`
+    : `/api/nodes/${Number(asset.id)}/cables-through`;
+  apiRequest(url)
+    .then((d) => {
+      if (
+        !currentActiveAsset ||
+        String(currentActiveAsset.id) !== String(asset.id) ||
+        currentActiveAsset.category !== asset.category
+      )
+        return;
+      box.innerHTML = isCable
+        ? renderCableSupports(d)
+        : renderNodeCablesThrough(d);
+    })
+    .catch(() => {
+      box.innerHTML = "";
+    });
+}
+function renderCableSupports(d) {
+  const kind = (d.kinds || []).join("/") || "TIANG/HH";
+  const warn = d.spans_over_rule
+    ? `<div class="sup-warn"><i class="fa-solid fa-triangle-exclamation"></i> ${d.spans_over_rule} bentang melebihi ${escapeHtml(String(d.spacing_rule_m))} m (terpanjang ${escapeHtml(String(d.max_span_m))} m): kemungkinan ada ${escapeHtml(kind)} yang belum tercatat atau perlu ditambah.</div>`
+    : "";
+  const rows = (d.items || [])
+    .map(
+      (i, n) => `<tr>
+      <td>${n + 1}</td><td>${assetLinkHtml("NODE", i.id, i.name)}</td><td>${escapeHtml(i.type)}</td>
+      <td>${escapeHtml(String(i.along_m))}</td><td>${escapeHtml(String(i.offset_m))}</td><td>${escapeHtml(i.status || "-")}</td></tr>`,
+    )
+    .join("");
+  return (
+    cxStart(
+      "supports",
+      "h4",
+      `<i class="fa-solid fa-grip-lines-vertical"></i> ${escapeHtml(kind)} yang dilewati
+      <small>(${d.count} aset &middot; dihitung dari posisi, &plusmn;${escapeHtml(String(d.radius_m))} m dari jalur &middot; panjang ${escapeHtml(String(d.length_m))} m)</small>`,
+    ) +
+    `<div class="cx-body">
+    ${warn}
+    ${
+      d.count
+        ? `<div class="sup-scroll"><table class="sup-table"><thead><tr><th>#</th><th>Nama</th><th>Tipe</th><th>Jarak dari awal (m)</th><th>Geser dari jalur (m)</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div>`
+        : `<div class="muted">Tidak ada ${escapeHtml(kind)} dalam koridor kabel ini.</div>`
+    }</div></div>`
+  );
+}
+function renderNodeCablesThrough(d) {
+  const rows = (d.items || [])
+    .map(
+      (i) => `<tr>
+      <td>${assetLinkHtml("CABLE", i.id, i.name)}</td><td>${escapeHtml(i.type || "-")} &middot; ${escapeHtml(i.capacity || "-")}</td><td>${escapeHtml(i.installation || "-")}</td>
+      <td>${escapeHtml(String(i.along_m))} / ${escapeHtml(String(i.length_m))}</td><td>${escapeHtml(String(i.offset_m))}</td><td>${escapeHtml(i.status || "-")}</td></tr>`,
+    )
+    .join("");
+  return (
+    cxStart(
+      "supports",
+      "h4",
+      `<i class="fa-solid fa-grip-lines"></i> Kabel yang menumpang
+      <small>(${d.count} kabel &middot; dihitung dari posisi, &plusmn;${escapeHtml(String(d.radius_m))} m dari jalur)</small>`,
+    ) +
+    `<div class="cx-body">
+    ${
+      d.count
+        ? `<div class="sup-scroll"><table class="sup-table"><thead><tr><th>Kabel</th><th>Jenis</th><th>Pasang</th><th>Posisi / panjang (m)</th><th>Geser (m)</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div>`
+        : `<div class="muted">Belum ada kabel yang melewati ${escapeHtml(d.type)} ini.</div>`
+    }</div></div>`
+  );
+}
+
 function loadAssetLoss(asset) {
   const box = document.getElementById("asset-loss-box");
   if (!box) return;
@@ -5415,10 +5612,17 @@ function renderNodeLoss(d) {
       <td><button type="button" class="pw-save" title="Riwayat ukur" onclick="showPowerHistory(${i})"><i class="fa-solid fa-clock-rotate-left"></i></button></td></tr>`;
     })
     .join("");
-  return `<h4>Daya optik terukur <small>batas Rx ${fmtDb(d.rx_min_dbm)} s.d. ${fmtDb(d.rx_max_dbm)} dBm</small></h4>
+  return (
+    cxStart(
+      "power",
+      "h4",
+      `Daya optik terukur <small>batas Rx ${fmtDb(d.rx_min_dbm)} s.d. ${fmtDb(d.rx_max_dbm)} dBm</small>`,
+    ) +
+    `<div class="cx-body">
     <div class="imp-scroll"><table class="imp-table pw-table"><thead><tr><th>Port / core</th><th>Terhubung ke</th><th>Tx ukur (dBm)</th><th>Rx ukur (dBm)</th><th></th><th>Status Rx</th><th>Rx sebelumnya</th><th>Tren</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="cov-meta">Status dinilai dari hasil ukur (power meter / DDM perangkat), bukan estimasi, karena tiap perangkat memberi daya berbeda. Tren = Rx terbaru &minus; Rx pengukuran sebelumnya. ${canEdit ? "Isi Tx/Rx lalu simpan; setiap simpan tercatat di riwayat." : ""}</div>
-    <div id="pw-history" class="cov-meta"></div>`;
+    <div id="pw-history" class="cov-meta"></div></div></div>`
+  );
 }
 function showPowerHistory(i) {
   const r = LOSSBOX.ports[i];
@@ -5487,9 +5691,16 @@ function renderCableLoss(d) {
       <td class="otdr-date">${m ? escapeHtml(m.date || "") + (m.wavelength_nm ? " &middot; " + Number(m.wavelength_nm) + " nm" : "") : "belum diukur"}</td></tr>`;
     })
     .join("");
-  return `<h4>Redaman kabel <small>${Number(d.length_km).toFixed(2)} km &middot; ${endTxt(d.ends && d.ends.A)} &harr; ${endTxt(d.ends && d.ends.B)} &middot; ${meas}/${cores.length} core diukur OTDR</small></h4>
+  return (
+    cxStart(
+      "cableloss",
+      "h4",
+      `Redaman kabel <small>${Number(d.length_km).toFixed(2)} km &middot; ${endTxt(d.ends && d.ends.A)} &harr; ${endTxt(d.ends && d.ends.B)} &middot; ${meas}/${cores.length} core diukur OTDR</small>`,
+    ) +
+    `<div class="cx-body">
     <div class="imp-scroll"><table class="imp-table pw-table"><thead><tr><th>Core</th><th>Hulu (Tx)</th><th>Hilir (Rx)</th><th>Redaman daya (Tx&minus;Rx)</th><th>Status Rx</th><th>Ukur OTDR (dB)</th><th>Status OTDR</th><th>Tanggal ukur</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <div class="cov-meta">Redaman daya = Tx di aset hulu &minus; Rx di aset hilir pada sambungan core ini (isi Tx/Rx di Detail Core aset POP/Closure/ODP di ujungnya). Status memakai hasil ukur.</div>`;
+    <div class="cov-meta">Redaman daya = Tx di aset hulu &minus; Rx di aset hilir pada sambungan core ini (isi Tx/Rx di Detail Core aset POP/Closure/ODP di ujungnya). Status memakai hasil ukur.</div></div></div>`
+  );
 }
 
 // --- FUNCTION: RENDER VISUAL SPLITTER ODP (IN / OUT) ---
@@ -5555,10 +5766,14 @@ function renderODPSplitter(asset) {
     );
   }
 
-  container.innerHTML = `
-    <h4 style="font-size: 13px; color: #1e293b; margin-bottom: 12px; font-weight: 600;">
-      Konfigurasi Splitter ODP (${escapeHtml(capacityStr)})
-    </h4>
+  container.innerHTML =
+    cxStart(
+      "odpvis",
+      "h4",
+      `Konfigurasi Splitter ODP (${escapeHtml(capacityStr)})`,
+      "font-size: 13px; color: #1e293b; margin-bottom: 12px; font-weight: 600;",
+    ) +
+    `<div class="cx-body">
 
     <!-- Input Section -->
     <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
@@ -5579,7 +5794,7 @@ function renderODPSplitter(asset) {
         ${outHtml}
       </div>
     </div>
-  `;
+  </div></div>`;
 }
 
 // --- RENDER PORT GRID NODE (PELANGGAN / SLACK / dll) ---
@@ -5593,7 +5808,13 @@ function renderNodePorts(node, container) {
 
   const connectedPorts = getConnectedLocalPorts(node);
 
-  let html = `<h4 style="margin-bottom: 12px; font-size: 14px; color: #334155;">Grid Port ${escapeHtml(node.type)} (${totalPorts} Port)</h4>`;
+  let html =
+    cxStart(
+      "portgrid",
+      "h4",
+      `Grid Port ${escapeHtml(node.type)} (${totalPorts} Port)`,
+      "margin-bottom: 12px; font-size: 14px; color: #334155;",
+    ) + `<div class="cx-body">`;
   html += `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 10px;">`;
 
   for (let p = 1; p <= totalPorts; p++) {
@@ -5611,7 +5832,7 @@ function renderNodePorts(node, container) {
     `;
   }
 
-  html += `</div>`;
+  html += `</div></div></div>`; // grid + cx-body + cx-sec "portgrid"
   container.innerHTML = html;
 }
 
@@ -8879,6 +9100,8 @@ function loadSavedPlans() {
               <div class="cov-act">
                 <button type="button" onclick="openSavedPlan(${Number(r.id)})"><i class="fa-solid fa-eye"></i> Buka</button>
                 ${draft && can("plan.realize") ? `<button type="button" class="primary" onclick="realizePlanById(${Number(r.id)})"><i class="fa-solid fa-hammer"></i> Wujudkan</button>` : ""}
+                <button type="button" onclick="downloadPlanPdfById(${Number(r.id)}, 'lapangan', this)" title="PDF asplan untuk tim lapangan (tanpa harga)"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+                ${can("plan.write") ? `<button type="button" onclick="downloadPlanPdfById(${Number(r.id)}, 'lengkap', this)" title="PDF lengkap dengan BOQ harga"><i class="fa-solid fa-file-pdf"></i> +BOQ</button>` : ""}
                 ${draft ? `<button type="button" class="danger" onclick="deleteSavedPlan(${Number(r.id)})"><i class="fa-solid fa-trash"></i></button>` : ""}
               </div></div>`;
             })
@@ -8977,6 +9200,70 @@ function openSavedPlan(id) {
     })
     .catch((err) => setPlanMsg("Gagal membuka rencana: " + err.message, "bad"));
 }
+// ---------- Laporan PDF rencana (asplan) ----------
+function planPdfTz() {
+  return -new Date().getTimezoneOffset();
+}
+function planPdfMap() {
+  const s = $id("plan-pdf-map");
+  return s && ["osm", "satelit", "off"].includes(s.value) ? s.value : "osm";
+}
+function planDownloadPdf() {
+  const p = TOOL.plan;
+  if (!p.result) return;
+  const sel = $id("plan-pdf-variant");
+  const variant =
+    sel && sel.value === "lengkap" && can("plan.write")
+      ? "lengkap"
+      : "lapangan";
+  const btn = $id("plan-pdf-btn");
+  if (btn) setBtnBusy(btn, true);
+  const dn = ($id("plan-dest-name").value || "").trim();
+  let job;
+  if (p.boqId != null) {
+    // rencana tersimpan: PDF mengikuti data yang tersimpan (BOQ disimpan dulu bila ada perubahan)
+    job = (
+      variant === "lengkap" && boqHasAdjust()
+        ? boqSave(true)
+        : Promise.resolve()
+    ).then(() =>
+      downloadFromApi(
+        `/api/plans/${p.boqId}/pdf?variant=${variant}&tz=${planPdfTz()}&basemap=${planPdfMap()}`,
+      ),
+    );
+  } else {
+    job = downloadFromApi("/api/plan/pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...planPayload(),
+        name: dn ? `Pasang baru ${dn}` : null,
+        variant,
+        basemap: planPdfMap(),
+        boq_adjust: BOQ.adjust,
+        tz_min: planPdfTz(),
+      }),
+    });
+  }
+  return job
+    .then((r) => setPlanMsg(`PDF diunduh: ${r.name}`, "ok"))
+    .catch((err) => setPlanMsg("Gagal membuat PDF: " + err.message, "bad"))
+    .finally(() => {
+      if (btn) setBtnBusy(btn, false);
+    });
+}
+function downloadPlanPdfById(id, variant, btn) {
+  if (btn) setBtnBusy(btn, true);
+  return downloadFromApi(
+    `/api/plans/${Number(id)}/pdf?variant=${variant === "lengkap" ? "lengkap" : "lapangan"}&tz=${planPdfTz()}&basemap=${planPdfMap()}`,
+  )
+    .then((r) => setPlanMsg(`PDF diunduh: ${r.name}`, "ok"))
+    .catch((err) => alert("Gagal membuat PDF: " + err.message))
+    .finally(() => {
+      if (btn) setBtnBusy(btn, false);
+    });
+}
+
 function deleteSavedPlan(id) {
   if (!confirm("Hapus rencana Draft ini?")) return;
   apiRequest(`/api/plans/${id}`, "DELETE")
@@ -13156,9 +13443,11 @@ function ngHeads(t) {
   );
 }
 function ngKey(t) {
-  return t.id
-    ? "id:" + t.id
-    : "h:" +
+  return t.dataset && t.dataset.ngKey
+    ? "id:" + t.dataset.ngKey
+    : t.id
+      ? "id:" + t.id
+      : "h:" +
         ngHeads(t)
           .map((c) => c.textContent.trim())
           .join("|");
@@ -13838,7 +14127,163 @@ function npScan() {
 }
 
 // Penanda build: arahkan kursor ke badge "GIS Database" untuk memastikan app.js terbaru yang berjalan
-const NETGIS_BUILD = "20261004g";
+// =====================================================================
+// GESER DENGAN MOUSE (drag-to-pan): diagram jalur (.trace-canvas) dan grafik OTDR (#sor-chart)
+// =====================================================================
+const ND = {
+  mode: null,
+  el: null,
+  x: 0,
+  y: 0,
+  sl: 0,
+  st: 0,
+  v0: null,
+  moved: false,
+  suppress: false,
+};
+function ndDown(e) {
+  if (!e || e.button !== 0 || !e.target || !e.target.closest) return;
+  if (e.target.closest("button, input, select, textarea")) return;
+  const tc = e.target.closest(".trace-canvas"),
+    sc = e.target.closest("#sor-chart");
+  const el = tc || sc;
+  if (!el) return;
+  ND.mode = tc ? "trace" : "sor";
+  ND.el = el;
+  ND.x = e.clientX;
+  ND.y = e.clientY;
+  ND.moved = false;
+  ND.sl = el.scrollLeft;
+  ND.st = el.scrollTop;
+  ND.v0 =
+    typeof SOR !== "undefined" && SOR.view
+      ? { x0: SOR.view.x0, x1: SOR.view.x1 }
+      : null;
+}
+function ndMove(e) {
+  if (!ND.mode) return;
+  const dx = e.clientX - ND.x,
+    dy = e.clientY - ND.y;
+  if (!ND.moved) {
+    if (Math.abs(dx) + Math.abs(dy) < 4) return;
+    ND.moved = true;
+    ND.el.classList.add("nd-grabbing");
+  }
+  if (e.preventDefault) e.preventDefault();
+  if (ND.mode === "trace") {
+    ND.el.scrollLeft = ND.sl - dx;
+    ND.el.scrollTop = ND.st - dy;
+  } else if (ND.v0 && typeof SOR !== "undefined" && SOR.data) {
+    const w = ND.el.getBoundingClientRect().width || 760;
+    const span = ND.v0.x1 - ND.v0.x0,
+      shift = (dx / w) * (760 / 696) * span;
+    sorClamp(ND.v0.x0 - shift, ND.v0.x1 - shift);
+    sorRedraw();
+  }
+}
+function ndUp() {
+  if (!ND.mode) return;
+  if (ND.moved) {
+    ND.suppress = true;
+    setTimeout(() => {
+      ND.suppress = false;
+    }, 0);
+  }
+  if (ND.el) ND.el.classList.remove("nd-grabbing");
+  ND.mode = null;
+  ND.el = null;
+}
+if (typeof document !== "undefined" && document.addEventListener) {
+  document.addEventListener("mousedown", ndDown);
+  document.addEventListener("mousemove", ndMove);
+  document.addEventListener("mouseup", ndUp);
+  document.addEventListener(
+    "click",
+    (e) => {
+      if (ND.suppress && e.stopPropagation) {
+        e.stopPropagation();
+        if (e.preventDefault) e.preventDefault();
+      }
+    },
+    true,
+  );
+}
+
+// --- Bagian detail yang bisa dilipat (ikon di judul). Status disimpan per kunci bagian, berlaku untuk semua aset ---
+const CX = { closed: {} };
+try {
+  const _s = localStorage.getItem("netgis.cx");
+  if (_s) CX.closed = JSON.parse(_s) || {};
+} catch (_) {
+  /* tanpa penyimpanan: status hanya selama sesi */
+}
+function cxIsOpen(key) {
+  return !CX.closed[key];
+}
+function cxCls(key) {
+  return CX.closed[key] ? " cx-closed" : "";
+}
+function cxOpen(key) {
+  return `<div class="cx-sec${cxCls(key)}" data-cx="${key}">`;
+}
+function cxStart(key, tag, inner, style) {
+  // pembuka bagian + judul yang bisa diklik; isi bagian dibungkus <div class="cx-body"> oleh pemanggil
+  return `${cxOpen(key)}<${tag} class="cx-head" role="button" tabindex="0" aria-expanded="${cxIsOpen(key)}"${style ? ` style="${style}"` : ""} title="Klik untuk menutup / membuka">${inner}</${tag}>`;
+}
+function cxSet(key, closed) {
+  if (closed) CX.closed[key] = true;
+  else delete CX.closed[key];
+  try {
+    localStorage.setItem("netgis.cx", JSON.stringify(CX.closed));
+  } catch (_) {
+    /* abaikan */
+  }
+}
+// Ganti status satu bagian (sec = elemen .cx-sec); bagian yang sama di aset lain mengikuti saat dibuka
+function cxToggle(sec) {
+  if (!sec || !sec.getAttribute) return false;
+  const key = sec.getAttribute("data-cx");
+  if (!key) return false;
+  const closed = !CX.closed[key];
+  cxSet(key, closed);
+  if (sec.classList) {
+    if (closed) sec.classList.add("cx-closed");
+    else sec.classList.remove("cx-closed");
+  }
+  const h = sec.querySelector ? sec.querySelector(".cx-head") : null;
+  if (h && h.setAttribute) h.setAttribute("aria-expanded", String(!closed));
+  return closed;
+}
+// Bagian statis di index.html (Daftar Core Tersambung, Jalur & Dampak): terapkan status tersimpan
+function cxSyncStatic() {
+  const map = { "cx-conn": "conn", "trace-panel": "trace" };
+  Object.keys(map).forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el || !el.classList) return;
+    if (CX.closed[map[id]]) el.classList.add("cx-closed");
+    else el.classList.remove("cx-closed");
+    const h = el.querySelector ? el.querySelector(".cx-head") : null;
+    if (h && h.setAttribute)
+      h.setAttribute("aria-expanded", String(!CX.closed[map[id]]));
+  });
+}
+document.addEventListener("click", (e) => {
+  const t = e.target;
+  if (!t || !t.closest) return;
+  const h = t.closest(".cx-head");
+  if (!h || t.closest("button, a, input, select, textarea, label, summary"))
+    return;
+  cxToggle(h.closest(".cx-sec"));
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const t = e.target;
+  if (!t || !t.classList || !t.classList.contains("cx-head")) return;
+  e.preventDefault();
+  cxToggle(t.closest(".cx-sec"));
+});
+
+const NETGIS_BUILD = "20261006b";
 try {
   const _sb = document.querySelector(".status-badge");
   if (_sb) _sb.title = "Build " + NETGIS_BUILD;

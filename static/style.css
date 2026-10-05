@@ -6092,10 +6092,75 @@ html[data-theme="dark"] .otb-auto {
 .conn-table td .asset-link {
   white-space: nowrap;
 }
-.conn-table td:nth-child(2),
-.conn-table td:nth-child(7) {
+.conn-host {
+  overflow-x: auto;
+}
+.conn-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  border: 1px solid #e2e8f0;
+}
+.conn-table thead {
+  background: #f8fafc;
+}
+.conn-table th {
+  padding: 8px;
+  text-align: left;
+}
+.conn-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.conn-table td.jl-cell {
+  text-align: center;
+  overflow: visible;
+}
+.conn-table td.cn-here {
+  background: #fefce8;
+  color: #1e293b;
+}
+.conn-table th.cn-here-h {
+  background: #fef9c3;
+}
+.conn-table td.cn-b {
+  font-weight: 600;
+  color: #1e293b;
+}
+.conn-table td.cn-c {
+  text-align: center;
   overflow: visible;
   max-width: none;
+}
+.cn-port {
+  color: #475569;
+  font-weight: 600;
+}
+.cn-direct {
+  color: #94a3b8;
+  font-style: italic;
+}
+.jl-x {
+  border: none;
+  background: transparent;
+  color: #ef4444;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 3px;
+  margin-left: 2px;
+}
+.jl-x:hover {
+  background: #fee2e2;
+  border-radius: 3px;
+}
+.jl-del {
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
 }
 
 /* --- Progres & animasi aksi --- */
@@ -6465,4 +6530,134 @@ body.np-resizing,
 body.np-resizing * {
   cursor: ew-resize !important;
   user-select: none !important;
+}
+
+.trace-canvas,
+#sor-chart {
+  cursor: grab;
+}
+.trace-canvas.nd-grabbing,
+#sor-chart.nd-grabbing {
+  cursor: grabbing;
+  user-select: none;
+}
+.trace-canvas.nd-grabbing *,
+#sor-chart.nd-grabbing * {
+  cursor: grabbing !important;
+}
+.conn-table .jl {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  min-width: 0;
+}
+.conn-table .jl .jl-chip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.conn-table .jl .jl-x {
+  flex: none;
+}
+.plan-pdf {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.plan-pdf select {
+  font-size: 12px;
+  padding: 5px 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  max-width: 190px;
+}
+
+/* Relasi tiang/HH <-> kabel (dihitung dari posisi) */
+.sup-box:empty {
+  display: none;
+}
+.sup-box h4 small {
+  color: #64748b;
+  font-weight: 400;
+}
+.sup-scroll {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+.sup-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.sup-table th,
+.sup-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #f1f5f9;
+  text-align: left;
+  white-space: nowrap;
+}
+.sup-table th {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 600;
+}
+.sup-warn {
+  margin: 4px 0 8px;
+  padding: 6px 8px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  color: #92400e;
+  font-size: 12px;
+}
+
+/* Bagian detail yang bisa dilipat */
+.cx-head {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  padding-left: 18px;
+}
+.cx-head::before {
+  content: "\25BE";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 14px;
+  text-align: center;
+  color: #64748b;
+  font-weight: 700;
+  transition: transform 0.15s;
+}
+.cx-head:hover::before {
+  color: #0284c7;
+}
+.cx-head:focus-visible {
+  outline: 2px solid #0284c7;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.cx-sec.cx-closed > .cx-body {
+  display: none;
+}
+.cx-sec.cx-closed > .cx-head::before {
+  content: "\25B8";
+}
+.cx-sec.cx-closed > .cx-head {
+  opacity: 0.85;
+}
+.pd-title.cx-head {
+  padding-left: 20px;
+}
+.pd-title.cx-head::before {
+  top: 50%;
+  transform: translateY(-50%);
 }

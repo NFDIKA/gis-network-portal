@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 venv/
 .env
+seed_sambungan_dummy.py
+test_x.py
+seed_dummy.py
+seed_daya_otb_dummy.py

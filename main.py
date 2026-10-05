@@ -492,6 +492,7 @@ ROUTE_PERMS = [
     ("POST", r"^/api/boq/(calc|export)$", "plan.write"),
     ("PUT", r"^/api/plans/\d+/boq$", "plan.write"),
     ("POST", r"^/api/plan/preview$", "plan.write"),
+    ("POST", r"^/api/plan/pdf$", "plan.write"),
     ("POST", r"^/api/plans$", "plan.write"),
     ("DELETE", r"^/api/plans/\d+$", "plan.write"),
     ("POST", r"^/api/plans/\d+/realize$", "plan.realize"),
@@ -5193,8 +5194,61 @@ def _split_polyline(coords, d):
     return coords, coords[-1:], coords[-1]
 
 
+def _project_on_polyline(coords, lat, lng, segs=None):
+    """Proyeksi titik ke polyline [[lng,lat],...] -> (jarak_sepanjang_jalur_m, jarak_tegak_lurus_m).
+    Pendekatan bidang lokal (equirectangular) per ruas; panjang ruas memakai haversine agar konsisten dengan _points_along."""
+    if segs is None:
+        segs = [_haversine_m(a[1], a[0], b[1], b[0]) for a, b in zip(coords, coords[1:])]
+    k = 111320.0
+    cl = math.cos(math.radians(lat))
+    best, acc = (0.0, float("inf")), 0.0
+    for i, (a, b) in enumerate(zip(coords, coords[1:])):
+        ax, ay = (a[0] - lng) * k * cl, (a[1] - lat) * k
+        bx, by = (b[0] - lng) * k * cl, (b[1] - lat) * k
+        dx, dy = bx - ax, by - ay
+        L2 = dx * dx + dy * dy
+        t = 0.0 if L2 == 0 else max(0.0, min(1.0, -(ax * dx + ay * dy) / L2))
+        px, py = ax + dx * t, ay + dy * t
+        off = math.hypot(px, py)
+        if off < best[1]:
+            best = (acc + t * segs[i], off)
+        acc += segs[i]
+    return best
+
+
+def _corridor_assets(coords, cands, radius_m, min_sep_m=5.0):
+    """Aset (dict berisi latitude/longitude) yang berada di koridor +-radius_m dari polyline, terurut sepanjang jalur.
+    Aset yang berhimpitan (< min_sep_m sepanjang jalur, mis. tiang di dua sisi jalan) dipilih yang terdekat ke jalur."""
+    if not coords or len(coords) < 2 or not cands:
+        return []
+    segs = [_haversine_m(a[1], a[0], b[1], b[0]) for a, b in zip(coords, coords[1:])]
+    lats, lngs = [c[1] for c in coords], [c[0] for c in coords]
+    mlat = radius_m / 111320.0 + 1e-5
+    mlng = mlat / max(0.1, math.cos(math.radians(sum(lats) / len(lats))))
+    lo_a, hi_a, lo_o, hi_o = min(lats) - mlat, max(lats) + mlat, min(lngs) - mlng, max(lngs) + mlng
+    hits = []
+    for e in cands:
+        la, ln = e["latitude"], e["longitude"]
+        if la is None or ln is None or not (lo_a <= la <= hi_a and lo_o <= ln <= hi_o):
+            continue
+        along, off = _project_on_polyline(coords, la, ln, segs)
+        if off <= radius_m:
+            hits.append({"along": along, "offset": off, "node": e})
+    hits.sort(key=lambda h: h["along"])
+    out = []
+    for h in hits:
+        if out and h["along"] - out[-1]["along"] < min_sep_m:
+            if h["offset"] < out[-1]["offset"]:
+                out[-1] = h
+            continue
+        out.append(h)
+    return out
+
+
 def _segment_assets(rules, inst, coords, use_poles, use_slack, existing, tag):
-    """Tiang/HH + slack sepanjang satu segmen kabel; tiang/HH eksisting dalam radius dipakai ulang."""
+    """Tiang/HH + slack sepanjang satu segmen kabel.
+    Tiang/HH eksisting dibaca di koridor rute (+- reuse_radius_m, jarak antar tiang apa adanya); tiang/HH baru hanya
+    mengisi bentang yang lebih panjang dari jarak maksimal (pole_spacing_m / hh_spacing_m)."""
     length = _polyline_length_m(coords)
     slack_n, slack_len = (int(rules["slack_count"]) if use_slack else 0), float(rules["slack_length_m"])
     inset = min(5.0, length / 4)
@@ -5206,22 +5260,28 @@ def _segment_assets(rules, inst, coords, use_poles, use_slack, existing, tag):
         slack_d = [inset + (length - 2 * inset) * i / (slack_n - 1) for i in range(slack_n)]
     passive_kind = "TIANG" if inst == "Udara" else "HH"
     spacing = float(rules["pole_spacing_m"] if inst == "Udara" else rules["hh_spacing_m"])
-    pass_d, k = [], 1
-    while use_poles and k * spacing < length - 2.0:
-        pass_d.append(k * spacing)
-        k += 1
     rr = float(rules["reuse_radius_m"])
     assets = []
+    reuse = _corridor_assets(coords, existing.get(passive_kind, []), rr) if (use_poles and rr > 0) else []
+    pass_d, prev = [], 0.0       # tiang/HH baru: isi bentang antar penyangga (awal, eksisting..., akhir) bila > jarak maksimal
+    for end in [h["along"] for h in reuse] + [length]:
+        if use_poles and not reuse:          # tanpa tiang eksisting: kelipatan jarak tetap dari awal (perilaku lama)
+            k = 1
+            while prev + k * spacing < end - 2.0:
+                pass_d.append(prev + k * spacing)
+                k += 1
+        elif use_poles:                      # bentang berbatasan dengan tiang eksisting: bagi rata agar tidak ada tiang baru yang menempel
+            gap = end - prev
+            n_new = max(0, math.ceil((gap - 2.0) / spacing) - 1)
+            pass_d += [prev + gap * j / (n_new + 1) for j in range(1, n_new + 1)]
+        prev = max(prev, end)
+    for h in reuse:
+        e = h["node"]
+        assets.append({"kind": passive_kind, "distance_m": round(h["along"], 1), "latitude": e["latitude"], "longitude": e["longitude"],
+                       "segment": tag, "existing_id": e["id"], "existing_name": e["name"], "offset_m": round(h["offset"], 1)})
     for d, (la, ln) in zip(pass_d, _points_along(coords, pass_d)):
-        hit = None
-        for e in existing.get(passive_kind, []):
-            dd = _haversine_m(la, ln, e["latitude"], e["longitude"])
-            if dd <= rr and (hit is None or dd < hit[0]):
-                hit = (dd, e)
-        if hit:
-            la, ln = hit[1]["latitude"], hit[1]["longitude"]
         assets.append({"kind": passive_kind, "distance_m": round(d, 1), "latitude": la, "longitude": ln, "segment": tag,
-                       "existing_id": hit[1]["id"] if hit else None, "existing_name": hit[1]["name"] if hit else None})
+                       "existing_id": None, "existing_name": None})
     for d, (la, ln) in zip(slack_d, _points_along(coords, slack_d)):
         assets.append({"kind": "SLACK", "distance_m": round(d, 1), "latitude": la, "longitude": ln, "segment": tag,
                        "existing_id": None, "existing_name": None})
@@ -5230,6 +5290,91 @@ def _segment_assets(rules, inst, coords, use_poles, use_slack, existing, tag):
     re_p = sum(1 for a in assets if a["kind"] == passive_kind and a["existing_id"])
     return {"length": length, "assets": assets, "slack_n": slack_n, "slack_len": slack_len, "slack_total": slack_n * slack_len,
             "total_cable": round(length + slack_n * slack_len, 1), "new_passive": new_p, "reuse_passive": re_p, "kind": passive_kind}
+
+
+def _cable_line(geom_text):
+    """Koordinat [[lng,lat],...] dari geojson_geometry kabel (LineString / MultiLineString disambung berurutan)."""
+    try:
+        g = json.loads(geom_text) if isinstance(geom_text, str) else (geom_text or {})
+    except (TypeError, ValueError):
+        return []
+    c = g.get("coordinates") or []
+    if g.get("type") == "MultiLineString":
+        c = [p for ln in c for p in ln]
+    return [p for p in c if isinstance(p, (list, tuple)) and len(p) >= 2]
+
+
+def _support_kinds(installation):
+    return ("TIANG",) if installation == "Udara" else ("HH",) if installation == "Tanah" else ("TIANG", "HH")
+
+
+def _support_radius(radius):
+    try:
+        r = float(radius)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="radius harus berupa angka")
+    if not (1 <= r <= 50):
+        raise HTTPException(status_code=400, detail="radius harus antara 1 dan 50 meter")
+    return r
+
+
+@app.get("/api/cables/{cable_id}/supports")
+def get_cable_supports(cable_id: int, radius: Optional[float] = None):
+    """Tiang/HH yang dilewati kabel. Relasi DIHITUNG dari posisi (koridor +-radius dari jalur kabel), bukan disimpan:
+    tiang/HH hasil impor, input manual, maupun hasil rencana sama-sama terbaca."""
+    with db() as conn:
+        cur = conn.cursor()
+        cab = cur.execute("SELECT id, name, installation, geojson_geometry FROM cables WHERE id = ?", (cable_id,)).fetchone()
+        if not cab:
+            raise HTTPException(status_code=404, detail="Kabel tidak ditemukan")
+        rules = _plan_rules(cur, None)
+        r = _support_radius(radius if radius is not None else rules["reuse_radius_m"])
+        coords = _cable_line(cab["geojson_geometry"])
+        kinds = _support_kinds(cab["installation"])
+        length = _polyline_length_m(coords) if len(coords) > 1 else 0.0
+        items = []
+        for k in kinds:
+            cands = [dict(x) for x in cur.execute(
+                "SELECT id, name, type, status, latitude, longitude, capacity FROM nodes WHERE type = ?", (k,)).fetchall()]
+            for h in _corridor_assets(coords, cands, r):
+                n = h["node"]
+                items.append({"id": n["id"], "name": n["name"], "type": n["type"], "status": n["status"], "capacity": n["capacity"],
+                              "latitude": n["latitude"], "longitude": n["longitude"],
+                              "along_m": round(h["along"], 1), "offset_m": round(h["offset"], 1)})
+        items.sort(key=lambda x: x["along_m"])
+        spacing = float(rules["pole_spacing_m"] if "TIANG" in kinds and len(kinds) == 1 else rules["hh_spacing_m"] if "HH" in kinds and len(kinds) == 1
+                        else rules["pole_spacing_m"])
+        pts = [0.0] + [i["along_m"] for i in items] + [round(length, 1)]
+        spans = [round(b - a, 1) for a, b in zip(pts, pts[1:])]
+        return {"cable_id": cab["id"], "cable_name": cab["name"], "installation": cab["installation"], "kinds": list(kinds),
+                "radius_m": r, "length_m": round(length, 1), "count": len(items), "items": items,
+                "spacing_rule_m": spacing, "max_span_m": max(spans) if spans else 0.0,
+                "spans_over_rule": sum(1 for s in spans if s > spacing + 2.0)}
+
+
+@app.get("/api/nodes/{node_id}/cables-through")
+def get_node_cables_through(node_id: int, radius: Optional[float] = None):
+    """Kabel yang menumpang pada sebuah tiang/HH (dihitung dari posisi, koridor +-radius dari jalur kabel)."""
+    with db() as conn:
+        cur = conn.cursor()
+        n = cur.execute("SELECT id, name, type, latitude, longitude FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if not n:
+            raise HTTPException(status_code=404, detail="Aset tidak ditemukan")
+        if n["type"] not in ("TIANG", "HH"):
+            raise HTTPException(status_code=400, detail="Hanya untuk aset bertipe TIANG atau HH")
+        r = _support_radius(radius if radius is not None else _plan_rules(cur, None)["reuse_radius_m"])
+        items = []
+        for c in cur.execute("SELECT id, name, type, status, capacity, installation, geojson_geometry FROM cables").fetchall():
+            if n["type"] not in _support_kinds(c["installation"]):
+                continue
+            coords = _cable_line(c["geojson_geometry"])
+            hit = _corridor_assets(coords, [dict(n)], r)
+            if hit:
+                items.append({"id": c["id"], "name": c["name"], "type": c["type"], "status": c["status"], "capacity": c["capacity"],
+                              "installation": c["installation"], "along_m": round(hit[0]["along"], 1),
+                              "offset_m": round(hit[0]["offset"], 1), "length_m": round(_polyline_length_m(coords), 1)})
+        items.sort(key=lambda x: (x["offset_m"], x["name"]))
+        return {"node_id": n["id"], "node_name": n["name"], "type": n["type"], "radius_m": r, "count": len(items), "items": items}
 
 
 def _plan_trunk_check(cursor, origin, bw_mbps, warnings) -> list:
@@ -5438,6 +5583,9 @@ def _compute_plan(cursor, req: PlanRequest) -> dict:
     for sd in seg_defs:
         sp = _segment_assets(rules, sd["inst"], sd["coords"], use_poles, use_slack, existing, sd["tag"])
         assets += sp["assets"]
+        used_ids = {a_["existing_id"] for a_ in sp["assets"] if a_.get("existing_id")}
+        if used_ids:     # satu tiang/HH eksisting tidak dipakai dua segmen (mis. di sekitar titik hub)
+            existing = {k_: [e_ for e_ in v_ if e_["id"] not in used_ids] for k_, v_ in existing.items()}
         for a_ in sp["assets"]:
             a_["distance_m"] = a_["distance_m"] + (0 if sd["tag"] == "S1" else _polyline_length_m(seg_defs[0]["coords"]))
         tag = "poles" if sd["inst"] == "Udara" else "hh"
@@ -7799,6 +7947,950 @@ def save_plan_boq(plan_id: int, payload: PlanBoqPayload):
                f"Simpan BOQ rencana '{r['name']}' ({res['region']}): Rp {res['totals']['total']:,}")
     return {"message": "BOQ rencana disimpan", **res}
 
+
+
+# =====================================================================================
+# LAPORAN PDF RENCANA PASANG BARU (ASPLAN)  -  Pratinjau / Draft / Terwujud
+# Versi "lapangan" (tanpa harga, untuk tim lapangan) dan "lengkap" (memuat BOQ KHS + PPN)
+# =====================================================================================
+PDF_VARIANTS = ("lapangan", "lengkap")
+
+
+def _pdf_txt(v) -> str:
+    """Teks aman untuk font bawaan PDF (Latin-1): ganti tanda panah dsb."""
+    s = "" if v is None else str(v)
+    for a, b in (("→", "->"), ("←", "<-"), ("−", "-"), ("≤", "<="), ("≥", ">="), ("×", "x"),
+                 ("–", "-"), ("—", "-"), ("•", "-"), ("≈", "~"), ("✕", "x")):
+        s = s.replace(a, b)
+    return s.encode("cp1252", "replace").decode("cp1252")
+
+
+def _pdf_local(value, tz_min: int = 0) -> str:
+    """'YYYY-MM-DD HH:MM:SS' (UTC) -> 'DD-MM-YYYY HH:MM' pada zona perangkat (menit dari UTC)."""
+    try:
+        d = datetime.strptime(str(value)[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S") + timedelta(minutes=tz_min)
+    except (ValueError, TypeError):
+        return str(value or "-")
+    sg = "+" if tz_min >= 0 else "-"
+    return d.strftime("%d-%m-%Y %H:%M") + f" (UTC{sg}{abs(tz_min) // 60:g})"
+
+
+def _pdf_rp(n) -> str:
+    return "Rp " + f"{int(round(n or 0)):,}".replace(",", ".")
+
+
+def _pdf_fm(m) -> str:
+    try:
+        m = float(m)
+    except (TypeError, ValueError):
+        return "-"
+    return f"{m / 1000:.2f} km" if m >= 1000 else f"{m:.0f} m"
+
+
+def _pdf_map_drawing(plan: dict, width: float, height: float):
+    """Peta skematik rute (bukan peta dasar): jalur per segmen, titik asal/tujuan/singgah/hub, tiang/HH/slack."""
+    from reportlab.graphics.shapes import Drawing, Line, Circle, Rect, String, PolyLine, Polygon
+    from reportlab.lib import colors
+    o, d = plan.get("origin") or {}, plan.get("dest") or {}
+    pts = []
+    for sg in plan.get("segments") or []:
+        pts += [(c[1], c[0]) for c in (sg.get("coords") or [])]
+    if not pts:
+        pts = [(c[1], c[0]) for c in ((plan.get("route") or {}).get("coords") or [])]
+    for p in (o, d):
+        if p.get("lat") is not None:
+            pts.append((p["lat"], p["lng"]))
+    hub = plan.get("hub")
+    if hub:
+        pts.append((hub["latitude"], hub["longitude"]))
+    dr = Drawing(width, height)
+    dr.add(Rect(0, 0, width, height, strokeColor=colors.HexColor("#cbd5e1"), fillColor=colors.HexColor("#f8fafc"), strokeWidth=0.8))
+    if not pts:
+        dr.add(String(width / 2, height / 2, "Rute tidak tersedia", textAnchor="middle", fontName="Helvetica", fontSize=9))
+        return dr
+    lat0 = sum(p[0] for p in pts) / len(pts)
+    kx = 111320.0 * math.cos(math.radians(lat0))
+    ky = 110540.0
+    xs = [p[1] * kx for p in pts]
+    ys = [p[0] * ky for p in pts]
+    minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
+    spanx, spany = max(maxx - minx, 30.0), max(maxy - miny, 30.0)
+    pad = 38
+    sc = min((width - 2 * pad) / spanx, (height - 2 * pad) / spany)
+    offx = (width - spanx * sc) / 2
+    offy = (height - spany * sc) / 2
+
+    def P(lat, lng):
+        return (offx + (lng * kx - minx) * sc, offy + (lat * ky - miny) * sc)
+    palette = ["#2563eb", "#16a34a", "#9333ea", "#ea580c"]
+    for i, sg in enumerate(plan.get("segments") or []):
+        flat = []
+        for c in sg.get("coords") or []:
+            x, y = P(c[1], c[0])
+            flat += [x, y]
+        if len(flat) >= 4:
+            dr.add(PolyLine(flat, strokeColor=colors.HexColor(palette[i % 4]), strokeWidth=2.2))
+    for a in plan.get("assets") or []:
+        x, y = P(a["latitude"], a["longitude"])
+        k = a.get("kind")
+        if k == "TIANG":
+            dr.add(Circle(x, y, 2.4, fillColor=colors.HexColor("#475569"), strokeColor=colors.white, strokeWidth=0.4))
+        elif k == "HH":
+            dr.add(Rect(x - 2.6, y - 2.6, 5.2, 5.2, fillColor=colors.HexColor("#0f766e"), strokeColor=colors.white, strokeWidth=0.4))
+        else:
+            dr.add(Polygon([x, y + 3.6, x + 3.2, y, x, y - 3.6, x - 3.2, y], fillColor=colors.HexColor("#f59e0b"), strokeColor=colors.white, strokeWidth=0.4))
+    for v in plan.get("via") or []:
+        x, y = P(v[0], v[1])
+        dr.add(Circle(x, y, 3.6, fillColor=colors.HexColor("#0ea5e9"), strokeColor=colors.white, strokeWidth=0.8))
+    if hub:
+        x, y = P(hub["latitude"], hub["longitude"])
+        dr.add(Rect(x - 5, y - 5, 10, 10, fillColor=colors.HexColor("#f97316"), strokeColor=colors.white, strokeWidth=1))
+        dr.add(String(x + 8, y - 3, "Hub / Closure", fontName="Helvetica", fontSize=7.5, fillColor=colors.HexColor("#9a3412")))
+    if o.get("lat") is not None:
+        x, y = P(o["lat"], o["lng"])
+        dr.add(Circle(x, y, 5.5, fillColor=colors.HexColor("#16a34a"), strokeColor=colors.white, strokeWidth=1.2))
+        dr.add(String(x + 8, y + 4, _pdf_txt("Asal: " + str(o.get("name") or "")), fontName="Helvetica", fontSize=8, fillColor=colors.HexColor("#14532d")))
+    if d.get("lat") is not None:
+        x, y = P(d["lat"], d["lng"])
+        dr.add(Circle(x, y, 5.5, fillColor=colors.HexColor("#dc2626"), strokeColor=colors.white, strokeWidth=1.2))
+        dr.add(String(x + 8, y - 11, _pdf_txt("Tujuan: " + str(d.get("name") or "")), fontName="Helvetica", fontSize=8, fillColor=colors.HexColor("#7f1d1d")))
+    # skala
+    target = (width - 2 * pad) * 0.28 / sc
+    mag = 10 ** math.floor(math.log10(max(target, 1)))
+    nice = next((m * mag for m in (1, 2, 5, 10) if m * mag >= target * 0.6), mag)
+    L = nice * sc
+    dr.add(Line(12, 12, 12 + L, 12, strokeWidth=1.6, strokeColor=colors.black))
+    dr.add(Line(12, 9, 12, 15, strokeWidth=1, strokeColor=colors.black))
+    dr.add(Line(12 + L, 9, 12 + L, 15, strokeWidth=1, strokeColor=colors.black))
+    dr.add(String(12 + L / 2, 17, f"{nice:g} m" if nice < 1000 else f"{nice / 1000:g} km", textAnchor="middle", fontName="Helvetica", fontSize=7.5))
+    # panah utara
+    nx, ny = width - 18, height - 36
+    dr.add(Polygon([nx, ny + 18, nx - 5, ny, nx + 5, ny], fillColor=colors.HexColor("#334155"), strokeColor=colors.HexColor("#334155")))
+    dr.add(String(nx, ny + 21, "U", textAnchor="middle", fontSize=8, fontName="Helvetica-Bold"))
+    # legenda
+    ly = height - 12
+    for i, (lab, col) in enumerate((("Tiang", "#475569"), ("Handhole", "#0f766e"), ("Slack", "#f59e0b"), ("Titik singgah", "#0ea5e9"))):
+        lx = 10 + i * 84
+        dr.add(Circle(lx, ly + 2.5, 3, fillColor=colors.HexColor(col), strokeColor=colors.white))
+        dr.add(String(lx + 6, ly, lab, fontName="Helvetica", fontSize=7.5, fillColor=colors.HexColor("#334155")))
+    return dr
+
+
+# ---------------------------------------------------------------------------------
+# PETA RUTE PADA PDF ASPLAN: peta dasar (tile) + titik bernomor yang sama dengan tabel poin
+# ---------------------------------------------------------------------------------
+PDF_BASEMAPS = ("osm", "satelit", "off")
+_MERC_R = 6378137.0
+_TILE_CACHE: "dict" = {}
+_TILE_CACHE_MAX = 600
+_TILE_DOWN_UNTIL = 0.0
+_TILE_LOCK = threading.Lock()
+
+
+def _tile_cfg(kind: str):
+    """(url_template, atribusi). Dapat diganti lewat variabel lingkungan (tile server internal / penyedia lain)."""
+    if kind == "satelit":
+        return (os.environ.get("NETGIS_TILE_URL_SAT", "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"),
+                os.environ.get("NETGIS_TILE_ATTR_SAT", "Imagery (c) Esri, Maxar, Earthstar Geographics"))
+    return (os.environ.get("NETGIS_TILE_URL", "https://tile.openstreetmap.org/{z}/{x}/{y}.png"),
+            os.environ.get("NETGIS_TILE_ATTR", "(c) OpenStreetMap contributors"))
+
+
+def _pdf_basemap_mode(v: Optional[str]) -> str:
+    v = (v or "osm").lower()
+    if os.environ.get("NETGIS_PDF_BASEMAP", "").lower() == "off":
+        return "off"
+    if v not in PDF_BASEMAPS:
+        raise HTTPException(status_code=400, detail="Peta dasar PDF tidak dikenal (osm | satelit | off)")
+    return v
+
+
+def _merc(lat: float, lng: float):
+    lat = max(min(lat, 85.0511), -85.0511)
+    return (_MERC_R * math.radians(lng), _MERC_R * math.log(math.tan(math.pi / 4 + math.radians(lat) / 2)))
+
+
+def _merc_lat(y: float) -> float:
+    return math.degrees(2 * math.atan(math.exp(y / _MERC_R)) - math.pi / 2)
+
+
+def _fetch_tile(url_tpl: str, z: int, x: int, y: int, deadline: float):
+    n = 1 << z
+    if y < 0 or y >= n:
+        return None
+    x %= n
+    key = (url_tpl, z, x, y)
+    with _TILE_LOCK:
+        hit = _TILE_CACHE.get(key)
+    if hit is not None:
+        return hit
+    left = deadline - time.time()
+    if left <= 0.3:
+        return None
+    try:
+        req = urllib.request.Request(url_tpl.format(z=z, x=x, y=y), headers={"User-Agent": "NETGIS-Enterprise/1.0 (laporan asplan PDF)"})
+        with urllib.request.urlopen(req, timeout=min(5.0, left)) as r:
+            data = r.read(600_000)
+    except Exception:
+        return None
+    if not data:
+        return None
+    with _TILE_LOCK:
+        if len(_TILE_CACHE) >= _TILE_CACHE_MAX:
+            for k in list(_TILE_CACHE)[:_TILE_CACHE_MAX // 4]:
+                _TILE_CACHE.pop(k, None)
+        _TILE_CACHE[key] = data
+    return data
+
+
+def _basemap_jpeg(kind: str, xmin: float, ymin: float, xmax: float, ymax: float):
+    """Gambar peta dasar yang tepat menutupi kotak pandang (koordinat Mercator, meter).
+    Hasil: {'jpeg': bytes, 'attr': str, 'missing': n, 'zoom': z} atau None bila tidak ada tile sama sekali / pustaka gambar tidak ada."""
+    global _TILE_DOWN_UNTIL
+    if kind == "off" or time.time() < _TILE_DOWN_UNTIL:
+        return None
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    url_tpl, attr = _tile_cfg(kind)
+    full = 2 * math.pi * _MERC_R
+    z = 1
+    for zz in range(18, 0, -1):
+        ppm = 256 * (1 << zz) / full
+        if (xmax - xmin) * ppm <= 1500 and (ymax - ymin) * ppm <= 1100:
+            z = zz
+            break
+    ppm = 256 * (1 << z) / full
+    half = math.pi * _MERC_R
+    pxl, pxr = (xmin + half) * ppm, (xmax + half) * ppm
+    pyt, pyb = (half - ymax) * ppm, (half - ymin) * ppm
+    tx0, tx1 = int(pxl // 256), int(pxr // 256)
+    ty0, ty1 = int(pyt // 256), int(pyb // 256)
+    if (tx1 - tx0 + 1) * (ty1 - ty0 + 1) > 60:
+        return None
+    deadline = time.time() + 14.0
+    jobs = [(tx, ty) for ty in range(ty0, ty1 + 1) for tx in range(tx0, tx1 + 1)]
+    got = {}
+    from concurrent.futures import ThreadPoolExecutor
+    ex = ThreadPoolExecutor(max_workers=6)
+    try:
+        futs = {ex.submit(_fetch_tile, url_tpl, z, tx, ty, deadline): (tx, ty) for tx, ty in jobs}
+        for f, k in futs.items():
+            try:
+                d = f.result(timeout=max(0.5, deadline - time.time() + 1))
+            except Exception:
+                d = None
+            if d:
+                got[k] = d
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
+    if not got:
+        _TILE_DOWN_UNTIL = time.time() + 45          # jaringan/penyedia tidak tersedia: jangan menunggu lagi untuk peta berikutnya
+        return None
+    canvas_im = Image.new("RGB", ((tx1 - tx0 + 1) * 256, (ty1 - ty0 + 1) * 256), (226, 232, 240))
+    missing = 0
+    for (tx, ty) in jobs:
+        d = got.get((tx, ty))
+        if not d:
+            missing += 1
+            continue
+        try:
+            im = Image.open(io.BytesIO(d)).convert("RGB")
+            canvas_im.paste(im, ((tx - tx0) * 256, (ty - ty0) * 256))
+        except Exception:
+            missing += 1
+    box = (pxl - tx0 * 256, pyt - ty0 * 256, pxr - tx0 * 256, pyb - ty0 * 256)
+    crop = canvas_im.crop(tuple(int(round(v)) for v in box))
+    out = io.BytesIO()
+    crop.save(out, "JPEG", quality=82)
+    return {"jpeg": out.getvalue(), "attr": attr, "missing": missing, "zoom": z, "tiles": len(jobs)}
+
+
+def _along_on(coords_ll, lat, lng) -> float:
+    """Jarak sepanjang polyline (m) dari titik awal ke proyeksi titik (lat,lng); coords_ll = [(lat,lng), ...]."""
+    if len(coords_ll) < 2:
+        return 0.0
+    kx = 111320.0 * math.cos(math.radians(lat))
+    ky = 110540.0
+    best, best_along, cum = None, 0.0, 0.0
+    for (a_lat, a_lng), (b_lat, b_lng) in zip(coords_ll, coords_ll[1:]):
+        ax, ay = (a_lng - lng) * kx, (a_lat - lat) * ky
+        bx, by = (b_lng - lng) * kx, (b_lat - lat) * ky
+        dx, dy = bx - ax, by - ay
+        L2 = dx * dx + dy * dy
+        t = 0.0 if L2 == 0 else max(0.0, min(1.0, -(ax * dx + ay * dy) / L2))
+        px, py = ax + t * dx, ay + t * dy
+        d2 = px * px + py * py
+        seg = math.sqrt(L2)
+        if best is None or d2 < best:
+            best, best_along = d2, cum + t * seg
+        cum += seg
+    return best_along
+
+
+def _plan_points(plan: dict) -> list:
+    """Daftar titik rute BERNOMOR (dipakai peta dan tabel poin agar nomornya sama), urut dari asal ke tujuan."""
+    o, d = plan.get("origin") or {}, plan.get("dest") or {}
+    route = []
+    for sg in plan.get("segments") or []:
+        route += [(c[1], c[0]) for c in (sg.get("coords") or [])]
+    if len(route) < 2:
+        route = [(c[1], c[0]) for c in ((plan.get("route") or {}).get("coords") or [])]
+    total = 0.0
+    for (a, b) in zip(route, route[1:]):
+        total += math.hypot((b[1] - a[1]) * 111320.0 * math.cos(math.radians(a[0])), (b[0] - a[0]) * 110540.0)
+    mid = []
+    for i, v in enumerate(plan.get("via") or [], 1):
+        mid.append({"kind": "SINGGAH", "lat": v[0], "lng": v[1], "info": f"Titik singgah {i}", "along": _along_on(route, v[0], v[1]), "rank": 1})
+    hub = plan.get("hub")
+    if hub:
+        mid.append({"kind": "HUB", "lat": hub["latitude"], "lng": hub["longitude"],
+                    "info": f"Closure {hub.get('closure_size', '')} core" + (f" + ODP baru {hub['odp']['ratio']}" if hub.get("odp") else ""),
+                    "along": _along_on(route, hub["latitude"], hub["longitude"]), "rank": 1})
+    nseg = len(plan.get("segments") or [])
+    for a in plan.get("assets") or []:
+        kind = a.get("kind") or "TIANG"
+        reuse = bool(a.get("existing_id"))
+        info = ("Pakai ulang (survei): " + str(a.get("existing_name") or a.get("existing_id"))) if reuse else "Baru"
+        if a.get("segment") and nseg > 1:
+            info += f" ({a['segment']})"
+        mid.append({"kind": kind, "lat": a["latitude"], "lng": a["longitude"], "info": info, "reuse": reuse,
+                    "along": float(a.get("distance_m") or 0.0), "rank": 2})
+    mid.sort(key=lambda m: (m["along"], m["rank"]))
+    items = []
+    if o.get("lat") is not None:
+        items.append({"kind": "ASAL", "lat": o["lat"], "lng": o["lng"], "info": str(o.get("name") or "-"), "along": 0.0})
+    items += mid
+    if d.get("lat") is not None:
+        items.append({"kind": "TUJUAN", "lat": d["lat"], "lng": d["lng"], "info": str(d.get("name") or "-"),
+                      "along": float((plan.get("summary") or {}).get("route_length_m") or total)})
+    for i, it in enumerate(items, 1):
+        it["no"] = i
+        it.setdefault("reuse", False)
+    return items
+
+
+_PDF_KIND_STYLE = {   # warna isi, bentuk
+    "ASAL": ("#16a34a", "c"), "TUJUAN": ("#dc2626", "c"), "SINGGAH": ("#0284c7", "c"), "HUB": ("#ea580c", "s"),
+    "TIANG": ("#475569", "c"), "HH": ("#0f766e", "s"), "SLACK": ("#d97706", "d"),
+}
+
+
+def _pdf_route_map(plan: dict, items: list, width: float, map_h: float, *, basemap: str = "osm",
+                   subset=None, number_all: bool = True, title_note: str = ""):
+    """Flowable peta rute. subset = daftar titik yang jadi fokus (peta detail); number_all=False -> hanya titik kunci yang bernomor.
+    Mengembalikan (flowable, info)."""
+    from reportlab.graphics.shapes import Drawing, Line, Circle, Rect, String, Polygon, PolyLine
+    from reportlab.graphics import renderPDF
+    from reportlab.lib import colors
+    from reportlab.lib.utils import ImageReader
+    from reportlab.platypus import Flowable
+
+    focus = subset if subset else items
+    legend_h = 20.0
+    H = map_h + legend_h
+    route_ll = []                        # per segmen: [(lat,lng)]
+    for sg in plan.get("segments") or []:
+        pts = [(c[1], c[0]) for c in (sg.get("coords") or [])]
+        if len(pts) >= 2:
+            route_ll.append(pts)
+    if not route_ll:
+        pts = [(c[1], c[0]) for c in ((plan.get("route") or {}).get("coords") or [])]
+        if len(pts) >= 2:
+            route_ll.append(pts)
+
+    # kotak pandang (Mercator): peta penuh = semua titik + rute; peta detail = titik fokus saja
+    pm = [_merc(it["lat"], it["lng"]) for it in focus]
+    if not subset:
+        for seg in route_ll:
+            pm += [_merc(a, b) for a, b in seg]
+    drawing = Drawing(width, H)
+    if not pm:
+        drawing.add(String(width / 2, H / 2, "Rute tidak tersedia", textAnchor="middle", fontName="Helvetica", fontSize=9))
+        return _MapFlow(drawing, None, map_h), {"basemap": False}
+    xs, ys = [p[0] for p in pm], [p[1] for p in pm]
+    cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    lat_mid = _merc_lat(cy)
+    k_real = math.cos(math.radians(lat_mid))            # meter nyata = meter Mercator * k_real
+    spx = max((max(xs) - min(xs)) * 1.16, 70.0 / k_real)
+    spy = max((max(ys) - min(ys)) * 1.16, 70.0 / k_real)
+    aspect = width / map_h
+    if spx / spy < aspect:
+        spx = spy * aspect
+    else:
+        spy = spx / aspect
+    xmin, xmax, ymin, ymax = cx - spx / 2, cx + spx / 2, cy - spy / 2, cy + spy / 2
+    sc = width / spx                                      # titik PDF per meter Mercator
+
+    def XY(lat, lng):
+        mx, my = _merc(lat, lng)
+        return ((mx - xmin) * sc, (my - ymin) * sc)
+
+    bm = _basemap_jpeg(basemap, xmin, ymin, xmax, ymax) if basemap != "off" else None
+    if bm is None:
+        drawing.add(Rect(0, 0, width, map_h, fillColor=colors.HexColor("#f8fafc"), strokeColor=colors.HexColor("#cbd5e1"), strokeWidth=0.8))
+        # kisi tipis agar skematik tetap punya acuan arah
+    else:
+        drawing.add(Rect(0, 0, width, map_h, fillColor=None, strokeColor=colors.HexColor("#94a3b8"), strokeWidth=0.8))
+
+    def clip_seg(x0, y0, x1, y1):
+        """Liang-Barsky terhadap [0,width]x[0,map_h]."""
+        dx, dy = x1 - x0, y1 - y0
+        t0, t1 = 0.0, 1.0
+        for p, q in ((-dx, x0), (dx, width - x0), (-dy, y0), (dy, map_h - y0)):
+            if p == 0:
+                if q < 0:
+                    return None
+            else:
+                r = q / p
+                if p < 0:
+                    if r > t1:
+                        return None
+                    t0 = max(t0, r)
+                else:
+                    if r < t0:
+                        return None
+                    t1 = min(t1, r)
+        return (x0 + t0 * dx, y0 + t0 * dy, x0 + t1 * dx, y0 + t1 * dy)
+
+    palette = ["#2563eb", "#9333ea", "#16a34a", "#ea580c"]
+    for casing in (True, False):
+        for si, seg in enumerate(route_ll):
+            col = colors.white if casing else colors.HexColor(palette[si % 4])
+            sw = 5.0 if casing else 2.6
+            prev = None
+            for (la, ln) in seg:
+                cur = XY(la, ln)
+                if prev is not None:
+                    c = clip_seg(prev[0], prev[1], cur[0], cur[1])
+                    if c:
+                        drawing.add(Line(c[0], c[1], c[2], c[3], strokeColor=col, strokeWidth=sw, strokeLineCap=1))
+                prev = cur
+
+    focus_ids = {id(it) for it in focus}
+    key_kinds = ("ASAL", "TUJUAN", "SINGGAH", "HUB")
+    placed = []                                          # pusat label yang sudah dipakai: (x, y, r)
+    overlay = []
+    namebox = []
+
+    def marker(kind, x, y, r, reuse, num, dim=False):
+        fill, shape = _PDF_KIND_STYLE.get(kind, ("#475569", "c"))
+        out = colors.HexColor("#111827") if reuse else colors.white
+        ow = 1.9 if reuse else 1.1
+        shapes = []
+        if shape == "c":
+            shapes.append(Circle(x, y, r, fillColor=colors.HexColor(fill), strokeColor=out, strokeWidth=ow))
+        elif shape == "s":
+            shapes.append(Rect(x - r, y - r, 2 * r, 2 * r, fillColor=colors.HexColor(fill), strokeColor=out, strokeWidth=ow))
+        else:
+            shapes.append(Polygon([x, y + r * 1.25, x + r * 1.25, y, x, y - r * 1.25, x - r * 1.25, y], fillColor=colors.HexColor(fill), strokeColor=out, strokeWidth=ow))
+        if num is not None:
+            fs = 7.2 if len(str(num)) <= 2 else 6.2
+            shapes.append(String(x, y - fs * 0.34, str(num), textAnchor="middle", fontName="Helvetica-Bold", fontSize=fs, fillColor=colors.white))
+        return shapes
+
+    offsets = []
+    for rad in (1.0, 1.9, 2.8):
+        for ang in range(0, 360, 45):
+            offsets.append((rad, math.radians(ang)))
+    for it in items:
+        x, y = XY(it["lat"], it["lng"])
+        if not (-8 <= x <= width + 8 and -8 <= y <= map_h + 8):
+            continue
+        infocus = id(it) in focus_ids
+        numbered = infocus and (number_all or it["kind"] in key_kinds)
+        if not numbered:
+            if not infocus or not number_all:
+                col, _ = _PDF_KIND_STYLE.get(it["kind"], ("#475569", "c"))
+                overlay.append(Circle(x, y, 2.0, fillColor=colors.HexColor(col), strokeColor=colors.white, strokeWidth=0.5))
+            continue
+        digits = len(str(it["no"]))
+        r = 7.6 if it["kind"] in key_kinds else (6.4 if digits <= 2 else 7.4)
+        lx, ly = x, y
+        for rad, ang in [(0.0, 0.0)] + offsets:
+            tx, ty = x + math.cos(ang) * rad * (r * 2.3), y + math.sin(ang) * rad * (r * 2.3)
+            if all((tx - px) ** 2 + (ty - py) ** 2 >= (r + pr + 1.2) ** 2 for px, py, pr in placed):
+                lx, ly = tx, ty
+                break
+        else:
+            lx, ly = x, y
+        placed.append((lx, ly, r))
+        if (lx, ly) != (x, y):
+            overlay.append(Line(x, y, lx, ly, strokeColor=colors.HexColor("#111827"), strokeWidth=0.8))
+            overlay.append(Circle(x, y, 1.6, fillColor=colors.HexColor("#111827"), strokeColor=colors.white, strokeWidth=0.4))
+        overlay += marker(it["kind"], lx, ly, r, it.get("reuse"), it["no"])
+        if it["kind"] in ("ASAL", "TUJUAN") and (number_all or not subset):
+            nm = _pdf_txt(("Asal: " if it["kind"] == "ASAL" else "Tujuan: ") + str(it.get("info") or ""))[:34]
+            tw = len(nm) * 4.3 + 6
+            bx = min(max(lx - tw / 2, 4), width - tw - 4)
+            by = ly + r + 3 if ly + r + 18 < map_h else ly - r - 15
+            namebox.append(Rect(bx, by, tw, 12, fillColor=colors.Color(1, 1, 1, alpha=0.9), strokeColor=colors.HexColor("#94a3b8"), strokeWidth=0.4))
+            namebox.append(String(bx + 3, by + 3.4, nm, fontName="Helvetica-Bold", fontSize=7.6, fillColor=colors.HexColor("#14532d" if it["kind"] == "ASAL" else "#7f1d1d")))
+    for sh in overlay:
+        drawing.add(sh)
+    for sh in namebox:
+        drawing.add(sh)
+
+    # skala (meter nyata), panah utara, atribusi
+    target = width * 0.2 * k_real / sc
+    mag = 10 ** math.floor(math.log10(max(target, 1)))
+    nice = next((m * mag for m in (1, 2, 5, 10) if m * mag >= target * 0.6), mag)
+    L = nice / k_real * sc                                # panjang di PDF untuk 'nice' meter nyata
+    drawing.add(Rect(6, 6, L + 18, 22, fillColor=colors.Color(1, 1, 1, alpha=0.85), strokeColor=None))
+    drawing.add(Line(12, 12, 12 + L, 12, strokeWidth=1.8, strokeColor=colors.black))
+    drawing.add(Line(12, 9, 12, 15, strokeWidth=1, strokeColor=colors.black))
+    drawing.add(Line(12 + L, 9, 12 + L, 15, strokeWidth=1, strokeColor=colors.black))
+    drawing.add(String(12 + L / 2, 18, f"{nice:g} m" if nice < 1000 else f"{nice / 1000:g} km", textAnchor="middle", fontName="Helvetica-Bold", fontSize=7.5))
+    nx, ny = width - 20, map_h - 44
+    drawing.add(Rect(nx - 13, ny - 6, 26, 44, fillColor=colors.Color(1, 1, 1, alpha=0.85), strokeColor=None))
+    drawing.add(Polygon([nx, ny + 26, nx - 6, ny, nx + 6, ny], fillColor=colors.HexColor("#334155"), strokeColor=colors.HexColor("#334155")))
+    drawing.add(String(nx, ny + 29, "U", textAnchor="middle", fontSize=8.5, fontName="Helvetica-Bold"))
+    if bm:
+        at = bm["attr"]
+        tw = len(at) * 3.9 + 8
+        drawing.add(Rect(width - tw - 2, 2, tw, 11, fillColor=colors.Color(1, 1, 1, alpha=0.85), strokeColor=None))
+        drawing.add(String(width - tw + 2, 5, at, fontName="Helvetica", fontSize=6.8, fillColor=colors.HexColor("#334155")))
+
+    # legenda (pita di atas peta)
+    drawing.add(Rect(0, map_h, width, legend_h, fillColor=colors.HexColor("#f1f5f9"), strokeColor=colors.HexColor("#cbd5e1"), strokeWidth=0.6))
+    lx = 8
+    ly = map_h + 7
+    leg = [("ASAL", "Asal", False), ("TUJUAN", "Tujuan", False), ("SINGGAH", "Singgah", False), ("HUB", "Hub", False),
+           ("TIANG", "Tiang", False), ("TIANG", "Pakai ulang", True), ("HH", "Handhole", False), ("SLACK", "Slack", False)]
+    kinds_present = {it["kind"] for it in items}
+    for kind, lab, reuse in leg:
+        if kind in ("TIANG", "HH", "SLACK", "SINGGAH", "HUB") and kind not in kinds_present:
+            continue
+        if reuse and not any(it.get("reuse") for it in items):
+            continue
+        for sh in marker(kind, lx + 5, ly + 3, 4.6, reuse, None):
+            drawing.add(sh)
+        tw = len(lab) * 4.1 + 6
+        drawing.add(String(lx + 12, ly, lab, fontName="Helvetica", fontSize=7.6, fillColor=colors.HexColor("#334155")))
+        lx += 12 + tw + 6
+    if len(route_ll) > 1:
+        for si, sg in enumerate(plan.get("segments") or []):
+            col = palette[si % 4]
+            drawing.add(Line(lx, ly + 3, lx + 14, ly + 3, strokeColor=colors.HexColor(col), strokeWidth=2.6))
+            lab = _pdf_txt(str(sg.get("label") or sg.get("tag") or f"S{si + 1}"))[:34]
+            drawing.add(String(lx + 18, ly, lab, fontName="Helvetica", fontSize=7.6, fillColor=colors.HexColor("#334155")))
+            lx += 18 + len(lab) * 4.0 + 10
+    return _MapFlow(drawing, bm["jpeg"] if bm else None, map_h), {"basemap": bool(bm), "missing": (bm or {}).get("missing", 0), "zoom": (bm or {}).get("zoom")}
+
+
+def _make_map_flow_class():
+    from reportlab.platypus import Flowable
+
+    class _MapFlow(Flowable):
+        def __init__(self, drawing, jpeg, map_h):
+            super().__init__()
+            self.drawing, self.jpeg, self.map_h = drawing, jpeg, map_h
+            self.width, self.height = drawing.width, drawing.height
+
+        def wrap(self, aw, ah):
+            return self.width, self.height
+
+        def draw(self):
+            from reportlab.graphics import renderPDF
+            from reportlab.lib.utils import ImageReader
+            if self.jpeg:
+                self.canv.drawImage(ImageReader(io.BytesIO(self.jpeg)), 0, 0, self.width, self.map_h)
+            renderPDF.draw(self.drawing, self.canv, 0, 0)
+    return _MapFlow
+
+
+class _MapFlowLazy:
+    """Menunda impor reportlab (opsional) sampai benar-benar dipakai."""
+    def __call__(self, drawing, jpeg, map_h):
+        global _MapFlowCls
+        if _MapFlowCls is None:
+            _MapFlowCls = _make_map_flow_class()
+        return _MapFlowCls(drawing, jpeg, map_h)
+
+
+_MapFlowCls = None
+_MapFlow = _MapFlowLazy()
+
+
+def _plan_pdf_bytes(plan: dict, meta: dict, boq: Optional[dict], variant: str, basemap: str = "off") -> bytes:
+    try:
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.units import mm
+        from reportlab.lib import colors
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.platypus import BaseDocTemplate, PageTemplate, Frame, NextPageTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether, PageBreak
+        from reportlab.pdfgen import canvas as rl_canvas
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Pustaka PDF belum terpasang di server. Jalankan: pip install reportlab")
+    from xml.sax.saxutils import escape as _esc
+
+    status = meta["status"]                 # PRATINJAU | DRAFT | TEREALISASI
+    stat_col = {"PRATINJAU": "#64748b", "DRAFT": "#d97706", "TEREALISASI": "#15803d"}[status]
+    full = variant == "lengkap"
+    s = plan.get("summary") or {}
+    o, dst = plan.get("origin") or {}, plan.get("dest") or {}
+    tz = int(meta.get("tz_min") or 0)
+
+    ink, quiet, line = colors.HexColor("#0f172a"), colors.HexColor("#475569"), colors.HexColor("#cbd5e1")
+    st = {
+        "h1": ParagraphStyle("h1", fontName="Helvetica-Bold", fontSize=16, leading=20, textColor=ink, spaceAfter=2),
+        "h2": ParagraphStyle("h2", fontName="Helvetica-Bold", fontSize=11.5, leading=14, textColor=colors.HexColor("#1d4ed8"), spaceBefore=11, spaceAfter=4, keepWithNext=1),
+        "p": ParagraphStyle("p", fontName="Helvetica", fontSize=9, leading=12, textColor=ink),
+        "sm": ParagraphStyle("sm", fontName="Helvetica", fontSize=8, leading=10.5, textColor=quiet),
+        "c": ParagraphStyle("c", fontName="Helvetica", fontSize=8.2, leading=10.2, textColor=ink),
+        "cb": ParagraphStyle("cb", fontName="Helvetica-Bold", fontSize=8.2, leading=10.2, textColor=ink),
+        "ch": ParagraphStyle("ch", fontName="Helvetica-Bold", fontSize=8.2, leading=10.2, textColor=colors.white),
+        "cr": ParagraphStyle("cr", fontName="Helvetica", fontSize=8.2, leading=10.2, textColor=ink, alignment=2),
+        "warn": ParagraphStyle("warn", fontName="Helvetica", fontSize=8.8, leading=11.5, textColor=colors.HexColor("#92400e"), leftIndent=9, bulletIndent=0),
+    }
+    P = lambda t, k="c": Paragraph(_esc(_pdf_txt(t)), st[k])
+
+    def table(rows, widths, head=True, zebra=True, align_right=()):
+        data = []
+        for ri, r in enumerate(rows):
+            cells = []
+            for ci, c in enumerate(r):
+                if hasattr(c, "wrap"):
+                    cells.append(c)
+                else:
+                    k = "ch" if head and ri == 0 else ("cr" if ci in align_right and not (head and ri == 0) else "c")
+                    cells.append(P(c, k))
+            data.append(cells)
+        t = Table(data, colWidths=widths, repeatRows=1 if head else 0)
+        cmds = [("VALIGN", (0, 0), (-1, -1), "TOP"), ("GRID", (0, 0), (-1, -1), 0.4, line),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 2.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5)]
+        if head:
+            cmds.append(("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e293b")))
+        if zebra:
+            for i in range(1 if head else 0, len(rows)):
+                if (i % 2) == 0:
+                    cmds.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#f1f5f9")))
+        t.setStyle(TableStyle(cmds))
+        return t
+
+    def kv(rows, w1=48 * mm, w2=130 * mm):
+        data = [[P(a, "cb"), P(b)] for a, b in rows]
+        t = Table(data, colWidths=[w1, w2])
+        t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBELOW", (0, 0), (-1, -1), 0.3, line),
+                               ("LEFTPADDING", (0, 0), (-1, -1), 3), ("TOPPADDING", (0, 0), (-1, -1), 2.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5)]))
+        return t
+
+    W = A4[0] - 30 * mm
+    el = []
+    name = meta.get("name") or "Rencana Pasang Baru"
+    el.append(Paragraph(_esc(_pdf_txt("Asplan Pasang Baru: " + name)), st["h1"]))
+    vlabel = "Versi lapangan (tanpa harga)" if not full else "Versi lengkap (dengan BOQ KHS)"
+    el.append(Paragraph(f'<font color="{stat_col}"><b>{status}</b></font> &nbsp;|&nbsp; {_esc(vlabel)}' +
+                        (f' &nbsp;|&nbsp; Rencana #{int(meta["plan_id"])}' if meta.get("plan_id") else ""), st["p"]))
+    el.append(Spacer(1, 6))
+    scen = {"DIRECT": "Langsung (dropcore dari aset asal)", "HUB": "Hub (distribusi baru + closure)"}.get(plan.get("scenario"), plan.get("scenario") or "-")
+    cab = plan.get("cable") or {}
+    rows = [("Asal", f"{o.get('name', '-')} ({o.get('kind') or o.get('type') or '-'})" + (f", {o.get('cluster')}/{o.get('area')}" if o.get("cluster") else "")),
+            ("Koordinat asal", f"{o['lat']:.6f}, {o['lng']:.6f}" if o.get("lat") is not None else "-"),
+            ("Tujuan", f"{dst.get('name', '-')}"),
+            ("Koordinat tujuan", f"{dst.get('lat', 0):.6f}, {dst.get('lng', 0):.6f}"),
+            ("Skenario", scen),
+            ("Layanan", f"{plan.get('customer_cores') or 1} core; terminasi: " + ("roset di pelanggan" if plan.get("termination") == "DROPCORE_ROSET" else "kabel udara + OTB di pelanggan")),
+            ("Kabel", f"{cab.get('label', '-')} {cab.get('capacity', '')} ({cab.get('installation', '-')})"),
+            ("Panjang rute", f"{_pdf_fm(s.get('route_length_m'))} ({'mengikuti jalan' if s.get('route_source') == 'osrm' else 'garis lurus'}); total kabel + slack {_pdf_fm(s.get('cable_total_m'))}"),
+            ("Dibuat", f"{_pdf_local(meta.get('created_at'), tz)} oleh {meta.get('created_by') or '-'}")]
+    if status == "TEREALISASI" and meta.get("realized"):
+        rz = meta["realized"]
+        rows.append(("Terwujud", f"{_pdf_local(meta.get('realized_at'), tz)}; kabel {rz.get('cable_name', '-')}"))
+    el.append(kv(rows))
+    # ---- spesifikasi (halaman 1 bersama identitas rencana)
+    el.append(Paragraph("Spesifikasi teknis", st["h2"]))
+    segs = plan.get("segments") or []
+    sg = [["Segmen", "Kabel", "Pemasangan", "Rute", "Kabel + slack", "Tiang/HH baru", "Slack"]]
+    for g in segs:
+        newp = g.get("poles_new") if g.get("installation") == "Udara" else g.get("hh_new")
+        sg.append([g.get("label", g.get("tag", "")), f"{g.get('cable_label', '')} {g.get('cable_capacity', '')}", g.get("installation", ""),
+                   _pdf_fm(g.get("route_length_m")), _pdf_fm(g.get("cable_total_m")), str(newp if newp is not None else "-"),
+                   f"{g.get('slack_count', 0)} x {s.get('slack_length_m', '-')} m"])
+    el.append(table(sg, [34 * mm, 36 * mm, 21 * mm, 19 * mm, 24 * mm, 20 * mm, W - 154 * mm]))
+    ex = []
+    av = o.get("availability") or {}
+    if av.get("detail"):
+        ex.append(("Ketersediaan asal", av["detail"]))
+    if o.get("pop_ports"):
+        ex.append(("Port POP dipilih", ", ".join(o["pop_ports"])))
+    if plan.get("hub"):
+        h = plan["hub"]
+        ex.append(("Hub", f"Closure {h.get('closure_size', '-')} core; jarak hub ke pelanggan {_pdf_fm(h.get('to_customer_m'))}" + (f"; ODP baru splitter {h['odp']['ratio']}" if h.get("odp") else "")))
+    ci = plan.get("customer_info")
+    if ci:
+        ex.append(("Pelanggan", "; ".join(f"{k}: {v}" for k, v in (("layanan", ci.get("service")), ("bandwidth", ci.get("bandwidth_mbps") and f"{ci['bandwidth_mbps']} Mbps"), ("jenis", ci.get("link_type")), ("SN", ci.get("device_sn"))) if v)))
+    if ex:
+        el.append(Spacer(1, 4)); el.append(kv(ex))
+
+
+    # ---- peta rute + tabel poin bernomor
+    pts = _plan_points(plan)
+    WL = A4[1] - 30 * mm
+    many = len(pts) > 40
+    base = basemap if basemap in PDF_BASEMAPS else "off"
+    el.append(NextPageTemplate("land"))
+    el.append(PageBreak())
+    el.append(Paragraph("Peta rute dan nomor titik", st["h2"]))
+    mf, minfo = _pdf_route_map(plan, pts, WL, 392, basemap=base, number_all=not many)
+    el.append(mf)
+    cap = ("Nomor pada peta = kolom No pada tabel titik rute (halaman berikutnya). " +
+           ("Peta dasar: " + {"osm": "OpenStreetMap", "satelit": "citra satelit"}.get(base, base) + ". " if minfo.get("basemap") else
+            ("Peta dasar tidak tersedia saat PDF dibuat (server tidak dapat mengambil tile); gambar tetap lengkap tanpa peta dasar. " if base != "off" else "")) +
+           (f"Sebagian tile peta dasar gagal diambil ({minfo['missing']}); area itu tampil kosong. " if minfo.get("missing") else "") +
+           ("Tiang/slack/handhole bernomor pada peta detail. " if many else "") +
+           "Posisi titik adalah rencana; verifikasi dengan survei lapangan.")
+    el.append(Paragraph(_esc(_pdf_txt(cap)), st["sm"]))
+    el.append(NextPageTemplate("port"))
+    el.append(PageBreak())
+    el.append(Paragraph("Tabel titik rute dan aset yang dibutuhkan", st["h2"]))
+    wp = [["No", "Titik", "Keterangan", "Jarak dari asal", "Latitude", "Longitude"]]
+    for it in pts:
+        kind = {"HH": "HANDHOLE"}.get(it["kind"], it["kind"])
+        wp.append([str(it["no"]), kind, it["info"] if it["kind"] not in ("ASAL", "TUJUAN") else it["info"], _pdf_fm(it["along"]) if it["kind"] != "ASAL" else "0 m",
+                   f"{it['lat']:.6f}", f"{it['lng']:.6f}"])
+    el.append(table(wp, [11 * mm, 21 * mm, W - 11 * mm - 21 * mm - 25 * mm - 23 * mm - 23 * mm, 25 * mm, 23 * mm, 23 * mm], align_right=(3,)))
+    if many:
+        el.append(NextPageTemplate("land"))
+        el.append(PageBreak())
+        chunk = 20
+        parts = [pts[i:i + chunk] for i in range(0, len(pts), chunk)]
+        for pi, part in enumerate(parts, 1):
+            el.append(Paragraph(f"Peta detail {pi} dari {len(parts)}: titik {part[0]['no']} sampai {part[-1]['no']}", st["h2"]))
+            df, _ = _pdf_route_map(plan, pts, WL, 392, basemap=base, subset=part, number_all=True)
+            el.append(df)
+            el.append(Paragraph("Lingkaran bernomor = titik pada bagian ini; titik kecil tanpa nomor = titik di luar bagian ini (lihat peta detail lain).", st["sm"]))
+            if pi < len(parts):
+                el.append(PageBreak())
+        el.append(NextPageTemplate("port"))
+        el.append(PageBreak())
+
+    # ---- material
+    el.append(Paragraph("Kebutuhan material", st["h2"]))
+    mt = [["No", "Komponen", "Jumlah", "Satuan"]]
+    for i, b in enumerate(plan.get("boq_items") or [], 1):
+        mt.append([str(i), b.get("label", ""), (f"{b['qty']:.1f}" if b.get("unit") == "m" else str(b.get("qty"))), b.get("unit", "")])
+    el.append(table(mt, [9 * mm, W - 9 * mm - 24 * mm - 20 * mm, 24 * mm, 20 * mm], align_right=(2,)))
+
+    # ---- instruksi lapangan
+    el.append(Paragraph("Rencana pelaksanaan (tim lapangan)", st["h2"]))
+    steps = ["Survei jalur: cocokkan titik pada tabel dengan kondisi lapangan, catat hambatan (izin tiang, persilangan jalan/sungai, kepemilikan lahan)."]
+    if s.get("use_poles") is not False:
+        if s.get("installation") == "Udara":
+            steps.append(f"Pasang {s.get('poles_new', 0)} tiang baru" + (f" (pakai ulang {s.get('poles_existing')} tiang eksisting)" if s.get("poles_existing") else "") + " pada titik TIANG di tabel.")
+        else:
+            steps.append(f"Siapkan {s.get('hh_new', 0)} handhole baru" + (f" (pakai ulang {s.get('hh_existing')})" if s.get("hh_existing") else "") + " dan jalur ducting pada titik HANDHOLE di tabel.")
+        if s.get("poles_existing") or s.get("hh_existing"):
+            steps.append("Survei tiang/handhole eksisting yang dipakai ulang (ditandai \"Pakai ulang\" di tabel): periksa kelayakan, kapasitas, dan izin tumpang sebelum kabel ditarik. Bila tidak layak, ganti dengan yang baru dan laporkan ke perencana.")
+    for g in segs:
+        steps.append(f"Tarik {g.get('cable_label', '')} {g.get('cable_capacity', '')} ({g.get('installation', '')}) segmen \"{g.get('label', '')}\" sepanjang {_pdf_fm(g.get('route_length_m'))}; kebutuhan kabel termasuk slack {_pdf_fm(g.get('cable_total_m'))}.")
+    if s.get("use_slack") is not False and s.get("slack_count"):
+        steps.append(f"Sisakan slack {s.get('slack_count')} titik x {s.get('slack_length_m')} m pada titik SLACK.")
+    if plan.get("hub"):
+        h = plan["hub"]
+        steps.append(f"Pasang closure {h.get('closure_size', '-')} core di titik HUB" + (f" dan ODP baru splitter {h['odp']['ratio']}" if h.get("odp") else "") + ".")
+    steps.append("Terminasi di lokasi pelanggan: " + (f"roset {plan.get('customer_cores') or 1} port." if plan.get("termination") == "DROPCORE_ROSET" else "OTB (kabel udara)."))
+    steps.append(f"Sambung (splicing) pada {o.get('name', 'aset asal')}: " + ("gunakan port yang dipilih (" + ", ".join(o["pop_ports"]) + ")." if o.get("pop_ports") else "alokasi core/port kosong pertama; konfirmasi label core pada Detail Core setelah diwujudkan."))
+    lo = plan.get("loss")
+    if lo:
+        steps.append(f"Ukur daya optik dan OTDR; bandingkan dengan estimasi redaman {lo.get('total_db', 0):.2f} dB (Rx estimasi {lo.get('rx_dbm', 0):.2f} dBm, batas ONT {((lo.get('params') or {}).get('rx_min_dbm', -27)):.0f} dBm).")
+    steps.append("Dokumentasikan hasil (foto titik, as-built, hasil ukur) dan laporkan ke NOC untuk pembaruan data.")
+    ck = [[P("[   ]", "c"), P(f"{i}. {t}")] for i, t in enumerate(steps, 1)]
+    t = Table(ck, colWidths=[11 * mm, W - 11 * mm])
+    t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBELOW", (0, 0), (-1, -1), 0.3, line), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
+    el.append(t)
+
+    # ---- redaman
+    if lo:
+        el.append(Paragraph("Anggaran redaman (estimasi)", st["h2"]))
+        b = lo.get("breakdown") or {}
+        pr = lo.get("params") or {}
+        rr = [["Komponen", "Nilai"],
+              ["Serat optik", f"{b.get('fiber_km', 0):.3f} km = {b.get('fiber_db', 0):.2f} dB"],
+              ["Sambungan fusion", f"{b.get('splices', 0)} titik"],
+              ["Konektor", f"{b.get('connectors', 0)} pasang"]]
+        for sp in b.get("splitters") or []:
+            rr.append([f"Splitter {sp.get('ratio')}", f"{sp.get('name')}: {sp.get('db')} dB"])
+        rr += [["Total redaman", f"{lo.get('total_db', 0):.2f} dB"], ["Daya kirim (Tx)", f"{pr.get('tx_dbm', '-')} dBm"],
+               ["Daya terima estimasi (Rx)", f"{lo.get('rx_dbm', 0):.2f} dBm (batas ONT {pr.get('rx_min_dbm', '-')} dBm)"],
+               ["Margin tersisa", f"{lo.get('margin_db', 0):.2f} dB"], ["Status", {"OK": "Layak", "WARN": "Layak, margin tipis", "BAD": "TIDAK LAYAK"}.get(lo.get("status"), lo.get("status", "-"))]]
+        el.append(table(rr, [60 * mm, W - 60 * mm]))
+
+    # ---- peringatan
+    notes = list(plan.get("notes") or [])
+    warns = list(plan.get("warnings") or [])
+    if warns or notes:
+        el.append(Paragraph("Peringatan dan catatan", st["h2"]))
+        for w in warns:
+            el.append(Paragraph(_esc(_pdf_txt(w)), st["warn"], bulletText="!"))
+        for nn in notes:
+            el.append(Paragraph(_esc(_pdf_txt(nn)), st["p"], bulletText="-"))
+
+    # ---- lampiran: skematik (tanpa peta dasar), nomor sama dengan tabel
+    el.append(Paragraph("Lampiran: skematik rute (tanpa peta dasar)", st["h2"]))
+    sf, _ = _pdf_route_map(plan, pts, W, 250, basemap="off", number_all=not many)
+    el.append(sf)
+    el.append(Paragraph("Skematik dari koordinat rute pada skala yang sama ke semua arah; nomor sama dengan tabel titik rute.", st["sm"]))
+
+    # ---- BOQ lengkap
+    if full:
+        el.append(PageBreak())
+        el.append(Paragraph("Rencana Anggaran Biaya (BOQ KHS)", st["h1"]))
+        if not boq:
+            el.append(Paragraph("BOQ tidak tersedia.", st["p"]))
+        else:
+            tt = boq["totals"]
+            el.append(Paragraph(_esc(f"Wilayah harga KHS: {boq.get('region')}; pemasangan {boq.get('installation')}."), st["sm"]))
+            el.append(Spacer(1, 4))
+            bl = [["No", "Komponen", "Kode KHS", "Uraian", "Sat", "Vol", "Harga satuan", "Jumlah"]]
+            for i, l in enumerate(boq["lines"], 1):
+                bl.append([str(i), l.get("component", ""), l.get("code") or "-", l.get("description", ""), l.get("unit", ""),
+                           f"{l['qty']:g}", _pdf_rp(l.get("unit_price")), _pdf_rp(l.get("total"))])
+            wb = [8 * mm, 25 * mm, 18 * mm, W - 8 * mm - 25 * mm - 18 * mm - 13 * mm - 14 * mm - 26 * mm - 28 * mm, 13 * mm, 14 * mm, 26 * mm, 28 * mm]
+            el.append(table(bl, wb, align_right=(5, 6, 7)))
+            el.append(Spacer(1, 6))
+            sm = [["Subtotal material", _pdf_rp(tt["material"])], ["Subtotal jasa", _pdf_rp(tt["jasa"])], ["Subtotal", _pdf_rp(tt["subtotal"])],
+                  [f"PPN {tt['tax_pct']:g}%", _pdf_rp(tt["tax"])], ["TOTAL", _pdf_rp(tt["total"])]]
+            tb = Table([[P(a, "cb" if a == "TOTAL" else "c"), P(b, "cb" if a == "TOTAL" else "cr")] for a, b in sm], colWidths=[45 * mm, 40 * mm], hAlign="RIGHT")
+            tb.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, line), ("BACKGROUND", (0, 4), (-1, 4), colors.HexColor("#e2e8f0"))]))
+            el.append(tb)
+            for w in boq.get("warnings") or []:
+                el.append(Paragraph(_esc(_pdf_txt(w)), st["warn"], bulletText="!"))
+
+    # ---- persetujuan
+    sig = Table([[P("Dibuat oleh", "cb"), P("Diperiksa oleh", "cb"), P("Disetujui oleh", "cb")],
+                 [P(meta.get("created_by") or ""), P(""), P("")],
+                 [P(""), P(""), P("")],
+                 [P("Tanggal:"), P("Tanggal:"), P("Tanggal:")]], colWidths=[W / 3] * 3, rowHeights=[14, 14, 38, 14])
+    sig.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, line), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f5f9")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    el.append(KeepTogether([Paragraph("Persetujuan", st["h2"]), sig]))
+
+    gen = f"Dibuat {_pdf_local(_now_str(), tz)} oleh {meta.get('generated_by') or '-'}"
+
+    class _Canvas(rl_canvas.Canvas):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self._saved = []
+
+        def showPage(self):
+            self._saved.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            total = len(self._saved)
+            for stt in self._saved:
+                self.__dict__.update(stt)
+                self._decor(total)
+                super().showPage()
+            super().save()
+
+        def _decor(self, total):
+            w, h = self._pagesize
+            self.saveState()
+            if status == "PRATINJAU":
+                self.setFont("Helvetica-Bold", 64)
+                self.setFillColor(colors.Color(0.55, 0.6, 0.68, alpha=0.13))
+                self.translate(w / 2, h / 2); self.rotate(45)
+                self.drawCentredString(0, 0, "PRATINJAU")
+                self.rotate(-45); self.translate(-w / 2, -h / 2)
+            self.setFillColor(colors.HexColor("#0f172a"))
+            self.setFont("Helvetica-Bold", 10)
+            self.drawString(15 * mm, h - 11 * mm, "NETGIS Enterprise")
+            self.setFont("Helvetica", 8.5)
+            self.setFillColor(colors.HexColor("#475569"))
+            self.drawString(15 * mm + 100, h - 11 * mm, "Asplan Pasang Baru")
+            self.setFillColor(colors.HexColor(stat_col))
+            self.setFont("Helvetica-Bold", 9)
+            self.drawRightString(w - 15 * mm, h - 11 * mm, status)
+            self.setStrokeColor(colors.HexColor("#cbd5e1")); self.setLineWidth(0.6)
+            self.line(15 * mm, h - 13.5 * mm, w - 15 * mm, h - 13.5 * mm)
+            self.line(15 * mm, 12.5 * mm, w - 15 * mm, 12.5 * mm)
+            self.setFont("Helvetica", 7.5); self.setFillColor(colors.HexColor("#64748b"))
+            self.drawString(15 * mm, 8 * mm, _pdf_txt(gen + (f" | Rencana #{meta['plan_id']}" if meta.get("plan_id") else "")))
+            self.drawRightString(w - 15 * mm, 8 * mm, f"Halaman {self._pageNumber} dari {total}")
+            self.restoreState()
+
+    buf = io.BytesIO()
+    doc = BaseDocTemplate(buf, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm, topMargin=18 * mm, bottomMargin=17 * mm,
+                          title=_pdf_txt(f"Asplan {name}"), author="NETGIS Enterprise")
+    pw, ph = A4
+    doc.addPageTemplates([
+        PageTemplate(id="port", pagesize=A4, frames=[Frame(15 * mm, 17 * mm, pw - 30 * mm, ph - 35 * mm, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="fp")]),
+        PageTemplate(id="land", pagesize=landscape(A4), frames=[Frame(15 * mm, 17 * mm, ph - 30 * mm, pw - 35 * mm, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="fl")]),
+    ])
+    doc.build(el, canvasmaker=_Canvas)
+    return buf.getvalue()
+
+
+class PlanPdfRequest(PlanRequest):
+    variant: Optional[str] = "lapangan"
+    basemap: Optional[str] = "osm"
+    boq_adjust: Optional[dict] = None
+    tz_min: Optional[int] = 0
+
+
+def _pdf_variant(v: Optional[str]) -> str:
+    v = (v or "lapangan").lower()
+    if v not in PDF_VARIANTS:
+        raise HTTPException(status_code=400, detail="Versi PDF tidak dikenal (lapangan | lengkap)")
+    if v == "lengkap":
+        u = CURRENT_USER.get()
+        if not u or "plan.write" not in ROLE_PERMS.get(u["role"], set()):
+            raise HTTPException(status_code=403, detail="Versi lengkap (memuat harga) hanya untuk peran yang boleh mengelola rencana")
+    return v
+
+
+def _pdf_response(body: bytes, name: str, status: str, variant: str) -> Response:
+    safe = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")[:40] or "rencana"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    fname = f"asplan_{safe}_{status.lower()}_{variant}_{stamp}.pdf"
+    return Response(content=body, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@app.post("/api/plan/pdf")
+def plan_pdf_preview(req: PlanPdfRequest):
+    """PDF dari hasil perhitungan yang BELUM disimpan (label PRATINJAU)."""
+    variant = _pdf_variant(req.variant)
+    with db() as conn:
+        cursor = conn.cursor()
+        res = _compute_plan(cursor, req)
+        name = (req.name or "").strip() or f"Pasang baru {res['dest']['name']}"
+        boq = _boq_compute(cursor, BoqRequest(summary=res["summary"], adjust=req.boq_adjust, origin_cluster=(res["origin"] or {}).get("cluster"))) if variant == "lengkap" else None
+        meta = {"name": name, "status": "PRATINJAU", "plan_id": None, "created_at": _now_str(), "created_by": _current_username(),
+                "generated_by": _current_username(), "tz_min": req.tz_min}
+        body = _plan_pdf_bytes(res, meta, boq, variant, _pdf_basemap_mode(req.basemap))
+        _audit(cursor, "EXPORT", "PLAN", None, name, f"Unduh PDF asplan (PRATINJAU, versi {variant}): '{name}'")
+    return _pdf_response(body, name, "PRATINJAU", variant)
+
+
+@app.get("/api/plans/{plan_id}/pdf")
+def plan_pdf_saved(plan_id: int, variant: str = "lapangan", tz: int = 0, basemap: str = "osm"):
+    """PDF rencana tersimpan: Draft -> 'DRAFT' (asplan awal ke tim lapangan), Realized -> 'TEREALISASI'."""
+    variant = _pdf_variant(variant)
+    with db() as conn:
+        cursor = conn.cursor()
+        r = _load_plan(cursor, plan_id)
+        plan = json.loads(r["result"])
+        summary = json.loads(r["summary"] or "{}")
+        status = "TEREALISASI" if r["status"] == "Realized" else "DRAFT"
+        boq = None
+        if variant == "lengkap":
+            try:
+                adj = json.loads(r["boq_adjust"]) if r["boq_adjust"] else None
+            except (TypeError, ValueError):
+                adj = None
+            boq = _boq_compute(cursor, BoqRequest(summary=summary, adjust=adj, origin_cluster=((plan.get("origin") or {}).get("cluster"))))
+        try:
+            realized = json.loads(r["realized_info"]) if r["realized_info"] else None
+        except (TypeError, ValueError):
+            realized = None
+        meta = {"name": r["name"], "status": status, "plan_id": plan_id, "created_at": r["created_at"], "created_by": r["created_by"],
+                "realized_at": r["realized_at"], "realized": realized, "generated_by": _current_username(), "tz_min": tz}
+        body = _plan_pdf_bytes(plan, meta, boq, variant, _pdf_basemap_mode(basemap))
+        _audit(cursor, "EXPORT", "PLAN", plan_id, r["name"], f"Unduh PDF asplan #{plan_id} ({status}, versi {variant}): '{r['name']}'")
+    return _pdf_response(body, r["name"], status, variant)
 
 
 # =====================================================================================
