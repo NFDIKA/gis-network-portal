@@ -26,7 +26,7 @@
     />
 
     <!-- External Custom CSS -->
-    <link rel="stylesheet" href="style.css?v=20261006b" />
+    <link rel="stylesheet" href="style.css?v=20261008i" />
   </head>
   <body>
     <div id="net-bar" class="net-bar"></div>
@@ -61,6 +61,14 @@
           >
           <a
             class="nav-item"
+            id="nav-covbulk"
+            onclick="openCovBulkModal()"
+            style="display: none"
+            ><i class="fa-solid fa-table-list"></i
+            ><span>Coverage Massal</span></a
+          >
+          <a
+            class="nav-item"
             id="nav-plan"
             onclick="openPlanPanel()"
             style="display: none"
@@ -85,6 +93,13 @@
             style="display: none"
             ><i class="fa-solid fa-users-gear"></i
             ><span>Access Control</span></a
+          >
+          <a
+            class="nav-item"
+            id="nav-wilayah"
+            onclick="openWilayahModal()"
+            style="display: none"
+            ><i class="fa-solid fa-earth-asia"></i><span>Wilayah</span></a
           >
         </nav>
         <div class="user-box" id="user-box" style="display: none">
@@ -162,6 +177,14 @@
           <span class="scope-title"
             ><i class="fa-solid fa-filter"></i><span>Wilayah</span></span
           >
+          <select
+            id="scope-region"
+            onchange="onScopeSelect('region')"
+            aria-label="Filter regional"
+            title="Regional"
+          >
+            <option value="ALL">Semua regional</option>
+          </select>
           <select
             id="scope-cluster"
             onchange="onScopeSelect('cluster')"
@@ -417,7 +440,7 @@
                       type="text"
                       id="plan-dest-name"
                       placeholder="Nama pelanggan (opsional)"
-                      oninput="planDirty()"
+                      oninput="planCustDirty()"
                     />
                     <button
                       type="button"
@@ -644,13 +667,13 @@
                         list="plan-svc-list"
                         maxlength="80"
                         placeholder="mis. Dedicated Internet"
-                        oninput="planDirty()"
+                        oninput="planCustDirty()"
                       />
                       <datalist id="plan-svc-list"></datalist>
                     </label>
                     <label
                       >Jenis
-                      <select id="plan-linktype" onchange="planDirty()">
+                      <select id="plan-linktype" onchange="planCustDirty()">
                         <option value="">- pilih -</option>
                         <option value="GPON">GPON</option>
                         <option value="PTP">PTP (Point to Point)</option>
@@ -665,12 +688,12 @@
                           min="0"
                           step="any"
                           placeholder="mis. 100"
-                          oninput="planDirty()"
+                          oninput="planCustDirty()"
                         />
                         <select
                           id="plan-bw-unit"
                           class="ap-unit"
-                          onchange="planDirty()"
+                          onchange="planCustDirty()"
                         >
                           <option value="Mbps">Mbps</option>
                           <option value="Gbps">Gbps</option>
@@ -684,7 +707,7 @@
                         id="plan-sn"
                         maxlength="40"
                         placeholder="bila sudah ada"
-                        oninput="planDirty()"
+                        oninput="planCustDirty()"
                         onblur="planNormCodes()"
                       />
                     </label>
@@ -695,7 +718,7 @@
                         id="plan-reg"
                         maxlength="40"
                         placeholder="opsional, unik"
-                        oninput="planDirty()"
+                        oninput="planCustDirty()"
                         onblur="planNormCodes()"
                       />
                     </label>
@@ -706,7 +729,104 @@
                   </div>
                 </details>
 
-                <div class="tp-field">
+                <div class="tp-field" id="plan-remarks-box">
+                  <label for="plan-remarks"
+                    >Keterangan perencana
+                    <small>(opsional, tercetak di PDF)</small></label
+                  >
+                  <textarea
+                    id="plan-remarks"
+                    rows="3"
+                    maxlength="1000"
+                    placeholder="mis. izin tiang, akses lokasi, catatan khusus pelanggan"
+                    oninput="planCustDirty()"
+                  ></textarea>
+                </div>
+
+                <div class="tp-field" id="plan-rmode-box">
+                  <label>Mode jalur</label>
+                  <div
+                    class="tp-seg tp-seg3"
+                    role="radiogroup"
+                    aria-label="Mode jalur kabel"
+                  >
+                    <label
+                      ><input
+                        type="radio"
+                        name="plan-rmode"
+                        value="road"
+                        checked
+                        onchange="planRouteModeChanged()"
+                      />
+                      <span
+                        ><i class="fa-solid fa-road"></i> Ikuti jalan</span
+                      ></label
+                    >
+                    <label
+                      ><input
+                        type="radio"
+                        name="plan-rmode"
+                        value="straight"
+                        onchange="planRouteModeChanged()"
+                      />
+                      <span
+                        ><i class="fa-solid fa-slash"></i> Garis lurus</span
+                      ></label
+                    >
+                    <label
+                      ><input
+                        type="radio"
+                        name="plan-rmode"
+                        value="custom"
+                        onchange="planRouteModeChanged()"
+                      />
+                      <span
+                        ><i class="fa-solid fa-pen-ruler"></i> Edit jalur</span
+                      ></label
+                    >
+                  </div>
+                  <div
+                    id="plan-edit-box"
+                    class="plan-edit-box"
+                    style="display: none"
+                  >
+                    <div class="cov-meta">
+                      <b id="plan-bend-count">0 dari 30 titik belokan</b>. Seret
+                      lingkaran biru untuk memindah titik belokan,
+                      <b>klik garis</b> untuk menambah titik,
+                      <b>klik titik</b> untuk menghapusnya. Tiang baru dibagi
+                      ulang otomatis mengikuti jalur; tiang eksisting tidak
+                      dipindah.
+                    </div>
+                    <div class="tp-row">
+                      <button
+                        type="button"
+                        class="tp-ghost"
+                        onclick="planBendsClear()"
+                      >
+                        <i class="fa-solid fa-eraser"></i> Hapus semua belokan
+                      </button>
+                      <button
+                        type="button"
+                        class="tp-ghost"
+                        onclick="planSetMode('road')"
+                      >
+                        <i class="fa-solid fa-rotate-left"></i> Kembalikan ke
+                        otomatis
+                      </button>
+                      <button
+                        type="button"
+                        class="tp-ghost"
+                        onclick="toggleToolPanelCollapse()"
+                        title="Lipat panel agar seluruh peta terlihat saat menyunting jalur; buka lagi lewat tombol panah di judul panel"
+                      >
+                        <i class="fa-solid fa-map"></i> Lipat panel (lihat peta)
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="tp-field" id="plan-via-field">
                   <label
                     >Titik singgah
                     <small>(opsional, untuk mengarahkan jalur)</small></label
@@ -763,6 +883,16 @@
                         step="1"
                         oninput="planDirty()"
                     /></label>
+                    <label
+                      class="tp-check"
+                      title="Bawaan: kabel dropcore (di bawah batas dropcore) tidak memakai tiang/handhole baru; tiang baru hanya untuk kabel besar"
+                      ><input
+                        type="checkbox"
+                        id="rule-dropnew"
+                        onchange="planDirty()"
+                      />
+                      Dropcore juga pakai tiang/HH baru</label
+                    >
                   </div>
                   <div class="tp-tier-title">
                     Jenis kabel menurut panjang rute
@@ -808,6 +938,10 @@
                       >Titik singgah 1, 2, &hellip; (seret untuk memindah)</span
                     >
                     <span class="pl-it"
+                      ><i class="plan-bend-legend"></i>Titik belokan (mode Edit
+                      jalur): seret / klik untuk hapus</span
+                    >
+                    <span class="pl-it"
                       ><span class="tool-pin pin-slack"><span>S</span></span
                       >Slack kabel (sisa kabel, jarak &amp; panjang di
                       BOQ)</span
@@ -838,7 +972,8 @@
                     >
                     <span class="pl-it"
                       ><i class="pl-line road"></i>Putus-putus = rute mengikuti
-                      jalan &middot; titik-titik = garis lurus</span
+                      jalan &middot; titik-titik = garis lurus &middot; garis
+                      penuh = jalur disunting</span
                     >
                   </div>
                 </details>
@@ -860,12 +995,13 @@
                 ></div>
                 <div id="plan-result"></div>
                 <div id="plan-boq"></div>
-                <div class="tp-row" id="plan-actions" style="display: none">
+                <div class="tp-row" id="plan-actions">
                   <button
                     type="button"
                     class="tp-ghost"
                     id="plan-save-btn"
                     onclick="savePlanDraft()"
+                    title="Simpan sebagai draft (dihitung ulang otomatis bila parameter berubah)"
                   >
                     <i class="fa-solid fa-bookmark"></i> Simpan rencana
                   </button>
@@ -980,13 +1116,18 @@
               />
             </div>
             <select
+              id="filter-region"
+              onchange="onInventoryScopeChange()"
+              title="Regional"
+            >
+              <option value="ALL">Semua Regional</option>
+            </select>
+            <select
               id="filter-cluster"
               onchange="onInventoryScopeChange()"
               title="Cluster"
             >
               <option value="ALL">Semua Cluster</option>
-              <option value="EKO">Cluster EKO</option>
-              <option value="WKO">Cluster WKO</option>
             </select>
             <select
               id="filter-area"
@@ -1005,6 +1146,14 @@
               <option value="Maintenance">Maintenance</option>
               <option value="Cut/Broken">Cut/Broken</option>
             </select>
+            <button
+              type="button"
+              class="inv-export-btn"
+              onclick="ftTogglePanel()"
+              title="Tampilkan / sembunyikan panel folder"
+            >
+              <i class="fa-solid fa-folder-tree"></i> <span>Folder</span>
+            </button>
             <button
               type="button"
               class="inv-export-btn"
@@ -1038,81 +1187,210 @@
             </select>
           </div>
 
-          <!-- Ringkasan hasil -->
-          <div id="inv-summary" class="inv-summary"></div>
+          <div class="inv-split" id="inv-split">
+            <aside class="inv-folders" id="inv-folders">
+              <div class="ft-head">
+                <b><i class="fa-solid fa-folder-tree"></i> Folder</b>
+                <span id="ft-tools" class="ft-tools">
+                  <button
+                    type="button"
+                    onclick="ftNewFolder()"
+                    title="Folder baru (di dalam folder terpilih)"
+                  >
+                    <i class="fa-solid fa-folder-plus"></i>
+                  </button>
+                  <button
+                    type="button"
+                    onclick="ftRename()"
+                    title="Ganti nama folder terpilih"
+                  >
+                    <i class="fa-solid fa-pen"></i>
+                  </button>
+                  <button
+                    type="button"
+                    onclick="ftDelete()"
+                    title="Hapus folder kosong terpilih"
+                  >
+                    <i class="fa-solid fa-trash"></i>
+                  </button>
+                </span>
+              </div>
+              <div class="ft-viewbar" id="ft-viewbar">
+                <button
+                  type="button"
+                  onclick="ftOpenAll(true)"
+                  title="Buka semua folder"
+                >
+                  <i class="fa-solid fa-angles-down"></i> Buka
+                </button>
+                <button
+                  type="button"
+                  onclick="ftOpenAll(false)"
+                  title="Lipat semua folder"
+                >
+                  <i class="fa-solid fa-angles-up"></i> Lipat
+                </button>
+                <button
+                  type="button"
+                  onclick="ftAll(true)"
+                  title="Tampilkan semua folder di peta"
+                >
+                  <i class="fa-solid fa-eye"></i> Tampilkan semua
+                </button>
+                <button
+                  type="button"
+                  onclick="ftAll(false)"
+                  title="Sembunyikan semua folder dari peta"
+                >
+                  <i class="fa-solid fa-eye-slash"></i> Sembunyikan semua
+                </button>
+              </div>
+              <input
+                type="text"
+                class="ft-search"
+                id="ft-search"
+                placeholder="Cari folder..."
+                oninput="ftRenderAll()"
+              />
+              <div
+                class="ft-tree"
+                id="inv-folder-tree"
+                onclick="ftClick(event, 'inv')"
+              ></div>
+              <div class="ft-foot">
+                <span class="ft-key y"></span> punya subfolder &nbsp;
+                <span class="ft-key g"></span> berisi aset langsung<br />Ikon
+                mata = tampil di peta &middot; klik nama = saring tabel &middot;
+                angka = hasil sesuai filter aktif<br />Klik kanan (tekan lama di
+                layar sentuh) = menu &middot; seret folder atau baris aset ke
+                folder untuk memindahkan
+              </div>
+            </aside>
+            <div class="inv-main">
+              <!-- Ringkasan hasil -->
+              <div class="inv-sumrow">
+                <div id="inv-summary" class="inv-summary"></div>
+                <button
+                  type="button"
+                  class="inv-colbtn"
+                  onclick="invColMenu(event)"
+                  title="Pilih kolom yang ditampilkan"
+                >
+                  <i class="fa-solid fa-table-columns"></i> Kolom
+                </button>
+              </div>
 
-          <!-- Tabel -->
-          <div class="inv-table-wrap">
-            <table class="inv-table" id="inventory-table" data-ng="resize,wrap">
-              <thead>
-                <tr>
-                  <th data-sort="name" onclick="setInventorySort('name')">
-                    Aset<span class="sort-ind"></span>
-                  </th>
-                  <th
-                    data-sort="type"
-                    onclick="setInventorySort('type')"
-                    class="col-type"
-                  >
-                    Jenis<span class="sort-ind"></span>
-                  </th>
-                  <th
-                    data-sort="city"
-                    onclick="setInventorySort('city')"
-                    class="col-loc"
-                  >
-                    Lokasi<span class="sort-ind"></span>
-                  </th>
-                  <th
-                    data-sort="capacity"
-                    onclick="setInventorySort('capacity')"
-                    class="col-cap"
-                  >
-                    Kapasitas<span class="sort-ind"></span>
-                  </th>
-                  <th
-                    data-sort="length"
-                    onclick="setInventorySort('length')"
-                    class="col-cable"
-                  >
-                    Panjang<span class="sort-ind"></span>
-                  </th>
-                  <th
-                    data-sort="installation"
-                    onclick="setInventorySort('installation')"
-                    class="col-cable"
-                  >
-                    Pemasangan<span class="sort-ind"></span>
-                  </th>
-                  <th data-sort="status" onclick="setInventorySort('status')">
-                    Status<span class="sort-ind"></span>
-                  </th>
-                  <th class="col-act">Aksi</th>
-                </tr>
-              </thead>
-              <tbody id="inventory-table-body"></tbody>
-            </table>
-          </div>
+              <!-- Bar pilihan massal (checkbox / Shift+klik) -->
+              <div
+                id="inv-selbar"
+                class="inv-selbar"
+                style="display: none"
+              ></div>
 
-          <!-- Pagination -->
-          <div id="inventory-pager" class="inv-pager">
-            <span id="inventory-page-info">-</span>
-            <div class="inv-pager-ctl">
-              <select
-                id="inventory-page-size"
-                onchange="onInventoryPageSizeChange()"
-              >
-                <option value="10">10 / halaman</option>
-                <option value="25" selected>25 / halaman</option>
-                <option value="50">50 / halaman</option>
-                <option value="100">100 / halaman</option>
-              </select>
-              <button id="inventory-prev" onclick="goInventoryPage(-1)">
-                &laquo; Prev
-              </button>
-              <button id="inventory-next" onclick="goInventoryPage(1)">
-                Next &raquo;
-              </button>
+              <!-- Tabel -->
+              <div class="inv-table-wrap">
+                <table
+                  class="inv-table"
+                  id="inventory-table"
+                  data-ng="resize,wrap"
+                  data-ng-key="inventory-table:v3"
+                >
+                  <thead>
+                    <tr>
+                      <th class="col-sel">
+                        <input
+                          type="checkbox"
+                          id="inv-chk-all"
+                          class="inv-chk"
+                          onclick="invToggleAll(this)"
+                          title="Pilih semua baris di halaman ini"
+                          aria-label="Pilih semua baris di halaman ini"
+                        />
+                      </th>
+                      <th
+                        data-sort="name"
+                        onclick="setInventorySort('name')"
+                        class="cv-name"
+                      >
+                        Aset<span class="sort-ind"></span>
+                      </th>
+                      <th
+                        data-sort="type"
+                        onclick="setInventorySort('type')"
+                        class="col-type cv-type"
+                      >
+                        Jenis<span class="sort-ind"></span>
+                      </th>
+                      <th
+                        data-sort="city"
+                        onclick="setInventorySort('city')"
+                        class="col-loc cv-loc"
+                      >
+                        Lokasi<span class="sort-ind"></span>
+                      </th>
+                      <th
+                        data-sort="folder"
+                        onclick="setInventorySort('folder')"
+                        class="col-folder cv-folder"
+                      >
+                        Folder<span class="sort-ind"></span>
+                      </th>
+                      <th
+                        data-sort="capacity"
+                        onclick="setInventorySort('capacity')"
+                        class="col-cap cv-cap"
+                      >
+                        Kapasitas<span class="sort-ind"></span>
+                      </th>
+                      <th
+                        data-sort="length"
+                        onclick="setInventorySort('length')"
+                        class="col-cable cv-len"
+                      >
+                        Panjang<span class="sort-ind"></span>
+                      </th>
+                      <th
+                        data-sort="installation"
+                        onclick="setInventorySort('installation')"
+                        class="col-cable cv-inst"
+                      >
+                        Pemasangan<span class="sort-ind"></span>
+                      </th>
+                      <th
+                        data-sort="status"
+                        onclick="setInventorySort('status')"
+                        class="cv-status"
+                      >
+                        Status<span class="sort-ind"></span>
+                      </th>
+                      <th class="col-act">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody id="inventory-table-body"></tbody>
+                </table>
+              </div>
+
+              <!-- Pagination -->
+              <div id="inventory-pager" class="inv-pager">
+                <span id="inventory-page-info">-</span>
+                <div class="inv-pager-ctl">
+                  <select
+                    id="inventory-page-size"
+                    onchange="onInventoryPageSizeChange()"
+                  >
+                    <option value="10">10 / halaman</option>
+                    <option value="25" selected>25 / halaman</option>
+                    <option value="50">50 / halaman</option>
+                    <option value="100">100 / halaman</option>
+                  </select>
+                  <button id="inventory-prev" onclick="goInventoryPage(-1)">
+                    &laquo; Prev
+                  </button>
+                  <button id="inventory-next" onclick="goInventoryPage(1)">
+                    Next &raquo;
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1230,8 +1508,7 @@
                   border-radius: 4px;
                 "
               >
-                <option value="EKO">EKO</option>
-                <option value="WKO">WKO</option>
+                <option value="">-- Pilih cluster --</option>
               </select>
             </div>
             <div style="flex: 1">
@@ -2996,6 +3273,74 @@
       </div>
     </div>
 
+    <!-- ===== WILAYAH: Regional > Cluster > Area ===== -->
+    <div id="modal-wilayah" class="modal-overlay" style="display: none">
+      <div class="modal-container" style="max-width: 860px">
+        <div class="modal-header" style="background: #334155; color: white">
+          <h3>
+            <i class="fa-solid fa-earth-asia"></i> Wilayah
+            <small id="wil-summary" class="wil-summary"></small>
+          </h3>
+          <button
+            class="btn-close"
+            onclick="closeWilayahModal()"
+            style="color: white"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="modal-body adm-body">
+          <div class="wil-bar">
+            <input
+              type="text"
+              id="wil-q"
+              oninput="wilSearch()"
+              placeholder="Cari regional / cluster / area..."
+            />
+            <button
+              type="button"
+              class="wil-tb"
+              onclick="wilExpandAll(true)"
+              title="Buka semua"
+            >
+              <i class="fa-solid fa-angles-down"></i>
+            </button>
+            <button
+              type="button"
+              class="wil-tb"
+              onclick="wilExpandAll(false)"
+              title="Tutup semua"
+            >
+              <i class="fa-solid fa-angles-up"></i>
+            </button>
+            <span id="wil-tools" class="wil-tools" style="display: none">
+              <button
+                type="button"
+                class="wil-tb wide"
+                onclick="wilAddRegion()"
+              >
+                <i class="fa-solid fa-plus"></i> Regional
+              </button>
+              <button type="button" class="wil-tb wide" onclick="wilPasteDlg()">
+                <i class="fa-solid fa-paste"></i> Tempel daftar
+              </button>
+            </span>
+          </div>
+          <div id="wil-msg" class="data-msg" style="display: none"></div>
+          <div id="wil-dlg" class="wil-dlg" style="display: none"></div>
+          <div class="adm-scroll wil-scroll">
+            <div id="wil-tree" class="wil-tree"></div>
+          </div>
+          <div class="adm-hint">
+            Semua pengguna dapat melihat daftar ini; hanya <b>Admin</b> yang
+            dapat menambah, mengganti nama, memindah, atau menghapus. Mengganti
+            nama atau memindah otomatis memperbarui semua aset dan tiket
+            terkait.
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ===== RIWAYAT PERUBAHAN ===== -->
     <div id="modal-audit" class="modal-overlay" style="display: none">
       <div class="modal-container" style="max-width: 1000px">
@@ -3082,6 +3427,175 @@
     </div>
 
     <!-- Modal Import / Export data -->
+    <!-- ===== CEK COVERAGE MASSAL ===== -->
+    <div id="modal-covbulk" class="modal-overlay" style="display: none">
+      <div class="modal-container data-container cb-container">
+        <div class="modal-header" style="background: #0f766e; color: white">
+          <h3><i class="fa-solid fa-table-list"></i> Cek Coverage Massal</h3>
+          <button
+            class="btn-close"
+            onclick="closeCovBulkModal()"
+            title="Tutup"
+            style="color: white"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="modal-body data-body">
+          <div id="cb-step1">
+            <label class="data-drop" id="cb-drop" for="cb-file">
+              <i class="fa-solid fa-cloud-arrow-up"></i>
+              <b id="cb-file-name">Pilih berkas Excel (.xlsx) daftar lokasi</b>
+              <small
+                >Kolom: Nama Lokasi, Area, Titik Koordinat (contoh: -3.3136,
+                114.5898), atau kolom Lat dan Lng terpisah. Maksimal 500
+                lokasi.</small
+              >
+              <input
+                type="file"
+                id="cb-file"
+                accept=".xlsx,.xlsm"
+                onchange="cbFileChosen(event)"
+              />
+            </label>
+            <div class="data-templates">
+              Template:
+              <a
+                href="#"
+                onclick="
+                  cbTemplate();
+                  return false;
+                "
+                >unduh template Excel</a
+              >
+            </div>
+          </div>
+          <div id="cb-params" style="display: none">
+            <div class="data-grid">
+              <label
+                >Radius tercover (m)
+                <input
+                  type="number"
+                  id="cb-radius"
+                  value="5000"
+                  min="50"
+                  max="5000"
+                  step="50"
+                />
+              </label>
+              <label
+                >Wilayah harga KHS
+                <select id="cb-region"></select>
+              </label>
+              <label
+                >Pemasangan kabel
+                <select id="cb-inst">
+                  <option value="Udara">Udara (tiang)</option>
+                  <option value="Tanah">Tanah (handhole)</option>
+                </select>
+              </label>
+              <label
+                >Layanan pelanggan
+                <select id="cb-cores">
+                  <option value="1">1 core (bisa dari ODP)</option>
+                  <option value="2">
+                    2 core dedicated (dari Closure/Slack)
+                  </option>
+                </select>
+              </label>
+              <label
+                title="ODP/Closure layak dalam jarak ini selalu didahulukan. Slack hanya dipakai bila tidak ada, dengan catatan perlu pasang closure + ODP baru."
+                >Prioritas ODP/Closure (m)
+                <input
+                  type="number"
+                  id="cb-slackpref"
+                  value="1000"
+                  min="0"
+                  max="20000"
+                  step="100"
+                />
+              </label>
+              <label class="cb-check"
+                ><span
+                  ><input type="checkbox" id="cb-cost" checked /> Hitung
+                  estimasi biaya (KHS)</span
+                ></label
+              >
+              <label class="cb-check"
+                ><span
+                  ><input type="checkbox" id="cb-tax" checked /> Biaya sudah
+                  termasuk PPN <span id="cb-tax-pct"></span></span
+              ></label>
+            </div>
+            <div class="data-note" id="cb-khs-note"></div>
+          </div>
+          <div id="cb-preview" style="display: none"></div>
+          <div id="cb-prog" class="data-prog" style="display: none"></div>
+          <div id="cb-msg" class="data-msg" style="display: none"></div>
+          <div id="cb-results" style="display: none"></div>
+          <div class="data-actions">
+            <button
+              type="button"
+              class="data-ghost"
+              onclick="closeCovBulkModal()"
+            >
+              Tutup
+            </button>
+            <button
+              type="button"
+              class="data-ghost"
+              id="cb-reset"
+              onclick="cbReset()"
+              style="display: none"
+            >
+              <i class="fa-solid fa-rotate-left"></i> Berkas lain
+            </button>
+            <button
+              type="button"
+              class="data-ghost"
+              id="cb-map"
+              onclick="cbShowOnMap()"
+              style="display: none"
+            >
+              <i class="fa-solid fa-map-location-dot"></i> Lihat di peta
+            </button>
+            <button
+              type="button"
+              class="data-ghost"
+              id="cb-dl"
+              onclick="cbDownload()"
+              style="display: none"
+            >
+              <i class="fa-solid fa-file-excel"></i> Unduh Excel
+            </button>
+            <button
+              type="button"
+              class="data-primary"
+              id="cb-run"
+              onclick="cbRun()"
+              style="display: none"
+            >
+              <i class="fa-solid fa-play"></i> Proses
+            </button>
+          </div>
+          <p class="data-note">
+            Y = ada catuan layak (ODP/Closure/Slack dengan port/core kosong)
+            dalam radius (bawaan 5 km; T hanya di atas radius), diukur mengikuti
+            jalan. Tarikan &lt; 1000 m: dropcore dari ODP terdekat yang layak
+            (bila tidak ada, ODP baru di closure), tanpa tiang baru dan slack.
+            Tarikan 1000 m atau lebih: kabel distribusi 12/24/48/96C dari
+            closure terdekat + closure + ODP baru + dropcore. Kabel, closure,
+            ODP, dan tiang baru dihitung jasa saja; ditambah biaya survei.
+            Estimasi di luar transportasi dan biaya lainnya. Bila router jalan
+            tidak terjangkau, jarak = garis lurus &times; 1,3. Catuan Slack
+            dipakai hanya bila tidak ada ODP/Closure layak dalam jarak
+            prioritas, dan memerlukan closure + ODP baru (biaya ikut dihitung).
+            Biaya dari katalog KHS.
+          </p>
+        </div>
+      </div>
+    </div>
+
     <div id="modal-data" class="modal-overlay" style="display: none">
       <div class="modal-container data-container">
         <div class="modal-header" style="background: #0f766e; color: white">
@@ -3195,17 +3709,28 @@
                 </select>
               </label>
               <label
+                >Regional
+                <select id="exp-region" onchange="onExportRegionChange()">
+                  <option value="ALL">Semua regional</option>
+                </select>
+              </label>
+              <label
                 >Cluster
                 <select id="exp-cluster" onchange="onExportClusterChange()">
                   <option value="ALL">Semua cluster</option>
-                  <option value="EKO">EKO</option>
-                  <option value="WKO">WKO</option>
                 </select>
               </label>
               <label
                 >Area
                 <select id="exp-area">
                   <option value="ALL">Semua area</option>
+                </select>
+              </label>
+              <label class="data-wide"
+                >Folder (termasuk subfolder; insiden tidak ikut bila folder
+                dipilih)
+                <select id="exp-folder">
+                  <option value="">Semua folder</option>
                 </select>
               </label>
               <label class="data-wide"
@@ -3259,10 +3784,7 @@
                 <b id="imp-file-name"
                   >Pilih berkas Excel / CSV / GeoJSON / KML / KMZ</b
                 >
-                <small
-                  >Maksimal 8 MB dan 5.000 data. Titik = node, garis =
-                  kabel.</small
-                >
+                <small id="imp-limit-info">Memuat batas impor...</small>
                 <input
                   type="file"
                   id="imp-file"
@@ -3273,10 +3795,13 @@
               <div class="data-grid">
                 <label
                   >Jika nama sudah ada (huruf besar/kecil dianggap sama)
-                  <select id="imp-dup" onchange="previewImport()">
+                  <select id="imp-dup" onchange="onImportDupChange()">
                     <option value="skip">Lewati (aman)</option>
                     <option value="update">
                       Perbarui atribut (bukan posisi/geometri)
+                    </option>
+                    <option value="create">
+                      Buat baru (nama yang sama diberi nomor -2, -3, ...)
                     </option>
                   </select>
                 </label>
@@ -3315,18 +3840,98 @@
                 PELANGGAN:
                 <code>service, bandwidth_mbps, device_sn, link_type</code>
                 (GPON/PTP); POP: <code>trunk_mbps, trunk_overbook</code>. Nama,
-                kode registrasi, dan SN harus unik; baris yang bentrok ditolak.
-                Kolom kosong tidak menghapus data lama saat mode perbarui.
+                kode registrasi, dan SN harus unik; baris yang bentrok bisa
+                dikoreksi langsung di sini (ganti jenis, nama, koordinat, gabung
+                ke aset yang ada, atau lewati) tanpa mengubah berkas. Kolom
+                kosong tidak menghapus data lama saat mode perbarui.
               </div>
+              <details
+                id="imp-limit-admin"
+                class="imp-limit-admin"
+                style="display: none"
+              >
+                <summary>Batas impor (Admin)</summary>
+                <div class="imp-limit-form">
+                  <label
+                    >Ukuran berkas maks (MB)
+                    <input
+                      type="number"
+                      id="imp-lim-mb"
+                      min="0.5"
+                      max="500"
+                      step="0.5"
+                  /></label>
+                  <label
+                    >Jumlah data maks
+                    <input
+                      type="number"
+                      id="imp-lim-rec"
+                      min="100"
+                      max="200000"
+                      step="100"
+                  /></label>
+                  <button
+                    type="button"
+                    class="data-ghost"
+                    id="imp-lim-save"
+                    onclick="saveImportLimits()"
+                  >
+                    Simpan batas
+                  </button>
+                </div>
+                <small id="imp-lim-hint"></small>
+              </details>
+              <div
+                id="imp-sessions"
+                class="imp-sessions"
+                style="display: none"
+              ></div>
               <div id="imp-prog" class="data-prog" style="display: none"></div>
               <div id="imp-msg" class="data-msg" style="display: none"></div>
-              <div id="imp-preview"></div>
+              <div id="imp-preview" style="display: none">
+                <div id="imp-sess-head" class="imp-meta"></div>
+                <div class="imp-sum" id="imp-sum"></div>
+                <div id="imp-meta" class="imp-meta"></div>
+                <div
+                  id="imp-reasons"
+                  class="imp-reasons"
+                  style="display: none"
+                ></div>
+                <div class="imp-bar">
+                  <div class="imp-tabs" id="imp-tabs"></div>
+                  <input
+                    type="search"
+                    id="imp-q"
+                    placeholder="Cari nama / sumber..."
+                    oninput="onImpSearch()"
+                  />
+                </div>
+                <div
+                  id="imp-baskets"
+                  class="imp-baskets"
+                  style="display: none"
+                ></div>
+                <div id="imp-undo" class="imp-undo" style="display: none"></div>
+                <div
+                  id="imp-selbar"
+                  class="imp-selbar"
+                  style="display: none"
+                ></div>
+                <div
+                  class="imp-scroll tall"
+                  id="imp-rows"
+                  tabindex="0"
+                  onkeydown="impKey(event)"
+                ></div>
+                <div class="imp-pager" id="imp-pager"></div>
+              </div>
               <div class="data-actions">
                 <button
                   type="button"
                   class="data-ghost"
                   id="imp-close"
                   onclick="dismissDataModal()"
+                  title="Sesi tetap tersimpan di server"
                 >
                   Tutup
                 </button>
@@ -3334,9 +3939,27 @@
                   type="button"
                   class="data-ghost"
                   id="imp-cancel"
-                  onclick="resetImport()"
+                  onclick="discardImportSession()"
                 >
-                  Batal / kosongkan
+                  Buang sesi
+                </button>
+                <button
+                  type="button"
+                  class="data-ghost"
+                  id="imp-report"
+                  onclick="downloadImportReport()"
+                  disabled
+                >
+                  <i class="fa-solid fa-file-csv"></i> Laporan galat
+                </button>
+                <button
+                  type="button"
+                  class="data-ghost"
+                  id="imp-validate"
+                  onclick="validateImport()"
+                  disabled
+                >
+                  <i class="fa-solid fa-rotate"></i> Validasi ulang
                 </button>
                 <button
                   type="button"
@@ -3719,6 +4342,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
 
     <!-- External Custom JS Logic -->
-    <script src="app.js?v=20261006b"></script>
+    <script src="app.js?v=20261008i"></script>
   </body>
 </html>
