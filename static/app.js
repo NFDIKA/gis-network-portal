@@ -19902,6 +19902,7 @@ function mxLists(i) {
   const U = MXC[`u${p.from.id}:${lk.cable_id || 0}`],
     Dn = MXC[`d${p.to.id}`];
   let L = [],
+    LA = [],
     cabs = [];
   m.isJ = false;
   if (U && U.d) {
@@ -19911,13 +19912,34 @@ function mxLists(i) {
       if (m.upCable == null || !cabs.some((c) => c.id === m.upCable))
         m.upCable = cabs.length ? cabs[0].id : null;
       L = cmAvail({ data: U.d, upCable: m.upCable });
-    } else L = U.d.ports || [];
+      const cab = cabs.find((c) => c.id === m.upCable);
+      LA = [...new Set([...(U.d.ready || []), ...(cab ? cab.labels : [])])];
+      const o = cab ? cab.labels : [];
+      LA.sort(
+        (a, b) =>
+          (o.indexOf(a) < 0 ? 1e6 : o.indexOf(a)) -
+          (o.indexOf(b) < 0 ? 1e6 : o.indexOf(b)),
+      );
+    } else {
+      L = U.d.ports || [];
+      LA = U.d.all || L;
+    }
   }
+  const R = p.cable.free || [],
+    tot = p.cable.total || 0;
+  const RA = tot ? Array.from({ length: tot }, (_, k) => coreLabelN(k + 1)) : R;
+  const toT = String((p.to && p.to.type) || "").toUpperCase();
   return {
     L,
-    R: p.cable.free || [],
+    LA,
+    R,
+    RA,
     D: (Dn && Dn.d && Dn.d.ports) || [],
+    DA: (Dn && Dn.d && Dn.d.all) || (Dn && Dn.d && Dn.d.ports) || [],
     cabs,
+    mirror: toT === "CLOSURE" || toT === "SLACK",
+    uload: !!(U && U.loading),
+    uerr: U && U.err,
     loading: !!((U && U.loading) || (Dn && Dn.loading)),
   };
 }
@@ -20102,27 +20124,46 @@ function mxPayload(i) {
     upstream: hasU && m.isJ && m.upCable ? m.upCable : null,
   };
 }
-function mxColHtml(i, side, title, sub, arr, m, ci) {
+function mxColHtml(i, side, title, sub, all, free, m, note) {
   const MAX = 288,
-    used = new Map();
+    used = new Map(),
+    fr = new Set(free);
   m.pairs.forEach((x, k) => {
-    const key = side === "L" ? x.u : side === "R" ? x.c : x.d;
-    if (key) used.set(key, k);
+    const key = side === "L" ? x.u : x.c;
+    if (side === "D") {
+      if (x.d) used.set(x.d, k);
+    } else if (side === "M") {
+      used.set(x.c, k);
+    } else if (key) used.set(key, k);
   });
-  const pend = new Set(side === "L" ? m.pL : side === "R" ? m.pR : []);
+  const pend = new Set(
+    side === "L" ? m.pL : side === "R" || side === "M" ? m.pR : [],
+  );
+  const arr = all.length ? all : free;
   const btn =
     arr
       .slice(0, MAX)
       .map((l) => {
         const k = used.get(l),
-          cls = k != null ? `used c${k % 8}` : pend.has(l) ? "sel" : "";
+          gone = !fr.has(l) && k == null;
+        const cls =
+          k != null
+            ? `used c${k % 8}`
+            : gone
+              ? "gone"
+              : pend.has(l)
+                ? "sel"
+                : "";
         const fn =
-          side === "D"
-            ? `mxClickD(${i}, '${escapeHtml(l)}')`
-            : `mxClick(${i}, '${side}', '${escapeHtml(l)}', event)`;
-        return `<button type="button" class="mx-i ${cls}" title="${escapeHtml(l)}" onclick="${fn}">${escapeHtml(mxShort(l))}${k != null ? `<sup>${k + 1}</sup>` : ""}</button>`;
+          gone || side === "M"
+            ? ""
+            : side === "D"
+              ? `mxClickD(${i}, '${escapeHtml(l)}')`
+              : `mxClick(${i}, '${side}', '${escapeHtml(l)}', event)`;
+        return `<button type="button" class="mx-i ${cls}" title="${escapeHtml(l)}${gone ? " · sudah terpakai" : ""}" ${gone || side === "M" ? "disabled" : `onclick="${fn}"`}>${escapeHtml(mxShort(l))}${k != null ? `<sup>${k + 1}</sup>` : ""}</button>`;
       })
-      .join("") || `<small class="mx-none">kosong</small>`;
+      .join("") ||
+    `<small class="mx-none">${escapeHtml(note || "kosong")}</small>`;
   return `<div class="mx-col"><div class="mx-h">${title}<small>${sub}</small></div><div class="mx-list">${btn}${arr.length > MAX ? `<small class="mx-none">+${arr.length - MAX} lagi</small>` : ""}</div></div>`;
 }
 function mxHtml(i) {
@@ -20144,37 +20185,59 @@ function mxHtml(i) {
     h += `<div class="pz-note err"><i class="fa-solid fa-circle-xmark"></i> ${escapeHtml(m.err)}</div>`;
   const upNm = escapeHtml(p.from.name),
     dnNm = escapeHtml(p.to.name);
-  h += `<div class="mx-cols${q.D.length ? " three" : ""}">`;
-  if (!noL || q.loading)
-    h += mxColHtml(
-      i,
-      "L",
-      `Hulu · ${upNm}`,
-      `${fmtInt(q.L.length)} tersedia`,
-      q.L,
-      m,
-    );
+  const three = q.D.length || q.DA.length || q.mirror;
+  h += `<div class="mx-cols${three ? " three" : ""}">`;
+  const noteL = q.uload
+    ? "memuat hulu…"
+    : q.uerr
+      ? "gagal memuat hulu"
+      : q.cabs.length || q.LA.length
+        ? "semua core hulu terpakai"
+        : "belum ada core hulu: kabel hulu belum diterapkan / tidak ada";
+  h += mxColHtml(
+    i,
+    "L",
+    `Hulu · ${upNm}`,
+    `${fmtInt(q.L.length)} bebas`,
+    q.LA,
+    q.L,
+    m,
+    noteL,
+  );
   h += mxColHtml(
     i,
     "R",
     `Kabel · ${escapeHtml(p.cable.name)}`,
-    `${fmtInt(free)} bebas`,
+    `${fmtInt(free)} bebas dari ${fmtInt(q.RA.length)}`,
+    q.RA,
     q.R,
     m,
   );
-  if (q.D.length)
+  if (q.D.length || q.DA.length)
     h += mxColHtml(
       i,
       "D",
       `Hilir · ${dnNm}`,
       `${fmtInt(q.D.length)} port bebas`,
+      q.DA,
       q.D,
       m,
+    );
+  else if (q.mirror)
+    h += mxColHtml(
+      i,
+      "M",
+      `Hilir · ${dnNm}`,
+      "core masuk = core kabel",
+      q.RA,
+      q.R,
+      m,
+      "pilih core pada kolom kabel",
     );
   h += `</div>`;
   if (m.pairs.length)
     h += `<div class="mx-pairs">${m.pairs.map((x, k) => `<span class="mx-pair c${k % 8}">${k + 1}. ${x.u ? escapeHtml(mxShort(x.u)) + " → " : ""}${escapeHtml(mxShort(x.c))}${x.d ? " → " + escapeHtml(x.d) : ""}<button type="button" title="Hapus pasangan" onclick="mxDel(${i}, ${k})">&times;</button></span>`).join("")}</div>`;
-  h += `<div class="mx-hint">Klik ${noL ? "core kabel" : "hulu lalu core kabel"} untuk memasangkan${q.D.length ? ", lalu klik port hilir untuk menempelkannya ke pasangan" : ""}. Shift+klik = rentang (jumlah hulu dan core harus sama).</div></div>`;
+  h += `<div class="mx-hint">Klik ${noL ? "core kabel" : "hulu lalu core kabel"} untuk memasangkan${q.D.length ? ", lalu klik port hilir untuk menempelkannya ke pasangan" : q.mirror ? "; core yang masuk ke closure berikutnya sama dengan core kabel ini" : ""}. Abu-abu = sudah terpakai. Shift+klik = rentang (jumlah hulu dan core harus sama).</div></div>`;
   return h;
 }
 function pzNodeHtml(i) {

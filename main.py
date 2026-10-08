@@ -15127,7 +15127,7 @@ def topofix_node_ports(node_id: int, dir: str = "out"):
         if not n:
             raise HTTPException(status_code=404, detail="Aset tidak ditemukan")
         lab, free = _free_node_ports(cur, n, "in" if dir == "in" else "out")
-        return {"node": {"id": n["id"], "name": n["name"], "type": n["type"]}, "total": len(lab), "ports": free[:400]}
+        return {"node": {"id": n["id"], "name": n["name"], "type": n["type"]}, "total": len(lab), "ports": free[:400], "all": lab[:400]}
 
 
 @app.get("/api/topofix/upstream")
@@ -15140,7 +15140,7 @@ def topofix_upstream(node_id: int, exclude_cable: Optional[int] = None):
             raise HTTPException(status_code=404, detail="Aset tidak ditemukan")
         if (up["type"] or "").upper() not in JUNCTION_TYPES:
             lab, free = _free_node_ports(cur, up, "out")
-            return {"junction": False, "node": {"id": up["id"], "name": up["name"], "type": up["type"]}, "ready": [], "cables": [], "ports": free[:400]}
+            return {"junction": False, "node": {"id": up["id"], "name": up["name"], "type": up["type"]}, "ready": [], "cables": [], "ports": free[:400], "all": lab[:400]}
         ins, outs = _joint_dirs(cur, up["id"])
         order = {}
         cabs = []
