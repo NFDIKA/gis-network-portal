@@ -1867,7 +1867,7 @@ function renderSummaryModal(d) {
       const pct = (n) => (tot ? ((n / tot) * 100).toFixed(1) : 0);
       return `<button type="button" class="sum-card" onclick="openSummaryList({ type: '${escapeHtml(t)}' })">
       <div class="sum-card-top">
-        <span class="sum-ico" style="background:${meta.color}"><i class="fa-solid ${meta.icon}"></i></span>
+        <span class="sum-ico" style="background:${meta.color};${t === "SLACK" ? "color:#facc15" : ""}">${t === "INCIDENT" ? `<i class="fa-solid ${meta.icon}"></i>` : mapGlyph(t, 22)}</span>
         <div><div class="sum-count">${Number(tot)}</div><div class="sum-label">${escapeHtml(meta.label)}</div></div>
       </div>
       <div class="sum-bar" title="Active / Maintenance / Cut-Broken">${tot ? `<i class="ok" style="width:${pct(st.Active)}%"></i><i class="mt" style="width:${pct(st.Maintenance)}%"></i><i class="bad" style="width:${pct(st["Cut/Broken"])}%"></i>` : ""}</div>
@@ -2137,6 +2137,12 @@ function renderNodes(data) {
 
       markersMap[`node:${id}`] = marker;
       marker.on("click", () => {
+        if (OVLMAIN.click(marker)) {
+          try {
+            marker.closePopup();
+          } catch (_) {}
+          return;
+        }
         if (SORPICK.on) {
           try {
             marker.closePopup();
@@ -3004,7 +3010,16 @@ function ibuOpen() {
     `<label for="ibu-city">Kota</label><input id="ibu-city" type="text" maxlength="120" placeholder="(tidak diubah)" oninput="ibuSummary()">` +
     `<label for="ibu-inst">Pemasangan</label><select id="ibu-inst" onchange="ibuSummary()">${opt("", "(tidak diubah)")}${opt("Udara", "Udara")}${opt("Tanah", "Tanah")}</select>` +
     `<label for="ibu-folder">Folder</label><select id="ibu-folder" onchange="ibuSummary()">${opt("", "(tidak diubah)")}${FT.list.map((f) => opt(f.path, f.path)).join("")}</select>` +
-    `</div><div class="ibu-note">Pemasangan hanya berlaku untuk kabel. Cluster dan Area harus dari daftar Wilayah; bila hanya Area dipilih, Cluster mengikuti Area itu. Nama, koordinat, dan kapasitas tidak diubah di sini.</div>` +
+    (cables
+      ? `<label for="ibu-ctype">Jenis kabel</label><select id="ibu-ctype" onchange="ibuSummary()">${opt("", "(tidak diubah)")}${["Backbone", "Feeder", "Distribution", "Drop"].map((t) => opt(t, t === "Drop" ? "Drop (Dropcore)" : t)).join("")}</select>` +
+        `<label for="ibu-ccap">Kapasitas kabel</label><select id="ibu-ccap" onchange="ibuSummary()">${opt("", "(tidak diubah)")}${[1, 2, 4, 6, 8, 12, 24, 36, 48, 72, 96, 144, 288].map((c) => opt(c + "C", c + "C")).join("")}</select>` +
+        `<label for="ibu-fmode">Jenis serat</label><select id="ibu-fmode" onchange="ibuSummary()">${opt("", "(tidak diubah)")}${opt("SM", "Single Mode (SM)")}${opt("MM", "Multi Mode (MM)")}</select>`
+      : "") +
+    (nodes
+      ? `<label for="ibu-ntype">Jenis titik</label><select id="ibu-ntype" onchange="ibuSummary()">${opt("", "(tidak diubah)")}${["POP", "CLOSURE", "ODP", "HH", "TIANG", "SLACK", "PELANGGAN"].map((t) => opt(t, t)).join("")}</select>` +
+        `<label for="ibu-ncap">Kapasitas titik</label><input id="ibu-ncap" type="text" maxlength="60" placeholder="(tidak diubah) mis. 1 In - 8 Out" oninput="ibuSummary()">`
+      : "") +
+    `</div><div class="ibu-note">Kolom jenis/kapasitas kabel hanya berlaku untuk kabel, jenis/kapasitas titik hanya untuk titik, Pemasangan hanya untuk kabel. Cluster dan Area harus dari daftar Wilayah; bila hanya Area dipilih, Cluster mengikuti Area itu. Nama dan koordinat tidak diubah di sini. Mengubah jenis titik tidak mengubah sambungan yang sudah ada.</div>` +
     `<div id="ibu-sum" class="ibu-sum">Belum ada perubahan yang diisi.</div><div id="ibu-err" class="ibu-err" style="display:none"></div>` +
     `<div class="ibu-act"><button type="button" class="inv-bar-btn" onclick="ibuClose()">Batal</button>` +
     `<button type="button" id="ibu-go" class="inv-bar-btn primary" onclick="ibuGo()" disabled><i class="fa-solid fa-check"></i> Terapkan</button></div></div></div>`;
@@ -3042,6 +3057,11 @@ function ibuValues() {
     city: g("ibu-city"),
     installation: g("ibu-inst"),
     folder: g("ibu-folder"),
+    cable_type: g("ibu-ctype"),
+    cable_capacity: g("ibu-ccap"),
+    fiber_mode: g("ibu-fmode"),
+    node_type: g("ibu-ntype"),
+    node_capacity: g("ibu-ncap"),
   };
 }
 function ibuSummary() {
@@ -3053,6 +3073,11 @@ function ibuSummary() {
     city: "Kota",
     installation: "Pemasangan",
     folder: "Folder",
+    cable_type: "Jenis kabel",
+    cable_capacity: "Kapasitas kabel",
+    fiber_mode: "Jenis serat",
+    node_type: "Jenis titik",
+    node_capacity: "Kapasitas titik",
   };
   const parts = Object.keys(lab)
     .filter((k) => v[k])
@@ -3083,7 +3108,8 @@ async function ibuGo() {
   const failed = [];
   let updated = 0,
     ignored = 0,
-    done = 0;
+    done = 0,
+    na = 0;
   try {
     for (let i = 0; i < items.length; i += 100) {
       const chunk = items.slice(i, i + 100);
@@ -3094,6 +3120,7 @@ async function ibuGo() {
       const r = await apiRequest("/api/assets/bulk-update", "POST", body);
       updated += r.updated || 0;
       ignored += r.installation_ignored_nodes || 0;
+      na += r.not_applicable || 0;
       (r.failed || []).forEach((f) => failed.push(f));
       done += chunk.length;
       const sum = document.getElementById("ibu-sum");
@@ -3118,7 +3145,7 @@ async function ibuGo() {
   if (!failed.length) {
     ibuClose();
     invToast(
-      `${updated} aset diubah${ignored ? ` (Pemasangan diabaikan untuk ${ignored} titik)` : ""}`,
+      `${updated} aset diubah${ignored ? ` (Pemasangan diabaikan untuk ${ignored} titik)` : ""}${na ? ` — ${na} aset tidak terpengaruh (kolom tidak berlaku untuk jenis aset itu)` : ""}`,
     );
   } else {
     if (errBox) {
@@ -3228,10 +3255,11 @@ function invRowClick(e, tr) {
         : true;
     invSetRange(invLastIdx != null ? invLastIdx : idx, idx, on);
     invLastIdx = idx;
-  } else if (e.ctrlKey || e.metaKey) {
+  } else {
+    // klik biasa = pilih/batal pilih satu baris (Ctrl/Cmd sama; Shift = rentang)
     invPutSel(invRows[idx], !invSel.has(invItemKey(invRows[idx])));
     invLastIdx = idx;
-  } else return;
+  }
   invRefreshSel();
 }
 function invToggleAll(el) {
@@ -3284,6 +3312,7 @@ function invRefreshSel() {
     `<span class="inv-bar-tip">Shift+klik = rentang &middot; Ctrl+klik = tambah satu</span>` +
     `<span class="inv-bar-act">${more}<button type="button" class="inv-bar-btn" onclick="invClearSel()">Batal pilihan</button>` +
     `${can("asset.write") ? `<button type="button" class="inv-bar-btn primary" onclick="ibuOpen()"><i class="fa-solid fa-pen-to-square"></i> Ubah massal</button>` : ""}` +
+    `${can("asset.write") ? `<button type="button" class="inv-bar-btn" onclick="invAutoName()"><i class="fa-solid fa-wand-magic-sparkles"></i> Nama otomatis</button>` : ""}` +
     `${can("asset.write") ? `<button type="button" class="inv-bar-btn" onclick="ftMoveDialog()"><i class="fa-solid fa-folder-tree"></i> Pindahkan ke folder</button>` : ""}` +
     `${can("asset.delete") ? `<button type="button" class="inv-bar-btn danger" onclick="invBulkDelete()"><i class="fa-solid fa-trash"></i> Hapus ${n} aset</button>` : ""}</span>`;
 }
@@ -3956,15 +3985,6 @@ function assetExtraPayload(type, creating) {
       if (ex.bandwidth_mbps == null || ex.bandwidth_mbps <= 0)
         return { error: "Bandwidth harus berupa angka lebih dari 0." };
     }
-    if (creating) {
-      if (!ex.service) return { error: "Layanan pelanggan wajib diisi." };
-      if (!ex.link_type)
-        return { error: "Jenis layanan (GPON / PTP) wajib dipilih." };
-      if (ex.bandwidth_mbps == null)
-        return { error: "Bandwidth pelanggan wajib diisi." };
-      if (!ex.device_sn)
-        return { error: "SN perangkat (ONT / CPE) wajib diisi." };
-    }
   }
   if (t === "POP") {
     if (v("asset-trunk")) {
@@ -4166,7 +4186,13 @@ function saveAssetData(e) {
   if (categoryType === "NODE" && type === "POP") otbSyncCapacity();
   const capacity = document.getElementById("asset-capacity").value;
 
-  if (!name) return alert("Nama aset wajib diisi.");
+  const autoOk =
+    !document.getElementById("asset-edit-id").value &&
+    !(categoryType === "NODE" && (type === "POP" || type === "PELANGGAN"));
+  if (!name && !autoOk)
+    return alert(
+      "Nama aset wajib diisi (POP dan Pelanggan diberi nama manual).",
+    );
   if (!cluster || !area)
     return alert("Pilih Cluster dan Area dari daftar Wilayah terlebih dulu.");
   if (city === GEOCODE_PENDING_TEXT) {
@@ -9417,10 +9443,14 @@ function applyPermissions() {
   $id("user-box-role").textContent = u.role_label || u.role;
   $id("nav-audit").style.display = can("audit.view") ? "" : "none";
   $id("nav-users").style.display = can("user.manage") ? "" : "none";
+  if ($id("nav-naming"))
+    $id("nav-naming").style.display = can("asset.write") ? "" : "none";
   $id("nav-wilayah").style.display = ""; // semua peran boleh melihat daftar Wilayah; tombol ubah hanya untuk admin
   $id("nav-plan").style.display = can("plan.write") ? "" : "none";
   if ($id("nav-covbulk"))
     $id("nav-covbulk").style.display = can("plan.write") ? "" : "none";
+  if ($id("nav-topofix"))
+    $id("nav-topofix").style.display = can("asset.write") ? "" : "none";
   $id("noc-hide-actions").style.display = can("incident.write") ? "" : "none";
   configureDrawControl();
   const cb = $id("connect-btn");
@@ -12306,6 +12336,776 @@ function downloadTemplate(kind, format) {
     setDataMsg("imp-msg", "Gagal mengunduh template: " + err.message, "err"),
   );
 }
+// ===== RAPIKAN TOPOLOGI (hasil impor KMZ): kapasitas dari nama kabel, pecah kabel massal, ujung kabel yatim =====
+const TF = {
+  tab: "puzzle",
+  busy: false,
+  data: {
+    puzzle: null,
+    cap: null,
+    split: null,
+    ends: null,
+    conn: null,
+    cust: null,
+    comp: null,
+  },
+  sel: {
+    puzzle: new Set(),
+    cap: new Set(),
+    split: new Set(),
+    ends: new Set(),
+    conn: new Set(),
+    cust: new Set(),
+    comp: new Set(),
+  },
+  chosen: {},
+  q: "",
+  max: { split: 15, ends: 100, cust: 500, comp: 500 },
+  opt: { orient: true, trunk: false, connect: true },
+  batches: [],
+  lastBatch: null,
+  types: {
+    split: ["CLOSURE", "ODP", "POP"],
+    ends: ["CLOSURE", "ODP", "POP", "SLACK", "PELANGGAN"],
+  },
+};
+TF.cores = {}; // cable_id -> { free: [label], chosen: [label], open: bool }
+// hanya Rangkai (puzzle) dan Topologi yang tampil; tab perapian massal lama disembunyikan (kode & endpoint tetap ada)
+const TF_TABS = [
+  ["puzzle", "Rangkai (puzzle)"],
+  ["topo", "Topologi"],
+];
+const TF_PATH = {
+  cap: "capacity",
+  split: "split",
+  ends: "ends",
+  conn: "connect",
+  cust: "customers",
+  comp: "components",
+};
+function tfSelectable(tab, x) {
+  return tab === "cap"
+    ? !x.blocked
+    : tab === "conn"
+      ? x.state === "siap"
+      : tab === "comp"
+        ? !!x.from_id
+        : true;
+}
+function openTopofixModal() {
+  if (!can("asset.write")) return;
+  $id("modal-topofix").style.display = "flex";
+  tfRenderTabs();
+  tfScan(TF.tab);
+}
+function closeTopofixModal() {
+  if (TF.busy) return;
+  $id("modal-topofix").style.display = "none";
+}
+function tfSetMsg(text, cls) {
+  setDataMsg("tf-msg", text, cls);
+}
+function tfTab(t) {
+  if (TF.busy) return;
+  TF.tab = t;
+  TF.q = "";
+  if ($id("tf-body")) $id("tf-body").innerHTML = ""; // buang input tab sebelumnya agar tidak terbaca sebagai parameter tab ini
+  tfRenderTabs();
+  if (t !== "puzzle" && t !== "topo" && !TF.data[t]) tfScan(t);
+  else tfRenderBody();
+}
+function tfRenderTabs() {
+  $id("tf-tabs").innerHTML = TF_TABS.map(([k, l]) => {
+    const d = TF.data[k];
+    return `<button type="button" class="tf-tab ${k === TF.tab ? "on" : ""}" onclick="tfTab('${k}')">${escapeHtml(l)}${d ? ` <span class="tf-cnt">${d.rows.length}</span>` : ""}</button>`;
+  }).join("");
+}
+function tfParams() {
+  const num = (id, dflt) => {
+    const e = $id(id);
+    const n = e ? Number(e.value) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : dflt;
+  };
+  if (TF.tab === "split" || TF.tab === "ends") {
+    const k = TF.tab,
+      all =
+        k === "split"
+          ? ["CLOSURE", "ODP", "POP"]
+          : ["CLOSURE", "ODP", "POP", "SLACK", "PELANGGAN"];
+    if ($id("tf-max"))
+      TF.max[k] = Math.min(k === "split" ? 50 : 300, num("tf-max", TF.max[k]));
+    if ($id("tf-t-" + all[0]))
+      TF.types[k] = all.filter((t) => {
+        const e = $id("tf-t-" + t);
+        return e && e.checked;
+      });
+    return { max_m: TF.max[k], types: TF.types[k].length ? TF.types[k] : all };
+  }
+  if (TF.tab === "conn") {
+    if ($id("tf-o-orient")) TF.opt.orient = $id("tf-o-orient").checked;
+    if ($id("tf-o-trunk")) TF.opt.trunk = $id("tf-o-trunk").checked;
+    return { trunk: TF.opt.trunk };
+  }
+  if (TF.tab === "cust" || TF.tab === "comp") {
+    const k = TF.tab;
+    if ($id("tf-max"))
+      TF.max[k] = Math.min(3000, Math.max(20, num("tf-max", TF.max[k])));
+    if (k === "cust" && $id("tf-o-connect"))
+      TF.opt.connect = $id("tf-o-connect").checked;
+    return { max_m: TF.max[k] };
+  }
+  return {};
+}
+function tfScan(tab) {
+  if (tab === "puzzle" || tab === "topo") {
+    tfRenderTabs();
+    tfRenderBody();
+    return Promise.resolve();
+  }
+  if (TF.busy) return Promise.resolve();
+  TF.busy = true;
+  tfSetMsg("Memindai data…", "");
+  const path = TF_PATH[tab];
+  return apiRequest(
+    `/api/topofix/${path}/preview`,
+    "POST",
+    tab === TF.tab ? tfParams() : {},
+  )
+    .then(async (r) => {
+      TF.data[tab] = r;
+      TF.sel[tab] = new Set();
+      r.rows.forEach((x) => {
+        if (tab === "cap" ? !x.blocked : x.checked)
+          TF.sel[tab].add(tfKey(tab, x));
+      });
+      TF.chosen = tab === "ends" || tab === "cust" ? {} : TF.chosen;
+      if (tab === "conn") {
+        TF.cores = {};
+        try {
+          TF.batches =
+            (await apiRequest("/api/topofix/connect/batches")).batches || [];
+        } catch (_) {
+          TF.batches = [];
+        }
+      }
+      tfSetMsg(
+        r.truncated
+          ? `Hanya ${r.rows.length} baris pertama yang ditampilkan.`
+          : "",
+        "",
+      );
+    })
+    .catch((err) => {
+      TF.data[tab] = { rows: [] };
+      tfSetMsg("Gagal memindai: " + err.message, "err");
+    })
+    .finally(() => {
+      TF.busy = false;
+      tfRenderTabs();
+      tfRenderBody();
+    });
+}
+function tfKey(tab, x) {
+  return tab === "cap"
+    ? String(x.id)
+    : tab === "split"
+      ? `${x.cable_id}:${x.node_id}`
+      : tab === "conn"
+        ? String(x.cable_id)
+        : tab === "cust"
+          ? String(x.customer_id)
+          : tab === "comp"
+            ? `${x.component}:${x.from_id || 0}:${x.to_id || 0}`
+            : `${x.cable_id}:${x.end}`;
+}
+function tfRows() {
+  const d = TF.data[TF.tab];
+  if (!d) return [];
+  const q = (TF.q || "").trim().toLowerCase();
+  if (!q) return d.rows;
+  return d.rows.filter((x) =>
+    JSON.stringify([
+      x.name,
+      x.cable_name,
+      x.node_name,
+      x.node_type,
+      x.cable_type,
+      x.up_name,
+      x.down_name,
+      x.customer_name,
+      x.odp_name,
+      x.sample,
+      x.from_name,
+      x.to_name,
+    ])
+      .toLowerCase()
+      .includes(q),
+  );
+}
+function tfToggle(key, on) {
+  const s = TF.sel[TF.tab];
+  if (on) s.add(key);
+  else s.delete(key);
+  tfRenderCount();
+}
+function tfAll(on) {
+  const s = TF.sel[TF.tab];
+  tfRows().forEach((x) => {
+    if (!tfSelectable(TF.tab, x)) return;
+    const k = tfKey(TF.tab, x);
+    if (on) s.add(k);
+    else s.delete(k);
+  });
+  tfRenderBody();
+}
+function tfRenderCount() {
+  const n = TF.sel[TF.tab].size,
+    go = $id("tf-go");
+  if (go) {
+    go.disabled = !n || TF.busy;
+    const sp = go.querySelector ? go.querySelector("span") : null;
+    if (sp) sp.textContent = `Terapkan ${n} terpilih`;
+  }
+}
+function tfChoose(key, nodeId) {
+  TF.chosen[key] = Number(nodeId);
+}
+function tfRenderBody() {
+  const el = $id("tf-body");
+  if (!el) return;
+  const own = TF.tab === "puzzle" || TF.tab === "topo";
+  const goBtn = $id("tf-go");
+  if (goBtn) goBtn.style.display = own ? "none" : "";
+  const pzBox = $id("tf-puzzle");
+  if (pzBox) pzBox.style.display = TF.tab === "puzzle" ? "" : "none";
+  const tpBox = $id("tf-topo");
+  if (tpBox) tpBox.style.display = TF.tab === "topo" ? "" : "none";
+  el.style.display = own ? "none" : "";
+  if (TF.tab === "puzzle") {
+    pzOpen();
+    return;
+  }
+  if (TF.tab === "topo") {
+    topoOpen();
+    return;
+  }
+  const t = TF.tab,
+    d = TF.data[t];
+  const intro = {
+    cap: "Nama kabel memuat petunjuk: KU12 = kabel udara 12 core, KT24 = kabel tanah 24 core, 2C- = 2 core. Pilih kolom yang diterapkan, lalu centang baris.",
+    split:
+      "Closure/ODP/POP yang berada tepat di atas jalur kabel tetapi bukan ujungnya. Kabel dipecah di titik itu agar rantai POP → closure → ODP tersambung. Slack tidak dipecah.",
+    ends: "Kabel yang salah satu ujungnya belum tersambung ke aset. Usulan adalah aset terdekat dalam jarak maksimum; ujung kabel tidak dipindahkan, hanya dihubungkan. Untuk pengecualian, gunakan 'Seret di peta'.",
+    conn: "Menyambung core massal dari POP: tiap kabel ke ODP/pelanggan disambung (ODP 1 core; pelanggan 1 core dari ODP atau 2 core dedicated dari closure) dan umpan core ke hulu sampai POP dialokasikan otomatis. Urut dari yang terdekat ke POP. Satu batch bisa dibatalkan seluruhnya.",
+    cust: "Pelanggan yang belum punya kabel dipasangkan ke ODP: nama yang mirip, lalu tag PON sama ([olt@1/1/1] dengan [1/1/1]), lalu terdekat, hanya ODP yang masih punya port OUT. Menerapkan membuat kabel Drop 2C (ODP → pelanggan) dan, bila dipilih, menyambung 1 core.",
+    comp: "Kelompok aset (closure/ODP/pelanggan) yang belum terhubung ke POP, dengan aset jaringan POP terdekat. 'Hubungkan' membuat kabel penghubung garis lurus bernama LINK-… (ubah jalurnya di peta bila perlu). Tidak ada yang dicentang otomatis: periksa tiap baris.",
+  }[t];
+  let opts = "";
+  if (t === "cap")
+    opts = `<label class="cb-check"><input type="checkbox" id="tf-o-cap" checked> Kapasitas</label><label class="cb-check"><input type="checkbox" id="tf-o-type"> Jenis kabel</label><label class="cb-check"><input type="checkbox" id="tf-o-inst" checked> Pemasangan</label>`;
+  if (t === "split")
+    opts =
+      `<label>Jarak maks (m) <input type="number" id="tf-max" min="1" max="50" step="1" value="${TF.max.split}" style="width:70px"></label>` +
+      ["CLOSURE", "ODP", "POP"]
+        .map(
+          (x) =>
+            `<label class="cb-check"><input type="checkbox" id="tf-t-${x}" ${TF.types.split.includes(x) ? "checked" : ""}> ${x}</label>`,
+        )
+        .join("") +
+      `<button type="button" class="data-ghost" onclick="tfScan('split')"><i class="fa-solid fa-rotate"></i> Pindai ulang</button>`;
+  if (t === "ends")
+    opts =
+      `<label>Jarak maks (m) <input type="number" id="tf-max" min="5" max="300" step="5" value="${TF.max.ends}" style="width:70px"></label>` +
+      ["CLOSURE", "ODP", "POP", "SLACK", "PELANGGAN"]
+        .map(
+          (x) =>
+            `<label class="cb-check"><input type="checkbox" id="tf-t-${x}" ${TF.types.ends.includes(x) ? "checked" : ""}> ${x}</label>`,
+        )
+        .join("") +
+      `<button type="button" class="data-ghost" onclick="tfScan('ends')"><i class="fa-solid fa-rotate"></i> Pindai ulang</button>`;
+  const mx = (k, lo, hi) =>
+    `<label>Jarak maks (m) <input type="number" id="tf-max" min="${lo}" max="${hi}" step="10" value="${TF.max[k]}" style="width:80px"></label>`;
+  if (t === "ends")
+    opts += `<button type="button" class="data-ghost" onclick="tfStartDrag()"><i class="fa-solid fa-hand"></i> Seret di peta</button>`;
+  if (t === "conn")
+    opts =
+      `<label class="cb-check"><input type="checkbox" id="tf-o-orient" ${TF.opt.orient ? "checked" : ""}> Samakan arah kabel hulu→hilir lebih dulu${d && d.orient_needed ? ` (${d.orient_needed} kabel akan dibalik)` : ""}</label>` +
+      `<label class="cb-check"><input type="checkbox" id="tf-o-trunk" ${TF.opt.trunk ? "checked" : ""}> Sertakan kabel antar closure/POP (sambung penuh)</label><button type="button" class="data-ghost" onclick="tfScan('conn')"><i class="fa-solid fa-rotate"></i> Pindai ulang</button>`;
+  if (t === "cust")
+    opts =
+      mx("cust", 20, 3000) +
+      `<label class="cb-check"><input type="checkbox" id="tf-o-connect" ${TF.opt.connect ? "checked" : ""}> Sambungkan 1 core (ODP OUT → pelanggan)</label><button type="button" class="data-ghost" onclick="tfScan('cust')"><i class="fa-solid fa-rotate"></i> Pindai ulang</button>`;
+  if (t === "comp")
+    opts =
+      mx("comp", 20, 3000) +
+      `<button type="button" class="data-ghost" onclick="tfScan('comp')"><i class="fa-solid fa-rotate"></i> Pindai ulang</button>`;
+  const rows = tfRows();
+  let head = "",
+    trs = "";
+  const chk = (k, x) =>
+    `<input type="checkbox" ${tfSelectable(t, x) ? "" : "disabled"} ${TF.sel[t].has(k) ? "checked" : ""} onchange="tfToggle('${k}', this.checked)">`;
+  if (t === "conn") {
+    head = `<th></th><th>Kabel</th><th>Hulu → Hilir</th><th class="num">Core</th><th>Status</th>`;
+    trs = rows
+      .map((x) => {
+        const k = tfKey(t, x);
+        return (
+          `<tr class="${x.state === "terpisah" ? "tf-bad" : ""}"><td>${chk(k, x)}</td><td>${escapeHtml(x.cable_name)}<br><small>${escapeHtml(x.cable_type || "")} ${escapeHtml(x.capacity || "")}</small></td>` +
+          `<td>${escapeHtml(x.up_name)} <small>${escapeHtml(x.up_type)}</small> &rarr; ${escapeHtml(x.down_name)} <small>${escapeHtml(x.down_type)}</small></td><td class="num">${tfCoreCell(x)}</td>` +
+          `<td>${x.state === "siap" ? "siap" : `<span class="tf-ket">${escapeHtml(x.state)}</span><div class="adm-hint">${escapeHtml(x.reason || "")}</div>`}</td></tr>`
+        );
+      })
+      .join("");
+  } else if (t === "cust") {
+    head = `<th></th><th>Pelanggan</th><th>ODP usulan</th><th class="num">Jarak (m)</th><th>Dasar</th><th class="num">Port kosong</th>`;
+    trs = rows
+      .map((x) => {
+        const k = tfKey(t, x);
+        const sel = (x.alternatives || []).length
+          ? `<select onchange="tfChoose('${k}', this.value)" aria-label="ODP tujuan">` +
+            [
+              {
+                odp_id: x.odp_id,
+                odp_name: x.odp_name,
+                distance_m: x.distance_m,
+              },
+              ...x.alternatives,
+            ]
+              .map(
+                (a) =>
+                  `<option value="${a.odp_id}">${escapeHtml(a.odp_name)} (${a.distance_m} m)</option>`,
+              )
+              .join("") +
+            `</select>`
+          : `<b>${escapeHtml(x.odp_name)}</b>`;
+        return `<tr><td>${chk(k, x)}</td><td>${escapeHtml(x.customer_name)}</td><td>${sel}${x.odp_reachable ? "" : `<div class="tf-ket">ODP ini belum terhubung ke POP</div>`}</td><td class="num">${x.distance_m}</td><td>${escapeHtml(x.basis)}</td><td class="num">${x.odp_free}</td></tr>`;
+      })
+      .join("");
+  } else if (t === "comp") {
+    head = `<th></th><th>Kelompok terpisah</th><th class="num">Isi</th><th>Hubungkan ke jaringan POP</th><th class="num">Jarak (m)</th><th></th>`;
+    trs = rows
+      .map((x) => {
+        const k = tfKey(t, x);
+        return (
+          `<tr><td>${chk(k, x)}</td><td>${escapeHtml(x.sample)}<br><small>${x.size} aset</small></td><td class="num"><small>${x.closures} closure, ${x.odps} ODP, ${x.customers} pelanggan</small></td>` +
+          `<td>${x.from_id ? `${escapeHtml(x.from_name)} <small>${escapeHtml(x.from_type)}</small> &rarr; ${escapeHtml(x.to_name)} <small>${escapeHtml(x.to_type)}</small>` : `<span class="tf-ket">tidak ada aset jaringan dalam ${TF.max.comp} m</span>`}</td>` +
+          `<td class="num">${x.distance_m == null ? "-" : x.distance_m}</td><td><button type="button" class="data-ghost" onclick="tfFly(${Number(x.lat)}, ${Number(x.lng)})">Lihat</button></td></tr>`
+        );
+      })
+      .join("");
+  } else if (t === "cap") {
+    head = `<th></th><th>Kabel</th><th>Jenis</th><th>Kapasitas</th><th>Pemasangan</th>`;
+    trs = rows
+      .map((x) => {
+        const k = tfKey(t, x);
+        const ch = (a, b) =>
+          b
+            ? `${escapeHtml(a || "-")} &rarr; <b>${escapeHtml(b)}</b>`
+            : escapeHtml(a || "-");
+        return (
+          `<tr class="${x.blocked ? "tf-bad" : ""}"><td><input type="checkbox" ${x.blocked ? "disabled" : ""} ${TF.sel[t].has(k) ? "checked" : ""} onchange="tfToggle('${k}', this.checked)" aria-label="Pilih ${escapeHtml(x.name)}"></td>` +
+          `<td>${escapeHtml(x.name)}${x.blocked ? `<div class="adm-hint">${escapeHtml(x.blocked)}</div>` : ""}</td><td>${ch(x.type, x.new_type)}</td><td>${ch(x.capacity, x.new_capacity)}</td><td>${ch(x.installation, x.new_installation)}</td></tr>`
+        );
+      })
+      .join("");
+  } else if (t === "split") {
+    head = `<th></th><th>Aset</th><th>Kabel</th><th class="num">Jarak ke kabel (m)</th><th class="num">Posisi (m)</th><th>Catatan</th>`;
+    trs = rows
+      .map((x) => {
+        const k = tfKey(t, x);
+        return (
+          `<tr><td><input type="checkbox" ${TF.sel[t].has(k) ? "checked" : ""} onchange="tfToggle('${k}', this.checked)" aria-label="Pilih ${escapeHtml(x.node_name)}"></td>` +
+          `<td><b>${escapeHtml(x.node_name)}</b><br><small>${escapeHtml(x.node_type)}</small></td><td>${escapeHtml(x.cable_name)}<br><small>${escapeHtml(x.cable_type || "")} ${escapeHtml(x.capacity || "")}</small></td>` +
+          `<td class="num">${x.offset_m}</td><td class="num">${fmtInt(x.along_m)} / ${fmtInt(x.total_m)}</td><td class="tf-ket">${(x.warn || []).map((w) => escapeHtml(w)).join("; ")}</td></tr>`
+        );
+      })
+      .join("");
+  } else {
+    head = `<th></th><th>Kabel</th><th>Ujung</th><th>Hubungkan ke</th><th class="num">Jarak (m)</th>`;
+    trs = rows
+      .map((x) => {
+        const k = tfKey(t, x);
+        const alts = (x.alternatives || []).length
+          ? `<select onchange="tfChoose('${k}', this.value)" aria-label="Aset tujuan">` +
+            [
+              {
+                node_id: x.node_id,
+                node_name: x.node_name,
+                node_type: x.node_type,
+                distance_m: x.distance_m,
+              },
+              ...x.alternatives,
+            ]
+              .map(
+                (a) =>
+                  `<option value="${a.node_id}">${escapeHtml(a.node_name)} (${escapeHtml(a.node_type)}, ${a.distance_m} m)</option>`,
+              )
+              .join("") +
+            `</select>`
+          : `<b>${escapeHtml(x.node_name)}</b> <small>${escapeHtml(x.node_type)}</small>`;
+        return (
+          `<tr><td><input type="checkbox" ${TF.sel[t].has(k) ? "checked" : ""} onchange="tfToggle('${k}', this.checked)" aria-label="Pilih ${escapeHtml(x.cable_name)}"></td>` +
+          `<td>${escapeHtml(x.cable_name)}<br><small>${escapeHtml(x.cable_type || "")}</small></td><td>${x.end === "from" ? "Asal" : "Tujuan"}</td><td>${alts}</td><td class="num">${x.distance_m}</td></tr>`
+        );
+      })
+      .join("");
+  }
+  let extra = "";
+  if (t === "conn" && d) {
+    const sm = d.summary || {};
+    extra += `<div class="adm-hint">Siap: ${sm.siap || 0}, sudah tersambung: ${sm.sudah || 0}, terpisah dari POP: ${sm.terpisah || 0}.${d.open_ends_cables ? ` ${d.open_ends_cables} kabel masih punya ujung tanpa aset (selesaikan di tab Ujung kabel yatim).` : ""}</div>`;
+    if (TF.batches.length)
+      extra +=
+        `<div class="tf-batches"><b>Batch sambung massal</b>: ` +
+        TF.batches
+          .slice(0, 6)
+          .map(
+            (b) =>
+              `${escapeHtml(b.batch)} (${b.links} sambungan) <button type="button" class="data-ghost" onclick="tfUndoBatch('${escapeHtml(b.batch)}')">Batalkan</button>`,
+          )
+          .join(" &middot; ") +
+        `</div>`;
+  }
+  if (t === "cust" && d && d.unmatched_total)
+    extra += `<div class="adm-hint">${d.unmatched_total} pelanggan tidak punya ODP dengan port kosong dalam ${TF.max.cust} m: ${(
+      d.unmatched || []
+    )
+      .slice(0, 6)
+      .map((u) => escapeHtml(u.customer_name))
+      .join(", ")}${d.unmatched_total > 6 ? ", …" : ""}</div>`;
+  if (t === "comp" && d)
+    extra += `<div class="adm-hint">Terhubung ke POP saat ini: ${d.reachable.CLOSURE} closure, ${d.reachable.ODP} ODP, ${d.reachable.PELANGGAN} pelanggan. ${d.unmatched || 0} kelompok tidak punya pasangan dalam jarak ini.</div>`;
+  const un =
+    extra +
+    (t === "ends" && d && d.unmatched_total
+      ? `<div class="adm-hint">${d.unmatched_total} ujung kabel tidak punya aset dalam jarak ini (naikkan jarak maksimum atau hubungkan manual): ${(
+          d.unmatched || []
+        )
+          .slice(0, 8)
+          .map(
+            (u) =>
+              escapeHtml(u.cable_name) +
+              " (" +
+              (u.end === "from" ? "asal" : "tujuan") +
+              ")",
+          )
+          .join(", ")}${d.unmatched_total > 8 ? ", …" : ""}</div>`
+      : "");
+  el.innerHTML =
+    `<p class="data-note">${escapeHtml(intro)}</p><div class="tf-tools tf-opts">${opts}</div>` +
+    `<div class="tf-tools"><button type="button" class="data-ghost" onclick="tfAll(true)">Pilih semua</button><button type="button" class="data-ghost" onclick="tfAll(false)">Kosongkan</button>` +
+    `<input type="search" id="tf-q" placeholder="Cari nama" value="${escapeHtml(TF.q)}" oninput="TF.q = this.value; tfRenderBody(); const q = $id('tf-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); }" autocomplete="off"><span class="adm-hint">${rows.length} baris &middot; terpilih ${TF.sel[t].size}</span></div>` +
+    (rows.length
+      ? `<div class="tf-scroll"><table class="adm-table tf-table"><thead><tr>${head}</tr></thead><tbody>${trs}</tbody></table></div>`
+      : `<div class="adm-hint">${d ? "Tidak ada temuan. Data sudah rapi untuk bagian ini." : "Memindai…"}</div>`) +
+    un;
+  tfRenderCount();
+}
+async function tfGo() {
+  if (TF.busy) return;
+  const t = TF.tab,
+    d = TF.data[t];
+  const keys = d
+    ? d.rows
+        .filter((x) => TF.sel[t].has(tfKey(t, x)) && tfSelectable(t, x))
+        .map((x) => tfKey(t, x))
+    : [];
+  if (!d || !keys.length) return;
+  if (TF.tab === "conn" || TF.tab === "cust" || TF.tab === "comp") tfParams();
+  if (
+    !confirm(
+      `Terapkan perubahan pada ${keys.length} baris sekarang? Perubahan tercatat di riwayat.`,
+    )
+  )
+    return;
+  TF.busy = true;
+  const go = $id("tf-go");
+  if (go) go.disabled = true;
+  const byKey = new Map(d.rows.map((x) => [tfKey(t, x), x]));
+  let ok = 0,
+    links = 0,
+    flipped = 0;
+  const failed = [],
+    infos = [];
+  const batch = "B" + Date.now().toString(36);
+  try {
+    const par = { max_m: TF.max[t] || 15 };
+    for (let i = 0; i < keys.length; i += 100) {
+      const chunk = keys
+        .slice(i, i + 100)
+        .map((k) => byKey.get(k))
+        .filter(Boolean);
+      let r;
+      if (t === "cap")
+        r = await apiRequest("/api/topofix/capacity/apply", "POST", {
+          ids: chunk.map((x) => x.id),
+          capacity: !$id("tf-o-cap") || $id("tf-o-cap").checked,
+          type: !!($id("tf-o-type") && $id("tf-o-type").checked),
+          installation: !$id("tf-o-inst") || $id("tf-o-inst").checked,
+        });
+      else if (t === "split")
+        r = await apiRequest("/api/topofix/split/apply", "POST", {
+          pairs: chunk.map((x) => ({
+            node_id: x.node_id,
+            cable_id: x.cable_id,
+          })),
+          max_m: Math.max(par.max_m || 15, 15),
+        });
+      else if (t === "conn")
+        r = await apiRequest("/api/topofix/connect/apply", "POST", {
+          items: chunk.map((x) => {
+            const cs = TF.cores[x.cable_id];
+            const mp = coreMapPayload("tf:" + x.cable_id);
+            const vc = mp
+              ? mp.via
+              : cs && cs.chosen && cs.chosen.length
+                ? cs.chosen
+                : null;
+            return {
+              cable_id: x.cable_id,
+              cores: vc ? vc.length : x.cores || null,
+              full: !vc && !!x.full,
+              via_cores: vc,
+              ...(mp
+                ? { from_cores: mp.from, upstream_cable_id: mp.upstream }
+                : {}),
+            };
+          }),
+          batch,
+          trunk: TF.opt.trunk,
+          orient: TF.opt.orient,
+        });
+      else if (t === "cust")
+        r = await apiRequest("/api/topofix/customers/apply", "POST", {
+          items: chunk.map((x) => ({
+            customer_id: x.customer_id,
+            odp_id: TF.chosen[tfKey(t, x)] || x.odp_id,
+          })),
+          max_m: TF.max.cust,
+          connect: TF.opt.connect,
+        });
+      else if (t === "comp")
+        r = await apiRequest("/api/topofix/components/apply", "POST", {
+          items: chunk
+            .filter((x) => x.from_id)
+            .map((x) => ({ from_id: x.from_id, to_id: x.to_id })),
+        });
+      else
+        r = await apiRequest("/api/topofix/ends/apply", "POST", {
+          items: chunk.map((x) => ({
+            cable_id: x.cable_id,
+            end: x.end,
+            node_id: TF.chosen[tfKey(t, x)] || x.node_id,
+          })),
+          max_m: Math.max(par.max_m || 100, 100),
+        });
+      ok +=
+        t === "split"
+          ? r.nodes || 0
+          : t === "conn"
+            ? r.connected || 0
+            : t === "cust" || t === "comp"
+              ? r.created || 0
+              : r.updated || 0;
+      links += r.links || 0;
+      flipped += r.flipped || 0;
+      (r.notes || []).forEach((n) => infos.push(n));
+      (r.failed || []).forEach((f) => failed.push(f));
+      tfSetMsg(
+        `Memproses ${Math.min(i + 100, keys.length)} / ${keys.length}…`,
+        "",
+      );
+    }
+  } catch (err) {
+    failed.push({ reason: (err && err.message) || String(err) });
+  }
+  TF.busy = false;
+  TF.data = {
+    cap: null,
+    split: null,
+    ends: null,
+    conn: null,
+    cust: null,
+    comp: null,
+  };
+  if (t === "conn" && ok) TF.lastBatch = batch;
+  await ftAfterChange();
+  await tfScan(t);
+  const nm = (f) =>
+    f.node_name ||
+    f.name ||
+    (f.customer_id
+      ? "pelanggan #" + f.customer_id
+      : f.cable_id
+        ? "kabel #" + f.cable_id
+        : "");
+  const extraTxt =
+    (t === "conn"
+      ? ` (${links} sambungan${flipped ? `, ${flipped} kabel dibalik arahnya` : ""}; batch ${batch})`
+      : "") +
+    (infos.length
+      ? `. Catatan: ${infos
+          .slice(0, 3)
+          .map((n) => (n.name || "") + " " + n.reason)
+          .join(" | ")}`
+      : "");
+  tfSetMsg(
+    `${ok} berhasil${extraTxt}${
+      failed.length
+        ? `, ${failed.length} dilewati: ` +
+          failed
+            .slice(0, 6)
+            .map((f) => `${nm(f)}: ${f.reason}`)
+            .join(" | ")
+        : ""
+    }`,
+    failed.length ? "err" : "ok",
+  );
+}
+
+async function tfUndoBatch(b) {
+  if (
+    TF.busy ||
+    !confirm(
+      `Batalkan semua sambungan batch ${b}? Kabel tidak berubah, hanya sambungan core yang dihapus.`,
+    )
+  )
+    return;
+  try {
+    const r = await apiRequest(
+      `/api/topofix/connect/batch/${encodeURIComponent(b)}`,
+      "DELETE",
+    );
+    await ftAfterChange();
+    TF.data.conn = null;
+    await tfScan("conn");
+    tfSetMsg(r.message || "Batch dibatalkan", "ok");
+  } catch (err) {
+    tfSetMsg("Gagal membatalkan: " + err.message, "err");
+  }
+}
+function tfFly(lat, lng) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+  $id("modal-topofix").style.display = "none";
+  map.flyTo([lat, lng], 17, { duration: 1.2 });
+}
+// Seret-lepas ujung kabel yatim di peta (untuk pengecualian)
+const TFD = { layer: null, bar: null, rows: [], left: 0 };
+function tfdMsg(text, cls) {
+  if (TFD.bar) {
+    const m = TFD.bar.querySelector(".tfd-msg");
+    if (m) {
+      m.textContent = text;
+      m.className = "tfd-msg " + (cls || "");
+    }
+  }
+}
+async function tfStartDrag() {
+  if (TF.busy || !can("asset.write")) return;
+  let r;
+  try {
+    r = await apiRequest("/api/topofix/open-ends");
+  } catch (err) {
+    tfSetMsg("Gagal memuat ujung kabel: " + err.message, "err");
+    return;
+  }
+  if (!r.rows.length) {
+    tfSetMsg("Tidak ada ujung kabel yatim.", "ok");
+    return;
+  }
+  $id("modal-topofix").style.display = "none";
+  tfStopDrag(true);
+  TFD.layer = L.layerGroup().addTo(map);
+  TFD.rows = r.rows;
+  TFD.left = r.rows.length;
+  r.rows.forEach((row) => {
+    const mk = L.marker([row.lat, row.lng], {
+      draggable: true,
+      zIndexOffset: 1500,
+      icon: L.divIcon({ className: "tfd-end", iconSize: [20, 20] }),
+      title: `${row.cable_name} (${row.end === "from" ? "asal" : "tujuan"})`,
+    });
+    mk.bindTooltip(
+      `${row.cable_name} · ujung ${row.end === "from" ? "asal" : "tujuan"}`,
+    );
+    mk.on("dragend", () => tfDrop(mk, row));
+    mk.addTo(TFD.layer);
+  });
+  const bar = document.createElement("div");
+  bar.className = "tfd-bar";
+  bar.innerHTML = `<b>Seret ujung kabel</b> <span class="tfd-msg"></span> <button type="button" class="data-ghost" onclick="tfStopDrag()">Selesai</button>`;
+  document.body.appendChild(bar);
+  TFD.bar = bar;
+  tfdMsg(
+    `${TFD.left} ujung belum tersambung (penanda merah). Seret ke aset tujuan lalu lepas.`,
+  );
+  const pts = r.rows.slice(0, 500).map((x) => [x.lat, x.lng]);
+  if (pts.length) map.fitBounds(pts, { maxZoom: 17, padding: [60, 60] });
+}
+function tfStopDrag(silent) {
+  if (TFD.layer) {
+    map.removeLayer(TFD.layer);
+    TFD.layer = null;
+  }
+  if (TFD.bar) {
+    TFD.bar.remove();
+    TFD.bar = null;
+  }
+  if (!silent && $id("modal-topofix")) {
+    TF.data.ends = null;
+    $id("modal-topofix").style.display = "flex";
+    tfScan(TF.tab);
+  }
+}
+async function tfDrop(mk, row) {
+  const ll = mk.getLatLng();
+  const types = ["CLOSURE", "ODP", "POP", "SLACK", "PELANGGAN"];
+  let best = null;
+  allInventoryData.forEach((x) => {
+    if (
+      x.category !== "NODE" ||
+      !types.includes(String(x.type || "").toUpperCase())
+    )
+      return;
+    const d = map.distance(ll, [x.lat, x.lng]);
+    if (d <= 300 && (!best || d < best.d)) best = { d, x };
+  });
+  const back = () => mk.setLatLng([row.lat, row.lng]);
+  if (!best) {
+    tfdMsg(
+      "Tidak ada aset dalam 300 m dari titik lepas; penanda dikembalikan.",
+      "err",
+    );
+    back();
+    return;
+  }
+  const dEnd = map.distance([row.lat, row.lng], [best.x.lat, best.x.lng]);
+  if (
+    !confirm(
+      `Hubungkan ujung ${row.end === "from" ? "asal" : "tujuan"} kabel '${row.cable_name}' ke ${best.x.type} '${best.x.name}' (${Math.round(dEnd)} m dari ujung kabel)?`,
+    )
+  ) {
+    back();
+    return;
+  }
+  try {
+    await apiRequest("/api/topofix/ends/link", "POST", {
+      cable_id: row.cable_id,
+      end: row.end,
+      node_id: best.x.id,
+    });
+    TFD.layer.removeLayer(mk);
+    TFD.left -= 1;
+    tfdMsg(`Tersambung ke ${best.x.name}. Sisa ${TFD.left} ujung.`, "ok");
+    TF.data.ends = null;
+    TF.data.conn = null;
+    ftAfterChange();
+  } catch (err) {
+    tfdMsg("Gagal: " + err.message, "err");
+    back();
+  }
+}
+
 // ---------- CEK COVERAGE MASSAL: impor Excel -> hitung per lokasi -> tabel/peta/unduh Excel ----------
 const CB = {
   name: "",
@@ -13149,7 +13949,7 @@ function impRowHtml(r) {
   return (
     `<tr class="imp-${r.action}${r.edited ? " imp-edited" : ""}${isSel ? " sel" : ""}" data-rid="${r.rid}" draggable="true" ondragstart="impDragStart(event, ${r.rid})" ondragend="impDragEnd()" onclick="impRowClick(event, ${r.rid})">` +
     `<td class="imp-selcell"><label class="imp-cbw"><input type="checkbox" class="imp-cb"${isSel ? " checked" : ""} onclick="impToggle(event, ${r.rid})" /> <span>${r.rid + 1}</span></label><small>${escapeHtml(r.src)}</small></td>` +
-    `<td><b>${escapeHtml(r.name || "-")}</b> ${tag}<br><small>${escapeHtml(r.type || "?")}${r.kind === "NODE" ? " &middot; titik" : r.kind === "CABLE" ? " &middot; kabel" : ""}${meta ? " &middot; " + meta : ""}</small>${orig ? `<br><small class="imp-orig">asal: ${escapeHtml(orig)}</small>` : ""}</td>` +
+    `<td><b>${escapeHtml(r.name || "-")}</b> ${tag}${r.sys_name && r.action === "create" ? `<div class="imp-sys">akan menjadi: <b>${escapeHtml(r.sys_name)}</b></div>` : ""}<br><small>${escapeHtml(r.type || "?")}${r.kind === "NODE" ? " &middot; titik" : r.kind === "CABLE" ? " &middot; kabel" : ""}${meta ? " &middot; " + meta : ""}</small>${orig ? `<br><small class="imp-orig">asal: ${escapeHtml(orig)}</small>` : ""}</td>` +
     `<td><span class="imp-act ${r.action}">${ACTION_LABEL[r.action]}</span></td><td class="imp-notes">${notes || "&ndash;"}</td>` +
     `<td><button type="button" class="imp-edit-btn" onclick="impEdit(${r.rid})">${IMP.editing === r.rid ? "Tutup" : r.edited ? "Ubah" : "Koreksi"}</button></td></tr>` +
     (IMP.editing === r.rid ? impEditHtml(r) : "")
@@ -13275,19 +14075,25 @@ function impBulk(i, mode) {
 
 // ---------- Keranjang aset: pilih baris (ala Excel) lalu seret ke keranjang ----------
 function impBasketGlyph(key, cls) {
-  return cls === "cable"
-    ? "CABLE"
-    : key === "create"
-      ? "NEW"
-      : key === "merge"
-        ? "MERGE"
-        : key === "skip"
-          ? "SKIP"
-          : key;
+  return String(key).startsWith("inst:")
+    ? key === "inst:Udara"
+      ? "TIANG"
+      : "CABLE"
+    : cls === "cable"
+      ? "CABLE"
+      : key === "create"
+        ? "NEW"
+        : key === "merge"
+          ? "MERGE"
+          : key === "skip"
+            ? "SKIP"
+            : key;
 }
 function impBasketColor(key, cls) {
   if (cls === "cable")
     return (CABLE_TYPE_META[key] || { color: "#64748b" }).color;
+  if (key === "inst:Udara") return "#0ea5e9";
+  if (key === "inst:Tanah") return "#a16207";
   if (key === "create") return "#2563eb";
   if (key === "merge") return "#7c3aed";
   if (key === "skip") return "#94a3b8";
@@ -13306,6 +14112,7 @@ function renderImportBaskets() {
     `<div class="imp-bk-head"><b>Pindahkan baris terpilih ke:</b> <small>seret baris ke salah satu kartu di bawah &mdash; atau klik kartunya.</small></div>` +
     `<div class="imp-bk-group"><span>Ganti jenis &middot; titik</span>${IMP_NODE_TYPES.map((t) => tile(t, t, "node", bt[t] ? bt[t] + " aset" : "belum ada")).join("")}</div>` +
     `<div class="imp-bk-group"><span>Ganti jenis &middot; kabel</span>${IMP_CABLE_TYPES.map((t) => tile(t, t, "cable", bt[t] ? bt[t] + " aset" : "belum ada")).join("")}</div>` +
+    `<div class="imp-bk-group"><span>Pemasangan &middot; kabel</span>${tile("inst:Udara", "Kabel Udara", "act", "tiang / aerial")}${tile("inst:Tanah", "Kabel Tanah", "act", "duct / tanam langsung")}</div>` +
     `<div class="imp-bk-group"><span>Tindakan</span>${tile("create", "Impor sebagai baru", "act", "nama sama diberi nomor")}${tile("merge", "Gabung ke aset ada", "act", "pilih 1 baris")}${tile("skip", "Lewati", "act", "tidak diimpor")}</div>`;
 }
 function renderImportSelbar() {
@@ -13494,7 +14301,11 @@ function impBasketLabel(key) {
       ? "Impor sebagai baru"
       : key === "merge"
         ? "Gabung"
-        : key;
+        : key === "inst:Udara"
+          ? "Kabel Udara"
+          : key === "inst:Tanah"
+            ? "Kabel Tanah"
+            : key;
 }
 function impDropTo(key) {
   const s = IMP.sess;
@@ -13530,7 +14341,9 @@ function impDropTo(key) {
       ? { action: "skip" }
       : key === "create"
         ? { action: "create" }
-        : { type: key };
+        : key.startsWith("inst:")
+          ? { installation: key.slice(5) }
+          : { type: key };
   const label = impBasketLabel(key);
   if (
     rids.length > 300 &&
@@ -17311,6 +18124,8 @@ const MODAL_CLOSERS = {
   "modal-covbulk": () => closeCovBulkModal(),
   "modal-summary": () => closeSummaryModal(),
   "modal-inventory": () => closeInventoryModal(),
+  "modal-topofix": () => closeTopofixModal(),
+  "modal-naming": () => closeNamingModal(),
 };
 let MODAL_SEQ = 0;
 function modalVisible(m) {
@@ -18359,3 +19174,2407 @@ try {
     /* abaikan */
   }
 })();
+
+// =====================================================================
+// FORMAT NAMA ASET OTOMATIS
+// =====================================================================
+const NM = { cfg: null, timer: null, data: null };
+function nmMsg(t, k) {
+  const e = $id("nm-msg");
+  if (e) {
+    e.textContent = t || "";
+    e.className = "ap-msg" + (k ? " " + k : "");
+  }
+}
+function openNamingModal() {
+  $id("modal-naming").style.display = "flex";
+  $id("nm-save").style.display = can("wilayah.edit") ? "" : "none";
+  nmMsg("");
+  return apiRequest("/api/naming")
+    .then((d) => {
+      NM.data = d;
+      NM.cfg = d.config;
+      $id("nm-template").value = d.config.template;
+      $id("nm-digits").value = d.config.digits;
+      if ($id("nm-import"))
+        $id("nm-import").checked = d.config.import_rename !== false;
+      $id("nm-presets").innerHTML = d.presets
+        .map(
+          (p) =>
+            `<button type="button" class="nm-preset" onclick="nmPreset('${escapeHtml(p.id)}')"><b>${escapeHtml(p.id)}</b> ${escapeHtml(p.label)}<small>${escapeHtml(p.template)}</small></button>`,
+        )
+        .join("");
+      nmRenderCodes(d.wilayah);
+      nmRenderExamples(d.examples);
+    })
+    .catch((e) => nmMsg(e.message, "err"));
+}
+function closeNamingModal() {
+  $id("modal-naming").style.display = "none";
+}
+function nmPreset(id) {
+  const p = (NM.data.presets || []).find((x) => x.id === id);
+  if (!p) return;
+  $id("nm-template").value = p.template;
+  $id("nm-digits").value = p.digits;
+  nmPreviewSoon(true);
+}
+function nmRenderCodes(wil) {
+  const codes = (NM.cfg && NM.cfg.codes) || {};
+  const seen = new Set();
+  const rows = [];
+  (wil || []).forEach((w) => {
+    [
+      ["cluster", w.cluster, w.cluster_code],
+      ["area", w.area, w.area_code],
+    ].forEach(([k, name, code]) => {
+      const key = String(name).toUpperCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      rows.push(
+        `<label>${escapeHtml(name)} <small>${k}</small><input type="text" data-nm-code="${escapeHtml(key)}" value="${escapeHtml(codes[key] || code)}" maxlength="8" oninput="nmPreviewSoon()" /></label>`,
+      );
+    });
+  });
+  $id("nm-codes").innerHTML = rows.length
+    ? `<h4 class="nm-h">Kode singkatan wilayah</h4><div class="nm-codegrid">${rows.slice(0, 60).join("")}</div>`
+    : "";
+}
+function nmCollect() {
+  const codes = {};
+  Array.prototype.forEach.call(
+    document.querySelectorAll("[data-nm-code]") || [],
+    (i) => {
+      const v = String(i.value || "").trim();
+      if (v) codes[i.getAttribute("data-nm-code")] = v;
+    },
+  );
+  return {
+    template: $id("nm-template").value.trim(),
+    digits: parseInt($id("nm-digits").value, 10) || 0,
+    codes,
+    import_rename: !$id("nm-import") || $id("nm-import").checked,
+  };
+}
+function nmRenderExamples(list) {
+  const el = $id("nm-examples");
+  if (!list || !list.length) {
+    el.innerHTML = "";
+    return;
+  }
+  el.innerHTML = list
+    .slice(0, 24)
+    .map(
+      (e) =>
+        `<div class="nm-ex"><span class="nm-ex-t">${escapeHtml(e.kind === "CABLE" ? "Kabel " + e.type : e.type)}</span><span class="nm-ex-n">${e.names.map(escapeHtml).join(" &middot; ")}</span></div>`,
+    )
+    .join("");
+}
+function nmPreviewSoon(now) {
+  clearTimeout(NM.timer);
+  NM.timer = setTimeout(
+    () => {
+      apiRequest("/api/naming/preview", "POST", nmCollect())
+        .then((r) => {
+          nmMsg("");
+          nmRenderExamples(r.examples);
+        })
+        .catch((e) => nmMsg(e.message, "err"));
+    },
+    now ? 0 : 300,
+  );
+}
+function nmSave() {
+  return apiRequest("/api/naming", "PUT", nmCollect())
+    .then((r) => {
+      NM.cfg = r.config;
+      nmRenderExamples(r.examples);
+      nmMsg(r.message, "ok");
+    })
+    .catch((e) => nmMsg(e.message, "err"));
+}
+async function invAutoName() {
+  if (invBusy || !can("asset.write")) return;
+  const list = [...invSel.values()].filter(
+    (x) => !(x.kind === "node" && (x.type === "POP" || x.type === "PELANGGAN")),
+  );
+  if (!list.length)
+    return alert(
+      "Tidak ada aset yang bisa diberi nama otomatis (POP dan Pelanggan dilewati).",
+    );
+  const skipped = invSel.size - list.length;
+  if (
+    !confirm(
+      `Ganti nama ${list.length} aset dengan nama otomatis?${skipped ? `\n${skipped} POP/Pelanggan dilewati.` : ""}\nNama lama tercatat di Riwayat (audit) sehingga bisa dilihat kembali.`,
+    )
+  )
+    return;
+  invBusy = true;
+  let ok = 0;
+  const failed = [];
+  try {
+    for (let i = 0; i < list.length; i += INV_BULK_CHUNK) {
+      const ch = list.slice(i, i + INV_BULK_CHUNK);
+      invBarProgress(
+        `Memberi nama ${i} dari ${list.length}...`,
+        (i / list.length) * 100,
+      );
+      const r = await apiRequest("/api/assets/autoname", "POST", {
+        nodes: ch.filter((x) => x.kind === "node").map((x) => x.id),
+        cables: ch.filter((x) => x.kind === "cable").map((x) => x.id),
+      });
+      ok += r.renamed || 0;
+      (r.failed || []).forEach((f) => failed.push(`${f.name}: ${f.reason}`));
+    }
+  } catch (err) {
+    failed.push(err.message);
+  }
+  invBusy = false;
+  invClearSel();
+  alert(
+    `${ok} aset diberi nama otomatis.` +
+      (failed.length
+        ? `\n\nDilewati/gagal (${failed.length}):\n` +
+          failed.slice(0, 8).join("\n")
+        : ""),
+  );
+  try {
+    await loadData();
+  } catch (_) {
+    /* tabel disegarkan di bawah */
+  }
+  renderInventoryTable();
+}
+
+// ===== Aset berdempetan: ikon menyebar (spiderfy) saat diklik, lencana jumlah pada titik tumpuk =====
+function ovlCreate(getMap, getMarkers, th) {
+  const S = { set: null, orig: new Map(), legs: null };
+  const TH = th || 14;
+  const api = {
+    collapse() {
+      if (!S.set) return;
+      S.orig.forEach((ll, m) => {
+        try {
+          m.setLatLng(ll);
+        } catch (_) {
+          /* abaikan */
+        }
+      });
+      try {
+        if (S.legs) S.legs.remove();
+      } catch (_) {
+        /* abaikan */
+      }
+      S.set = null;
+      S.legs = null;
+      S.orig.clear();
+    },
+    group(marker) {
+      const mp = getMap();
+      if (!mp) return [];
+      const c0 = mp.latLngToContainerPoint(marker.getLatLng());
+      return getMarkers().filter(
+        (m) =>
+          m._map &&
+          mp.latLngToContainerPoint(m.getLatLng()).distanceTo(c0) < TH,
+      );
+    },
+    click(marker) {
+      const mp = getMap();
+      if (!mp || !marker._map) return false;
+      if (S.set && S.set.has(marker)) return false;
+      api.collapse();
+      const grp = api.group(marker);
+      if (grp.length < 2) return false;
+      const c = mp.latLngToContainerPoint(marker.getLatLng()),
+        center = marker.getLatLng(),
+        n = grp.length;
+      const legs = L.layerGroup();
+      S.set = new Set(grp);
+      grp.forEach((m, k) => {
+        S.orig.set(m, m.getLatLng());
+        let ang, rad;
+        if (n <= 9) {
+          ang = (2 * Math.PI * k) / n - Math.PI / 2;
+          rad = Math.max(36, (n * 30) / (2 * Math.PI));
+        } else {
+          ang = k * 0.85;
+          rad = 34 + 6 * k;
+        }
+        const pt = L.point(
+          c.x + rad * Math.cos(ang),
+          c.y + rad * Math.sin(ang),
+        );
+        const ll = mp.containerPointToLatLng(pt);
+        L.polyline([center, ll], {
+          color: "#334155",
+          weight: 1.6,
+          opacity: 0.8,
+          interactive: false,
+        }).addTo(legs);
+        m.setLatLng(ll);
+      });
+      L.circleMarker(center, {
+        radius: 3,
+        color: "#334155",
+        weight: 1,
+        fillColor: "#334155",
+        fillOpacity: 1,
+        interactive: false,
+      }).addTo(legs);
+      legs.addTo(mp);
+      S.legs = legs;
+      return true;
+    },
+    badges() {
+      const mp = getMap();
+      if (!mp) return;
+      const all = getMarkers().filter((m) => m._map && m._icon);
+      all.forEach((m) => m._icon.removeAttribute("data-ovl"));
+      if (S.set || all.length > 6000) return;
+      const cells = new Map();
+      all.forEach((m) => {
+        const p = mp.latLngToContainerPoint(m.getLatLng()),
+          key = Math.floor(p.x / TH) + ":" + Math.floor(p.y / TH);
+        (cells.get(key) || cells.set(key, []).get(key)).push(m);
+      });
+      cells.forEach((arr) => {
+        if (arr.length > 1)
+          arr[arr.length - 1]._icon.setAttribute(
+            "data-ovl",
+            String(arr.length),
+          );
+      });
+    },
+  };
+  return api;
+}
+const OVLMAIN = ovlCreate(
+  () => map,
+  () =>
+    Object.keys(markersMap)
+      .filter((k) => k.startsWith("node:"))
+      .map((k) => markersMap[k]),
+);
+const OVLM = ovlCreate(
+  () => PZM.map,
+  () =>
+    PZM.map
+      ? [].concat(
+          PZM.bg ? PZM.bg.getLayers() : [],
+          PZM.cand ? PZM.cand.getLayers() : [],
+        )
+      : [],
+  14,
+);
+(function ovlInit() {
+  let t = null;
+  const later = () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      try {
+        OVLMAIN.badges();
+      } catch (_) {
+        /* abaikan */
+      }
+    }, 300);
+  };
+  map.on("zoomstart", () => OVLMAIN.collapse());
+  map.on("click", () => OVLMAIN.collapse());
+  map.on("moveend zoomend", later);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      OVLMAIN.collapse();
+      try {
+        OVLM.collapse();
+      } catch (_) {
+        /* abaikan */
+      }
+    }
+  });
+  setTimeout(later, 1500);
+})();
+
+// ===== MODE PUZZLE (Rapikan Topologi): rangkai aset -> kabel -> core; kabel yang belum ada dibuat otomatis =====
+const PZ = {
+  chain: [],
+  links: [],
+  par: [],
+  cur: -1,
+  doneN: 0,
+  prev: null,
+  sel: null,
+  pick: { open: false, q: "", items: [], total: 0, seq: 0 },
+  busy: false,
+  timer: null,
+  seq: 0,
+  last: null,
+};
+const PZ_CAPS = ["2C", "4C", "6C", "12C", "24C", "48C", "96C", "144C"];
+function pzNew() {
+  return { name: "", type: "", capacity: "", installation: "Udara" };
+}
+function pzShort(l) {
+  const m = /Core\s*(\d+)/i.exec(l || "");
+  return m ? m[1] : String(l || "");
+}
+function pzReq() {
+  return {
+    chain: PZ.chain.map((n) => n.id),
+    parents: PZ.par.slice(),
+    links: PZ.links.map((lk, i) => {
+      if (lk.done) return { cable_id: lk.cable_id, done: true };
+      const mp = mxPayload(i);
+      const base = mp
+        ? {
+            cores: mp.via,
+            from_cores: mp.from,
+            to_ports: mp.to,
+            upstream_cable_id: mp.upstream,
+            n: mp.via.length,
+          }
+        : {
+            cores: lk.cores && lk.cores.length ? lk.cores : null,
+            n: lk.n || null,
+          };
+      return lk.cable_id
+        ? { cable_id: lk.cable_id, ...base }
+        : {
+            new: {
+              name: lk.new.name,
+              type: lk.new.type || null,
+              capacity: lk.new.capacity || null,
+              installation: lk.new.installation,
+            },
+            ...base,
+          };
+    }),
+  };
+}
+function pzIsDone(i) {
+  return i === 0
+    ? PZ.links.some((l) => l.done)
+    : !!(PZ.links[i - 1] && PZ.links[i - 1].done);
+}
+function pzCur() {
+  if (PZ.cur < 0 || PZ.cur >= PZ.chain.length) PZ.cur = PZ.chain.length - 1;
+  return PZ.cur;
+}
+function pzPreviewSoon() {
+  clearTimeout(PZ.timer);
+  PZ.timer = setTimeout(pzPreview, 200);
+}
+function pzPreview() {
+  if (PZ.chain.length < 2) {
+    PZ.prev = null;
+    pzRender();
+    return Promise.resolve();
+  }
+  const seq = ++PZ.seq;
+  return apiRequest("/api/topofix/puzzle/preview", "POST", pzReq())
+    .then((r) => {
+      if (seq !== PZ.seq) return;
+      let again = false;
+      r.links.forEach((p, i) => {
+        const lk = PZ.links[i];
+        if (lk && lk.fresh) {
+          lk.fresh = false;
+          if (!lk.cable_id && p.existing.length) {
+            lk.cable_id = p.existing[0].id;
+            again = true;
+          }
+        }
+        if (lk && p.already && !lk.done && p.cable) {
+          lk.done = true;
+          lk.dn = {
+            name: p.cable.name,
+            capacity: p.cable.capacity,
+            installation: p.cable.installation,
+            length_m: p.cable.length_m,
+          };
+          again = true;
+        }
+      });
+      if (again) return pzPreview();
+      PZ.prev = r;
+      pzRender();
+    })
+    .catch((err) => {
+      PZ.prev = null;
+      tfSetMsg("Pratinjau gagal: " + err.message, "err");
+      pzRender();
+    });
+}
+function pzOpenPicker() {
+  PZ.pick.open = true;
+  PZ.pick.q = "";
+  PZ.sel = null;
+  pzLoadPick();
+  pzRender();
+}
+function pzClosePicker() {
+  PZ.pick.open = false;
+  pzRender();
+}
+let pzPickTimer = null;
+function pzPickQ(v) {
+  PZ.pick.q = v;
+  clearTimeout(pzPickTimer);
+  pzPickTimer = setTimeout(pzLoadPick, 220);
+}
+function pzLoadPick() {
+  const seq = ++PZ.pick.seq,
+    last = PZ.chain[pzCur()];
+  const qs = new URLSearchParams({ q: PZ.pick.q || "", limit: "40" });
+  if (last) qs.set("from_id", String(last.id));
+  else {
+    try {
+      const c = map.getCenter();
+      qs.set("lat", String(c.lat));
+      qs.set("lng", String(c.lng));
+    } catch (_) {
+      /* tanpa referensi peta */
+    }
+  }
+  return apiRequest("/api/topofix/puzzle/nodes?" + qs.toString())
+    .then((r) => {
+      if (seq !== PZ.pick.seq) return;
+      const inChain = new Set(PZ.chain.map((n) => n.id));
+      PZ.pick.items = (r.items || []).filter((x) => !inChain.has(x.id));
+      PZ.pick.total = r.total || 0;
+      const box = $id("pz-pick-list");
+      if (box) box.innerHTML = pzPickHtml();
+      try {
+        pzMapRender();
+      } catch (_) {
+        /* minimap opsional */
+      }
+    })
+    .catch((err) =>
+      tfSetMsg("Gagal memuat daftar aset: " + err.message, "err"),
+    );
+}
+function pzPickHtml() {
+  if (!PZ.pick.items.length)
+    return `<div class="pz-empty">Tidak ada aset yang cocok. Ketik sebagian nama untuk mencari.</div>`;
+  return (
+    PZ.pick.items
+      .map(
+        (x) =>
+          `<button type="button" class="pz-pick-row" onclick="pzAdd(${Number(x.id)})" onmouseenter="pzHover(${Number(x.id)})" onmouseleave="pzHover(null)"><span class="pz-ic t-${escapeHtml(String(x.type).toUpperCase())}">${mapGlyph(x.type, 16)}</span>` +
+          `<span class="pz-pn">${escapeHtml(x.name)}<small>${escapeHtml(x.type)}${x.area ? " · " + escapeHtml(x.area) : ""}</small></span>` +
+          `<span class="pz-pd">${x.distance_m != null ? fmtInt(x.distance_m) + " m" : ""}${x.cables && x.cables.length ? `<em>kabel ada: ${escapeHtml(x.cables[0])}</em>` : ""}</span></button>`,
+      )
+      .join("") +
+    (PZ.pick.total > PZ.pick.items.length
+      ? `<div class="pz-empty">${fmtInt(PZ.pick.total)} aset cocok; persempit dengan mengetik nama.</div>`
+      : "")
+  );
+}
+function pzAdd(id) {
+  const it = PZ.pick.items.find((x) => Number(x.id) === Number(id));
+  if (it) pzAddNode(it);
+}
+function pzAddNode(it) {
+  if (!it || PZ.chain.some((n) => n.id === it.id)) return;
+  if (PZ.chain.length && String(it.type).toUpperCase() === "POP") {
+    tfSetMsg("POP hanya boleh di awal rantai.", "err");
+    return;
+  }
+  const parent = PZ.chain.length ? pzCur() : -1;
+  if (
+    parent >= 0 &&
+    String(PZ.chain[parent].type).toUpperCase() === "PELANGGAN"
+  ) {
+    tfSetMsg("Pelanggan adalah ujung; tidak bisa punya cabang.", "err");
+    return;
+  }
+  PZ.chain.push({
+    id: it.id,
+    name: it.name,
+    type: it.type,
+    lat: it.lat,
+    lng: it.lng,
+  });
+  if (parent >= 0) {
+    PZ.par.push(parent);
+    PZ.links.push({
+      cable_id: null,
+      new: pzNew(),
+      cores: null,
+      n: null,
+      fresh: true,
+    });
+  }
+  PZ.cur = PZ.chain.length - 1;
+  PZ.pick.open = true;
+  PZ.pick.q = "";
+  PZ.last = null;
+  PZ.sel = null;
+  pzLoadPick();
+  tfSetMsg("", "");
+  pzPreview();
+  pzMapFit();
+}
+function pzRemoveLast() {
+  if (PZ.chain.length < 2 || pzIsDone(PZ.chain.length - 1)) return;
+  PZ.chain.pop();
+  if (PZ.links.length) PZ.links.pop();
+  if (PZ.par.length) PZ.cur = PZ.par.pop();
+  PZ.sel = null;
+  PZ.prev = null;
+  PZ.pick.open = false;
+  PZ.cur = Math.min(PZ.cur, PZ.chain.length - 1);
+  pzPreview();
+  pzMapFit();
+}
+function pzReset() {
+  PZ.chain = [];
+  PZ.links = [];
+  PZ.par = [];
+  PZ.cur = -1;
+  PZ.doneN = 0;
+  PZ.prev = null;
+  PZ.sel = null;
+  PZ.last = null;
+  PZ.pick.open = true;
+  pzLoadPick();
+  tfSetMsg("", "");
+  pzRender();
+}
+// cabang / lanjut dari blok mana pun (juga yang sudah diterapkan)
+function pzBranch(i) {
+  if (!PZ.chain[i]) return;
+  if (String(PZ.chain[i].type).toUpperCase() === "PELANGGAN") {
+    tfSetMsg("Pelanggan adalah ujung; tidak bisa punya cabang.", "err");
+    return;
+  }
+  PZ.cur = i;
+  PZ.pick.open = true;
+  PZ.pick.q = "";
+  PZ.sel = null;
+  pzLoadPick();
+  pzRender();
+}
+function pzSel(i) {
+  PZ.sel = PZ.sel === i ? null : i;
+  PZ.pick.open = false;
+  pzRender();
+}
+function pzUseExisting(i, cid) {
+  const lk = PZ.links[i];
+  if (!lk) return;
+  lk.cable_id = cid ? Number(cid) : null;
+  lk.cores = null;
+  lk.n = null;
+  lk.mx = null;
+  pzPreview();
+}
+function pzSetNew(i, field, v) {
+  const lk = PZ.links[i];
+  if (!lk) return;
+  lk.new[field] = v;
+  if (field !== "name") {
+    lk.cores = null;
+    lk.mx = null;
+  }
+  if (field === "capacity") lk.n = null;
+  pzPreview();
+}
+function pzSetN(i, v) {
+  const lk = PZ.links[i];
+  if (!lk) return;
+  const n = parseInt(v, 10);
+  lk.n = n > 0 ? n : null;
+  lk.cores = null;
+  pzPreviewSoon();
+}
+function pzLinkHtml(i) {
+  const p = PZ.prev && PZ.prev.links[i],
+    lk = PZ.links[i];
+  if (!lk) return "";
+  if (lk.done) {
+    const dc = (p && p.cable) ||
+      lk.dn || { name: "kabel", capacity: "", installation: "", length_m: 0 };
+    return `<div class="pz-conn have done"><span class="pz-line"></span><span class="pz-chip"><b><i class="fa-solid fa-circle-check"></i> diterapkan</b> ${escapeHtml(dc.name)}<small>${escapeHtml(dc.capacity || "")} · ${escapeHtml(dc.installation || "-")} · ${fmtInt(dc.length_m || 0)} m</small></span></div>`;
+  }
+  if (!p)
+    return `<div class="pz-conn pending"><span class="pz-line"></span><span class="pz-chip">memeriksa…</span></div>`;
+  const c = p.cable,
+    bad = p.errors.length || p.warnings.length;
+  const cls = p.mode === "baru" ? "new" : "have";
+  const coreTxt = p.cores.length
+    ? "core " + p.cores.map(pzShort).join(", ")
+    : "core ?";
+  return (
+    `<button type="button" class="pz-conn ${cls} ${PZ.sel === i ? "sel" : ""} ${p.errors.length ? "err" : ""}" onclick="pzSel(${i})" title="Klik untuk ubah kabel dan core">` +
+    `<span class="pz-line"></span><span class="pz-chip">${p.mode === "baru" ? `<b>+ kabel baru</b>` : `<b>kabel</b>`} ${escapeHtml(c.name)}<small>${escapeHtml(c.capacity || "")} · ${escapeHtml(c.installation || "-")} · ${fmtInt(c.length_m)} m · ${escapeHtml(coreTxt)}</small>${bad ? `<i class="fa-solid fa-triangle-exclamation"></i>` : ""}</span></button>`
+  );
+}
+function pzEditorHtml(i) {
+  const p = PZ.prev && PZ.prev.links[i],
+    lk = PZ.links[i];
+  if (!p || !lk || lk.done) return "";
+  let h = `<div class="pz-edit"><div class="pz-edit-h">${escapeHtml(p.from.name)} <i class="fa-solid fa-arrow-right"></i> ${escapeHtml(p.to.name)}<small>${fmtInt(p.distance_m)} m</small></div>`;
+  h += `<div class="pz-radio"><label><input type="radio" name="pz-m" ${lk.cable_id ? "" : "checked"} onchange="pzUseExisting(${i}, null)"> Buat kabel baru (otomatis tampil di peta dan inventory)</label>`;
+  p.existing.forEach((e) => {
+    h += `<label><input type="radio" name="pz-m" ${lk.cable_id === e.id ? "checked" : ""} onchange="pzUseExisting(${i}, ${Number(e.id)})"> Pakai kabel <b>${escapeHtml(e.name)}</b> <small>${escapeHtml(e.capacity || "")} · ${escapeHtml(e.installation || "-")} · ${fmtInt(e.free.length)} core bebas dari ${fmtInt(e.total)}</small></label>`;
+  });
+  h += `</div>`;
+  if (p.mode === "baru") {
+    h +=
+      `<div class="pz-form"><label>Nama kabel<input type="text" value="${escapeHtml(lk.new.name)}" placeholder="${escapeHtml(p.cable.name)}" maxlength="120" onchange="pzSetNew(${i}, 'name', this.value)"></label>` +
+      `<label>Jenis<select onchange="pzSetNew(${i}, 'type', this.value)">${["", "Backbone", "Feeder", "Distribution", "Drop"].map((t) => `<option value="${t}" ${lk.new.type === t ? "selected" : ""}>${t || "Otomatis (" + escapeHtml(p.cable.type) + ")"}</option>`).join("")}</select></label>` +
+      `<label>Kapasitas<select onchange="pzSetNew(${i}, 'capacity', this.value)"><option value="">Otomatis (${escapeHtml(p.cable.capacity)})</option>${PZ_CAPS.map((c) => `<option ${lk.new.capacity === c ? "selected" : ""}>${c}</option>`).join("")}</select></label>` +
+      `<div class="pz-inst"><span>Pemasangan</span>${["Udara", "Tanah"].map((v) => `<button type="button" class="${lk.new.installation === v ? "on" : ""}" onclick="pzSetNew(${i}, 'installation', '${v}')">${v}</button>`).join("")}</div></div>`;
+  }
+  h += mxHtml(i);
+  p.warnings.forEach((w) => {
+    h += `<div class="pz-note warn"><i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(w)}</div>`;
+  });
+  p.errors.forEach((w) => {
+    h += `<div class="pz-note err"><i class="fa-solid fa-circle-xmark"></i> ${escapeHtml(w)}</div>`;
+  });
+  return h + `</div>`;
+}
+
+// ===== Matriks splicing sederhana di puzzle: hulu (kiri) -> core kabel (tengah) -> port hilir (kanan) =====
+const MXC = {}; // cache daftar hulu/hilir: "u<aset>:<kabel>" / "d<aset>"
+function mxS(i) {
+  const lk = PZ.links[i];
+  return (
+    lk.mx ||
+    (lk.mx = {
+      pairs: [],
+      pL: [],
+      pR: [],
+      text: "",
+      showText: false,
+      upCable: null,
+      err: "",
+      isJ: false,
+    })
+  );
+}
+function mxShort(l) {
+  const m = /Core\s*(\d+)/i.exec(l || "");
+  return m ? m[1] : String(l || "");
+}
+function mxNum(l) {
+  const m = /(\d+)\D*$/.exec(l || "");
+  return m ? Number(m[1]) : NaN;
+}
+function mxLoad(i) {
+  const p = PZ.prev && PZ.prev.links[i],
+    lk = PZ.links[i];
+  if (!p || !lk) return;
+  const jobs = [
+    [
+      `u${p.from.id}:${lk.cable_id || 0}`,
+      `/api/topofix/upstream?node_id=${Number(p.from.id)}${lk.cable_id ? "&exclude_cable=" + Number(lk.cable_id) : ""}`,
+    ],
+    [
+      `d${p.to.id}`,
+      /ODP|PELANGGAN/i.test(p.to.type || "")
+        ? `/api/topofix/node-ports?node_id=${Number(p.to.id)}&dir=in`
+        : null,
+    ],
+  ];
+  jobs.forEach(([k, u]) => {
+    if (!u || MXC[k]) return;
+    MXC[k] = { loading: true };
+    apiRequest(u)
+      .then((r) => {
+        MXC[k] = { d: r };
+      })
+      .catch((e) => {
+        MXC[k] = { err: e.message };
+      })
+      .then(() => {
+        if (PZ.sel === i) pzRender();
+      });
+  });
+}
+function mxLists(i) {
+  const p = PZ.prev.links[i],
+    lk = PZ.links[i],
+    m = mxS(i);
+  const U = MXC[`u${p.from.id}:${lk.cable_id || 0}`],
+    Dn = MXC[`d${p.to.id}`];
+  let L = [],
+    cabs = [];
+  m.isJ = false;
+  if (U && U.d) {
+    if (U.d.junction) {
+      m.isJ = true;
+      cabs = U.d.cables || [];
+      if (m.upCable == null || !cabs.some((c) => c.id === m.upCable))
+        m.upCable = cabs.length ? cabs[0].id : null;
+      L = cmAvail({ data: U.d, upCable: m.upCable });
+    } else L = U.d.ports || [];
+  }
+  return {
+    L,
+    R: p.cable.free || [],
+    D: (Dn && Dn.d && Dn.d.ports) || [],
+    cabs,
+    loading: !!((U && U.loading) || (Dn && Dn.loading)),
+  };
+}
+function mxSync(i) {
+  const lk = PZ.links[i],
+    m = mxS(i);
+  lk.cores = m.pairs.length ? m.pairs.map((x) => x.c) : null;
+  if (m.pairs.length) lk.n = m.pairs.length;
+  pzPreviewSoon();
+}
+function mxTry(i) {
+  const m = mxS(i),
+    q = mxLists(i),
+    noL = !q.L.length;
+  if (m.pR.length && (noL || m.pL.length === m.pR.length)) {
+    m.pR.forEach((c, k) =>
+      m.pairs.push({ u: noL ? null : m.pL[k], c, d: null }),
+    );
+    m.pL = [];
+    m.pR = [];
+    m.err = "";
+    mxSync(i);
+  }
+  pzRender();
+}
+function mxClick(i, side, label, ev) {
+  const m = mxS(i),
+    q = mxLists(i),
+    arr = side === "L" ? q.L : q.R,
+    key = side === "L" ? "pL" : "pR";
+  const used = new Set(m.pairs.map((x) => (side === "L" ? x.u : x.c)));
+  if (used.has(label)) return;
+  const sel = new Set(m[key]),
+    ak = "mx" + i + side,
+    an = CORE_ANCHOR[ak];
+  if (ev && ev.shiftKey && an && arr.includes(an)) {
+    const a = arr.indexOf(an),
+      b = arr.indexOf(label);
+    arr.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((l) => {
+      if (!used.has(l)) sel.add(l);
+    });
+  } else if (sel.has(label)) sel.delete(label);
+  else sel.add(label);
+  CORE_ANCHOR[ak] = label;
+  m[key] = arr.filter((l) => sel.has(l));
+  mxTry(i);
+}
+function mxClickD(i, label) {
+  const m = mxS(i),
+    has = m.pairs.find((x) => x.d === label);
+  if (has) has.d = null;
+  else {
+    const t = m.pairs.find((x) => !x.d);
+    if (!t) return;
+    t.d = label;
+  }
+  pzPreviewSoon();
+  pzRender();
+}
+function mxDel(i, k) {
+  const m = mxS(i);
+  m.pairs.splice(k, 1);
+  mxSync(i);
+  pzRender();
+}
+function mxUpCable(i, v) {
+  const m = mxS(i);
+  m.upCable = Number(v);
+  m.pairs = [];
+  m.pL = [];
+  m.pR = [];
+  mxSync(i);
+  pzRender();
+}
+function mxQuick(i, how) {
+  const m = mxS(i),
+    q = mxLists(i),
+    lk = PZ.links[i],
+    noL = !q.L.length;
+  m.err = "";
+  m.pL = [];
+  m.pR = [];
+  if (how === "auto") {
+    m.pairs = [];
+    m.text = "";
+    lk.cores = null;
+    pzPreviewSoon();
+    return pzRender();
+  }
+  if (how === "text") {
+    m.showText = !m.showText;
+    return pzRender();
+  }
+  const lim = noL ? q.R.length : Math.min(q.L.length, q.R.length);
+  const n = how === "all" ? lim : Math.min(lim, Math.max(1, lk.n || 1));
+  if (!n) {
+    m.err = "Tidak ada pasangan yang bisa dibuat (hulu atau core bebas kosong)";
+    return pzRender();
+  }
+  m.pairs = [];
+  for (let k = 0; k < n; k++)
+    m.pairs.push({
+      u: noL ? null : q.L[k],
+      c: how === "terbalik" ? q.R[n - 1 - k] : q.R[k],
+      d: null,
+    });
+  mxSync(i);
+  pzRender();
+}
+function mxCount(i, v) {
+  const lk = PZ.links[i],
+    n = parseInt(v, 10);
+  lk.n = n > 0 ? n : null;
+  if (!mxS(i).pairs.length) {
+    lk.cores = null;
+    pzPreviewSoon();
+  } else pzRender();
+}
+function mxApplyText(i) {
+  const m = mxS(i),
+    q = mxLists(i),
+    noL = !q.L.length;
+  const parts = String(m.text || "")
+    .split(/[,;\n]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  if (!parts.length) {
+    m.err = "Tempel daftar, mis. 5→1, 6→2";
+    return pzRender();
+  }
+  const out = [];
+  for (const pt of parts) {
+    const mm = /^(\d+)\s*(?:(?:→|->|=>|>|=|:)\s*(\d+))?$/.exec(pt);
+    if (!mm || (mm[2] == null && !noL)) {
+      m.err = `Format tidak dikenali: "${pt}" (contoh 5→1)`;
+      return pzRender();
+    }
+    const cn = Number(mm[2] != null ? mm[2] : mm[1]);
+    const c = q.R.find((l) => mxNum(l) === cn);
+    if (!c) {
+      m.err = `Core ${cn} pada kabel ini tidak bebas/ada`;
+      return pzRender();
+    }
+    let u = null;
+    if (!noL) {
+      u = q.L.find((l) => mxNum(l) === Number(mm[1]));
+      if (!u) {
+        m.err = `Hulu ${mm[1]} tidak tersedia`;
+        return pzRender();
+      }
+    }
+    if (out.some((x) => x.c === c || (u && x.u === u))) {
+      m.err = `Ganda pada "${pt}"`;
+      return pzRender();
+    }
+    out.push({ u, c, d: null });
+  }
+  m.pairs = out;
+  m.pL = [];
+  m.pR = [];
+  m.err = "";
+  mxSync(i);
+  pzRender();
+}
+function mxPayload(i) {
+  const lk = PZ.links[i],
+    m = lk && lk.mx;
+  if (!m || !m.pairs.length) return null;
+  const hasU = m.pairs.every((x) => x.u);
+  let to = null;
+  if (m.pairs.some((x) => x.d)) {
+    const q = PZ.prev ? mxLists(i) : { D: [] };
+    const taken = new Set(m.pairs.map((x) => x.d).filter(Boolean)),
+      spare = q.D.filter((x) => !taken.has(x));
+    to = m.pairs.map((x) => x.d || spare.shift());
+    if (to.some((x) => !x)) to = null;
+  }
+  return {
+    from: hasU ? m.pairs.map((x) => x.u) : null,
+    via: m.pairs.map((x) => x.c),
+    to,
+    upstream: hasU && m.isJ && m.upCable ? m.upCable : null,
+  };
+}
+function mxColHtml(i, side, title, sub, arr, m, ci) {
+  const MAX = 288,
+    used = new Map();
+  m.pairs.forEach((x, k) => {
+    const key = side === "L" ? x.u : side === "R" ? x.c : x.d;
+    if (key) used.set(key, k);
+  });
+  const pend = new Set(side === "L" ? m.pL : side === "R" ? m.pR : []);
+  const btn =
+    arr
+      .slice(0, MAX)
+      .map((l) => {
+        const k = used.get(l),
+          cls = k != null ? `used c${k % 8}` : pend.has(l) ? "sel" : "";
+        const fn =
+          side === "D"
+            ? `mxClickD(${i}, '${escapeHtml(l)}')`
+            : `mxClick(${i}, '${side}', '${escapeHtml(l)}', event)`;
+        return `<button type="button" class="mx-i ${cls}" title="${escapeHtml(l)}" onclick="${fn}">${escapeHtml(mxShort(l))}${k != null ? `<sup>${k + 1}</sup>` : ""}</button>`;
+      })
+      .join("") || `<small class="mx-none">kosong</small>`;
+  return `<div class="mx-col"><div class="mx-h">${title}<small>${sub}</small></div><div class="mx-list">${btn}${arr.length > MAX ? `<small class="mx-none">+${arr.length - MAX} lagi</small>` : ""}</div></div>`;
+}
+function mxHtml(i) {
+  const p = PZ.prev && PZ.prev.links[i],
+    lk = PZ.links[i];
+  if (!p || !lk) return "";
+  mxLoad(i);
+  const m = mxS(i),
+    q = mxLists(i),
+    noL = !q.L.length;
+  const free = q.R.length;
+  let h = `<div class="mx"><div class="mx-top"><b>Matriks sambungan core</b><small>${m.pairs.length ? `${m.pairs.length} pasangan dipilih` : `otomatis: ${fmtInt(p.cores.length)} core pertama`} · ${fmtInt(free)} core bebas${q.loading ? " · memuat hulu…" : ""}</small></div>`;
+  h += `<div class="mx-tools"><button type="button" class="${!m.pairs.length ? "on" : ""}" onclick="mxQuick(${i}, 'auto')">Otomatis</button><button type="button" onclick="mxQuick(${i}, 'lurus')" title="Hulu terkecil ↔ core terkecil">Lurus</button><button type="button" onclick="mxQuick(${i}, 'terbalik')" title="Hulu terkecil ↔ core terbesar">Terbalik</button><button type="button" class="mx-all" onclick="mxQuick(${i}, 'all')"><i class="fa-solid fa-bolt"></i> Sambung semua (${fmtInt(noL ? free : Math.min(q.L.length, free))})</button><button type="button" class="${m.showText ? "on" : ""}" onclick="mxQuick(${i}, 'text')">Tempel daftar</button><label>jumlah <input type="number" min="1" max="${Math.max(1, free)}" value="${lk.n || p.cores.length || 1}" onchange="mxCount(${i}, this.value)"></label></div>`;
+  if (q.cabs.length > 1)
+    h += `<label class="mx-cab">Kabel hulu <select onchange="mxUpCable(${i}, this.value)">${q.cabs.map((c) => `<option value="${Number(c.id)}" ${c.id === m.upCable ? "selected" : ""}>${escapeHtml(c.name)} (${fmtInt(c.free.length)} bebas)</option>`).join("")}</select></label>`;
+  if (m.showText)
+    h += `<div class="mx-text"><textarea rows="3" placeholder="${noL ? "Nomor core kabel ini: 1, 2, 3 (atau 5→1, 6→2)" : "Hulu→core kabel ini: 5→1, 6→2"}" oninput="mxS(${i}).text = this.value">${escapeHtml(m.text)}</textarea><button type="button" onclick="mxApplyText(${i})">Pakai daftar</button></div>`;
+  if (m.err)
+    h += `<div class="pz-note err"><i class="fa-solid fa-circle-xmark"></i> ${escapeHtml(m.err)}</div>`;
+  const upNm = escapeHtml(p.from.name),
+    dnNm = escapeHtml(p.to.name);
+  h += `<div class="mx-cols${q.D.length ? " three" : ""}">`;
+  if (!noL || q.loading)
+    h += mxColHtml(
+      i,
+      "L",
+      `Hulu · ${upNm}`,
+      `${fmtInt(q.L.length)} tersedia`,
+      q.L,
+      m,
+    );
+  h += mxColHtml(
+    i,
+    "R",
+    `Kabel · ${escapeHtml(p.cable.name)}`,
+    `${fmtInt(free)} bebas`,
+    q.R,
+    m,
+  );
+  if (q.D.length)
+    h += mxColHtml(
+      i,
+      "D",
+      `Hilir · ${dnNm}`,
+      `${fmtInt(q.D.length)} port bebas`,
+      q.D,
+      m,
+    );
+  h += `</div>`;
+  if (m.pairs.length)
+    h += `<div class="mx-pairs">${m.pairs.map((x, k) => `<span class="mx-pair c${k % 8}">${k + 1}. ${x.u ? escapeHtml(mxShort(x.u)) + " → " : ""}${escapeHtml(mxShort(x.c))}${x.d ? " → " + escapeHtml(x.d) : ""}<button type="button" title="Hapus pasangan" onclick="mxDel(${i}, ${k})">&times;</button></span>`).join("")}</div>`;
+  h += `<div class="mx-hint">Klik ${noL ? "core kabel" : "hulu lalu core kabel"} untuk memasangkan${q.D.length ? ", lalu klik port hilir untuk menempelkannya ke pasangan" : ""}. Shift+klik = rentang (jumlah hulu dan core harus sama).</div></div>`;
+  return h;
+}
+function pzNodeHtml(i) {
+  const n = PZ.chain[i],
+    t = String(n.type).toUpperCase();
+  const leaf = i === PZ.chain.length - 1 && i > 0 && !pzIsDone(i);
+  return (
+    `<div class="pz-node t-${escapeHtml(t)} ${pzCur() === i ? "cur" : ""} ${pzIsDone(i) ? "done" : ""}"><span class="pz-ic t-${escapeHtml(t)}">${mapGlyph(t, 16)}</span><span class="pz-nn">${escapeHtml(n.name)}<small>${escapeHtml(n.type)}</small></span>` +
+    (t === "PELANGGAN"
+      ? ""
+      : `<button type="button" class="pz-br" title="Tambah cabang / lanjut dari sini" onclick="pzBranch(${i})"><i class="fa-solid fa-code-branch"></i></button>`) +
+    (leaf
+      ? `<button type="button" class="pz-x" title="Lepas blok terakhir" onclick="pzRemoveLast()">&times;</button>`
+      : "") +
+    `</div>`
+  );
+}
+function pzTreeHtml() {
+  if (!PZ.chain.length) return "";
+  const kids = PZ.chain.map(() => []);
+  PZ.par.forEach((pi, k) => {
+    if (kids[pi]) kids[pi].push(k + 1);
+  });
+  const rows = [],
+    root = [pzNodeHtml(0)];
+  rows.push(root);
+  const walk = (i, row) =>
+    kids[i].forEach((c, k) => {
+      let r = row;
+      if (k > 0) {
+        r = [
+          `<span class="pz-fork" title="cabang dari ${escapeHtml(PZ.chain[i].name)}"><i class="fa-solid fa-code-branch"></i> ${escapeHtml(PZ.chain[i].name)}</span>`,
+        ];
+        rows.push(r);
+      }
+      r.push(pzLinkHtml(c - 1));
+      r.push(pzNodeHtml(c));
+      walk(c, r);
+    });
+  walk(0, root);
+  return rows.map((r) => `<div class="pz-chain">${r.join("")}</div>`).join("");
+}
+function pzRender() {
+  const el = $id("pz-main");
+  if (!el || TF.tab !== "puzzle") return;
+  let h = `<div class="tf-intro">Rangkai seperti puzzle: pilih aset awal (biasanya POP), lalu tambahkan aset berikutnya satu per satu. Di antara dua aset, kabel yang sudah ada dipakai; bila belum ada, <b>kabel baru dibuat otomatis</b> (garis putus-putus) beserta sambungan core-nya. Klik kabel di antara dua aset untuk membuka matriks sambungan core (hulu → core kabel → port hilir).</div>`;
+  h += pzTreeHtml();
+  h += `<div class="pz-chain"><button type="button" class="pz-add ${PZ.pick.open ? "on" : ""}" onclick="${PZ.pick.open ? "pzClosePicker()" : "pzOpenPicker()"}"><i class="fa-solid fa-plus"></i> ${PZ.chain.length ? `pilih aset berikutnya dari <b>${escapeHtml(PZ.chain[pzCur()].name)}</b>` : "pilih aset awal"}</button></div>`;
+  if (PZ.pick.open)
+    h += `<div class="pz-pick"><input type="text" id="pz-pick-q" value="${escapeHtml(PZ.pick.q)}" placeholder="${PZ.chain.length ? "Cari nama aset (yang punya kabel lalu terdekat dari blok terakhir tampil lebih dulu)…" : "Cari nama aset awal (terdekat dari pusat peta tampil lebih dulu)…"}" oninput="pzPickQ(this.value)" autocomplete="off"><div id="pz-pick-list" class="pz-pick-list">${pzPickHtml()}</div></div>`;
+  if (PZ.sel != null && !PZ.pick.open) h += pzEditorHtml(PZ.sel);
+  if (PZ.prev) {
+    const n = PZ.prev.links.filter((x) => !x.done).length,
+      nw = PZ.prev.new_cables;
+    h +=
+      `<div class="pz-sum"><span><b>${n}</b> sambungan · <b>${n - nw}</b> kabel dipakai · <b class="pz-newc">${nw}</b> kabel baru</span>` +
+      `<button type="button" class="data-primary" ${PZ.prev.ready && !PZ.busy && n > 0 ? "" : "disabled"} onclick="pzApply()"><i class="fa-solid fa-puzzle-piece"></i> Terapkan rantai</button></div>`;
+    if (!PZ.prev.ready)
+      h += `<div class="pz-note err"><i class="fa-solid fa-circle-xmark"></i> Ada masalah pada rantai; klik kabel bertanda segitiga untuk memperbaikinya.</div>`;
+  }
+  if (PZ.last)
+    h += `<div class="pz-done"><i class="fa-solid fa-circle-check"></i> ${escapeHtml(PZ.last.message)}${PZ.last.results.map((r) => `<div>${r.new ? "kabel baru" : "kabel"} <b>${escapeHtml(r.name)}</b>: ${fmtInt(r.links)} sambungan</div>`).join("")}<div class="adm-hint">Rantai tetap tampil: klik ikon cabang pada blok mana pun untuk melanjutkan, atau "Ulangi" untuk rantai baru.</div></div>`;
+  if (PZ.chain.length)
+    h += `<div class="pz-foot"><button type="button" class="data-ghost" onclick="pzReset()"><i class="fa-solid fa-rotate-left"></i> Ulangi dari awal</button></div>`;
+  el.innerHTML = h;
+  const q = $id("pz-pick-q");
+  if (q && document.activeElement !== q && PZ.pick.open) {
+    try {
+      q.focus();
+    } catch (_) {
+      /* abaikan */
+    }
+  }
+  try {
+    pzMapInit();
+    pzMapRender();
+  } catch (_) {
+    /* minimap opsional */
+  }
+}
+async function pzApply() {
+  if (PZ.busy || !PZ.prev || !PZ.prev.ready) return;
+  const nw = PZ.prev.new_cables,
+    nl = PZ.prev.links.filter((x) => !x.done).length;
+  if (!nl) return;
+  if (
+    !confirm(
+      `Terapkan ${nl} sambungan baru?\n${nw} kabel baru akan dibuat dan core disambung. Tercatat di riwayat.`,
+    )
+  )
+    return;
+  PZ.busy = true;
+  pzRender();
+  const body = {
+    chain: PZ.chain.map((n) => n.id),
+    parents: PZ.par.slice(),
+    links: PZ.prev.links.map((p, i) => {
+      const lk = PZ.links[i];
+      if (lk.done) return { cable_id: lk.cable_id, done: true };
+      const mp = mxPayload(i);
+      const ex = mp
+        ? {
+            from_cores: mp.from,
+            to_ports: mp.to,
+            upstream_cable_id: mp.upstream,
+          }
+        : {};
+      const cores = mp ? mp.via : p.cores;
+      return lk.cable_id
+        ? { cable_id: lk.cable_id, cores, ...ex }
+        : {
+            new: {
+              name: p.cable.name,
+              type: p.cable.type,
+              capacity: p.cable.capacity,
+              installation: p.cable.installation,
+            },
+            cores,
+            ...ex,
+          };
+    }),
+    batch: "PZ" + Date.now().toString(36),
+  };
+  try {
+    const r = await apiRequest("/api/topofix/puzzle/apply", "POST", body);
+    PZ.last = r;
+    (r.results || []).forEach((x) => {
+      const lk = PZ.links[x.index],
+        pl = PZ.prev.links[x.index];
+      if (lk) {
+        lk.cable_id = x.cable_id;
+        lk.done = true;
+        lk.dn = {
+          name: x.name,
+          capacity: pl && pl.cable ? pl.cable.capacity : "",
+          installation: pl && pl.cable ? pl.cable.installation : "",
+          length_m: pl && pl.cable ? pl.cable.length_m : 0,
+        };
+        lk.cores = null;
+        lk.new = pzNew();
+      }
+    });
+    TOPO.dirty = true;
+    PZ.doneN = PZ.chain.length;
+    PZ.cur = PZ.chain.length - 1;
+    PZ.prev = null;
+    PZ.sel = null;
+    PZ.pick.open = false;
+    Object.keys(CM).forEach((k) => delete CM[k]);
+    Object.keys(MXC).forEach((k) => delete MXC[k]);
+    Object.keys(TF.data).forEach((k) => {
+      TF.data[k] = null;
+    });
+    tfSetMsg(r.message, "ok");
+    PZM.cabVer = (PZM.cabVer || 0) + 1;
+    Promise.resolve(loadData())
+      .then(() => {
+        PZM.cabVer++;
+        try {
+          pzMapCables(true);
+        } catch (_) {
+          /* abaikan */
+        }
+      })
+      .catch(() => {
+        /* peta disegarkan berikutnya */
+      }); // tidak memblokir UI
+    await pzPreview();
+  } catch (err) {
+    tfSetMsg("Gagal menerapkan: " + err.message, "err");
+  }
+  PZ.busy = false;
+  pzRender();
+}
+function pzOpen() {
+  if (!PZ.chain.length) {
+    PZ.pick.open = true;
+    pzLoadPick();
+  }
+  pzRender();
+  try {
+    setTimeout(() => {
+      if (PZM.map) {
+        PZM.map.invalidateSize();
+        pzMapBg();
+      }
+    }, 80);
+  } catch (_) {
+    /* abaikan */
+  }
+}
+
+// ===== Pilih core tertentu per kabel (tab Sambung core) =====
+function tfCoreCell(x) {
+  const cs = TF.cores[x.cable_id],
+    n = cs && cs.chosen && cs.chosen.length ? cs.chosen.length : null;
+  const label = n ? `${n} dipilih` : x.full ? "penuh" : String(x.cores);
+  if (x.state !== "siap") return escapeHtml(label);
+  const key = "tf:" + Number(x.cable_id);
+  return (
+    `${escapeHtml(label)}<br><button type="button" class="tf-corebtn" onclick="tfPickCores(${Number(x.cable_id)})">pilih core</button>` +
+    (cs && cs.open
+      ? `<div class="pz-core-grid tf-coregrid">${cs.free
+          .slice(0, 288)
+          .map(
+            (l) =>
+              `<button type="button" class="pz-core ${cs.chosen.includes(l) ? "on" : ""}" title="${escapeHtml(l)}" onclick="coreClick('${key}', '${escapeHtml(l)}', event)">${escapeHtml(pzShort(l))}</button>`,
+          )
+          .join(
+            "",
+          )}${cs.free.length ? "" : "<small>tidak ada core bebas</small>"}</div>${coreToolsHtml(key, cs.free.length)}${coreMapHtml(key)}`
+      : "")
+  );
+}
+async function tfPickCores(cid) {
+  let cs = TF.cores[cid];
+  if (cs && cs.free) {
+    cs.open = !cs.open;
+    return tfRenderBody();
+  }
+  try {
+    const r = await apiRequest(`/api/cables/${cid}/core-usage`);
+    TF.cores[cid] = {
+      free: (r.cores || []).filter((c) => !c.used).map((c) => c.core),
+      chosen: [],
+      open: true,
+    };
+  } catch (err) {
+    tfSetMsg("Gagal memuat core: " + err.message, "err");
+    return;
+  }
+  tfRenderBody();
+}
+
+// ===== Pilihan core bersama (Sambung core + Puzzle): Shift = rentang, Sambung semua, pemetaan hulu -> hilir =====
+const CORE_ANCHOR = {};
+const CM = {}; // kunci "tf:<kabel>" / "pz:<indeks>" -> { open, data, mode, upCable, upChosen, text }
+function coreLabelN(i) {
+  return `Tube ${Math.floor((i - 1) / 12) + 1} - Core ${i}`;
+}
+function coreCtx(key) {
+  const [k, id] = String(key).split(":");
+  if (k === "tf") {
+    const cs = TF.cores[id];
+    if (!cs) return null;
+    return {
+      free: cs.free,
+      chosen: cs.chosen,
+      set: (a) => {
+        cs.chosen = a;
+      },
+      refresh: tfRenderBody,
+    };
+  }
+  const i = Number(id),
+    lk = PZ.links[i],
+    p = PZ.prev && PZ.prev.links[i];
+  if (!lk || !p) return null;
+  return {
+    free: p.cable.free,
+    chosen: lk.cores && lk.cores.length ? lk.cores : p.cores,
+    set: (a) => {
+      lk.cores = a.length ? a : null;
+      lk.n = a.length || null;
+    },
+    refresh: pzPreviewSoon,
+  };
+}
+function coreClick(key, label, ev) {
+  const c = coreCtx(key);
+  if (!c) return;
+  const set = new Set(c.chosen),
+    an = CORE_ANCHOR[key];
+  if (ev && ev.shiftKey && an && c.free.includes(an)) {
+    const a = c.free.indexOf(an),
+      b = c.free.indexOf(label);
+    c.free.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((l) => set.add(l));
+  } else if (set.has(label)) set.delete(label);
+  else set.add(label);
+  CORE_ANCHOR[key] = label;
+  c.set(c.free.filter((l) => set.has(l)));
+  c.refresh();
+}
+function coreBulk(key, how) {
+  const c = coreCtx(key);
+  if (!c) return;
+  const cur = new Set(c.chosen);
+  c.set(
+    c.free.filter((l) =>
+      how === "all" ? true : how === "inv" ? !cur.has(l) : false,
+    ),
+  );
+  CORE_ANCHOR[key] = null;
+  c.refresh();
+}
+function coreToolsHtml(key, nFree) {
+  if (!nFree) return "";
+  return (
+    `<div class="core-tools"><button type="button" class="core-all" onclick="coreBulk('${key}', 'all')" title="Pilih semua core bebas lalu klik Terapkan untuk menyambung semuanya"><i class="fa-solid fa-bolt"></i> Sambung semua (${fmtInt(nFree)})</button>` +
+    `<button type="button" onclick="coreBulk('${key}', 'none')">${String(key).startsWith("pz:") ? "Reset otomatis" : "Kosongkan"}</button><button type="button" onclick="coreBulk('${key}', 'inv')">Balik pilihan</button><small>Klik = pilih/lepas &middot; Shift+klik = rentang</small></div>`
+  );
+}
+function cmState(key) {
+  return (
+    CM[key] ||
+    (CM[key] = {
+      open: false,
+      data: null,
+      mode: "auto",
+      upCable: null,
+      upChosen: [],
+      text: "",
+      loading: false,
+      err: "",
+    })
+  );
+}
+function cmTarget(key) {
+  const [k, id] = String(key).split(":");
+  if (k === "tf") {
+    const x = ((TF.data.conn && TF.data.conn.rows) || []).find(
+      (r) => String(r.cable_id) === id,
+    );
+    return x ? { node: x.up_id, cable: x.cable_id } : null;
+  }
+  const i = Number(id),
+    p = PZ.prev && PZ.prev.links[i],
+    lk = PZ.links[i];
+  return p && p.from
+    ? { node: p.from.id, cable: lk && lk.cable_id ? lk.cable_id : null }
+    : null;
+}
+function cmRefresh(key) {
+  if (String(key).startsWith("tf:")) tfRenderBody();
+  else {
+    pzRender();
+    pzPreviewSoon();
+  }
+}
+async function cmToggle(key) {
+  const m = cmState(key);
+  m.open = !m.open;
+  if (m.open && !m.data) {
+    const t = cmTarget(key);
+    if (!t) {
+      m.open = false;
+      return;
+    }
+    m.loading = true;
+    cmRefresh(key);
+    try {
+      m.data = await apiRequest(
+        `/api/topofix/upstream?node_id=${Number(t.node)}${t.cable ? "&exclude_cable=" + Number(t.cable) : ""}`,
+      );
+      if (m.data.cables.length) m.upCable = m.data.cables[0].id;
+    } catch (err) {
+      m.err = err.message;
+    }
+    m.loading = false;
+  }
+  cmRefresh(key);
+}
+function cmSet(key, field, v) {
+  const m = cmState(key);
+  m[field] = v;
+  if (field === "mode" && v !== "auto") m.err = "";
+  if (field === "upCable") {
+    m.upChosen = [];
+    m.upCable = Number(v);
+  }
+  cmRefresh(key);
+}
+function cmAvail(m) {
+  if (!m.data || !m.data.junction) return [];
+  const cab = m.data.cables.find((c) => c.id === m.upCable);
+  const set = new Set([...(m.data.ready || []), ...(cab ? cab.free : [])]);
+  const order = cab ? cab.labels : [];
+  return [...set].sort(
+    (a, b) =>
+      (order.indexOf(a) < 0 ? 1e6 : order.indexOf(a)) -
+      (order.indexOf(b) < 0 ? 1e6 : order.indexOf(b)),
+  );
+}
+function cmUpClick(key, label, ev) {
+  const m = cmState(key),
+    av = cmAvail(m),
+    set = new Set(m.upChosen),
+    an = CORE_ANCHOR["up" + key];
+  if (ev && ev.shiftKey && an && av.includes(an)) {
+    const a = av.indexOf(an),
+      b = av.indexOf(label);
+    av.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((l) => set.add(l));
+  } else if (set.has(label)) set.delete(label);
+  else set.add(label);
+  CORE_ANCHOR["up" + key] = label;
+  m.upChosen = av.filter((l) => set.has(l));
+  cmRefresh(key);
+}
+// "5→1, 6→2" (nomor urut core hulu → nomor urut core kabel ini). Pemisah: → -> => > = :
+function cmParse(text, avail, downFree) {
+  const parts = String(text || "")
+    .split(/[,;\n]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  if (!parts.length) return { err: "Tempel daftar pemetaan, mis. 5→1, 6→2" };
+  const from = [],
+    via = [];
+  for (const pt of parts) {
+    const mm = /^(\d+)\s*(?:→|->|=>|>|=|:)\s*(\d+)$/.exec(pt);
+    if (!mm) return { err: `Format tidak dikenali: "${pt}" (contoh 5→1)` };
+    const u = coreLabelN(Number(mm[1])),
+      d = coreLabelN(Number(mm[2]));
+    if (!avail.includes(u))
+      return { err: `Core hulu ${mm[1]} tidak tersedia di aset hulu` };
+    if (!downFree.includes(d))
+      return { err: `Core ${mm[2]} pada kabel ini tidak bebas/ada` };
+    if (from.includes(u) || via.includes(d))
+      return { err: `Core ganda pada "${pt}"` };
+    from.push(u);
+    via.push(d);
+  }
+  return { from, via };
+}
+function cmPairs(key) {
+  const m = CM[key];
+  if (!m || !m.open || m.mode === "auto" || !m.data || !m.data.junction)
+    return null;
+  const c = coreCtx(key);
+  if (!c) return null;
+  const av = cmAvail(m);
+  if (m.mode === "manual") return cmParse(m.text, av, c.free);
+  const n = c.chosen.length;
+  if (!n)
+    return {
+      err: "Pilih core kabel ini terlebih dulu (atau tekan Sambung semua)",
+    };
+  const ups = m.upChosen.filter((l) => av.includes(l));
+  if (ups.length !== n)
+    return { err: `Pilih ${n} core hulu (terpilih ${ups.length})` };
+  return {
+    from: m.mode === "terbalik" ? ups.slice().reverse() : ups,
+    via: c.chosen.slice(),
+  };
+}
+function coreMapPayload(key) {
+  const r = cmPairs(key);
+  if (!r || r.err) return null;
+  return { from: r.from, via: r.via, upstream: cmState(key).upCable || null };
+}
+function coreMapHtml(key) {
+  const t = cmTarget(key);
+  if (!t) return "";
+  const m = cmState(key);
+  if (m.data && !m.data.junction) return "";
+  let h = `<div class="cm-box"><button type="button" class="cm-toggle ${m.open ? "on" : ""}" onclick="cmToggle('${key}')"><i class="fa-solid fa-shuffle"></i> Pemetaan core hulu → hilir${m.mode !== "auto" && m.open ? " (aktif)" : ""}</button>`;
+  if (m.open) {
+    if (m.loading) h += `<div class="cm-note">memuat core hulu…</div>`;
+    else if (m.err) h += `<div class="cm-note err">${escapeHtml(m.err)}</div>`;
+    else if (m.data && !m.data.junction)
+      h += `<div class="cm-note">Aset hulu bukan closure/slack; pemetaan hanya untuk sambungan di closure.</div>`;
+    else if (m.data) {
+      const av = cmAvail(m);
+      h += `<div class="cm-modes">${[
+        ["auto", "Otomatis"],
+        ["lurus", "Lurus"],
+        ["terbalik", "Terbalik"],
+        ["manual", "Manual (tempel daftar)"],
+      ]
+        .map(
+          ([v, l]) =>
+            `<label><input type="radio" name="cm-${key}" ${m.mode === v ? "checked" : ""} onchange="cmSet('${key}', 'mode', '${v}')"> ${l}</label>`,
+        )
+        .join("")}</div>`;
+      if (m.mode !== "auto") {
+        if (m.data.cables.length > 1)
+          h += `<label class="cm-cab">Kabel hulu <select onchange="cmSet('${key}', 'upCable', this.value)">${m.data.cables.map((c) => `<option value="${Number(c.id)}" ${c.id === m.upCable ? "selected" : ""}>${escapeHtml(c.name)} (${fmtInt(c.free.length)} bebas)</option>`).join("")}</select></label>`;
+        else if (m.data.cables.length === 1)
+          h += `<div class="cm-note">Kabel hulu: <b>${escapeHtml(m.data.cables[0].name)}</b></div>`;
+        if (m.mode === "manual") {
+          h += `<textarea class="cm-text" rows="3" placeholder="Tempel daftar: 5→1, 6→2 (nomor core hulu → nomor core kabel ini)" oninput="CM['${key}'].text = this.value" onchange="cmSet('${key}', 'text', this.value)">${escapeHtml(m.text)}</textarea>`;
+        } else {
+          h += `<div class="cm-sub">Core hulu yang dipakai <small>(${m.mode === "lurus" ? "urut naik: terkecil ↔ terkecil" : "terbalik: terkecil hulu ↔ terbesar hilir"})</small></div><div class="pz-core-grid">${
+            av
+              .slice(0, 288)
+              .map(
+                (l) =>
+                  `<button type="button" class="pz-core ${m.upChosen.includes(l) ? "on" : ""}" title="${escapeHtml(l)}" onclick="cmUpClick('${key}', '${escapeHtml(l)}', event)">${escapeHtml(pzShort(l))}</button>`,
+              )
+              .join("") || "<small>tidak ada core hulu tersedia</small>"
+          }</div>`;
+        }
+        const r = cmPairs(key);
+        if (r && r.err)
+          h += `<div class="cm-note err">${escapeHtml(r.err)}</div>`;
+        else if (r)
+          h += `<div class="cm-pairs">${r.from.map((u, i) => `<span>${escapeHtml(pzShort(u))} → ${escapeHtml(pzShort(r.via[i]))}</span>`).join("")}</div>`;
+      } else
+        h += `<div class="cm-note">Otomatis: core hulu terendah ↔ core kabel ini terendah (urut lurus).</div>`;
+    }
+  }
+  return h + `</div>`;
+}
+
+// ===== TOPOLOGI: diagram pohon dari POP; ikut berubah mengikuti puzzle; klik aset/kabel untuk edit, ikon X untuk hapus =====
+const TOPO = {
+  data: null,
+  root: null,
+  sel: null,
+  tbl: null,
+  loading: false,
+  dirty: true,
+  msg: "",
+  zoom: 1,
+  seq: 0,
+  limit: 250,
+};
+const TP = { COLW: 340, ROW: 64, PAD: 56 };
+const TP_CABCOL = {
+  Backbone: "#2638dc",
+  Feeder: "#ca8a04",
+  Distribution: "#0d9488",
+  Drop: "#db2777",
+};
+function topoOpen() {
+  const root = (PZ.chain[0] && PZ.chain[0].id) || TOPO.root;
+  if (root && (root !== TOPO.req || TOPO.dirty || !TOPO.data)) {
+    TOPO.req = root;
+    TOPO.root = root;
+    topoLoad();
+    return;
+  }
+  topoRender();
+}
+async function topoLoad() {
+  const seq = ++TOPO.seq;
+  TOPO.loading = true;
+  TOPO.msg = "";
+  topoRender();
+  try {
+    const d = await apiRequest(
+      `/api/topofix/topology?root=${Number(TOPO.req || TOPO.root)}&limit=${TOPO.limit}`,
+    );
+    if (seq !== TOPO.seq) return;
+    TOPO.data = d;
+    TOPO.dirty = false;
+    TOPO.root = d.root; // akar dinaikkan ke POP agar terbaca hulu (kiri) → hilir (kanan)
+  } catch (err) {
+    TOPO.data = null;
+    TOPO.msg = err.message;
+  }
+  TOPO.loading = false;
+  topoRender();
+}
+function topoSetRoot(v) {
+  TOPO.root = Number(v) || null;
+  TOPO.req = TOPO.root;
+  TOPO.sel = null;
+  TOPO.tbl = null;
+  TOPO.dirty = true;
+  if (TOPO.root) topoLoad();
+  else topoRender();
+}
+function topoMore() {
+  TOPO.limit = Math.min(800, TOPO.limit + 200);
+  TOPO.dirty = true;
+  topoLoad();
+}
+function topoZoom(f) {
+  TOPO.zoom = f === 0 ? 1 : Math.max(0.4, Math.min(2, TOPO.zoom * f));
+  topoRender();
+}
+// graf = data server + sambungan puzzle yang belum diterapkan (garis putus-putus)
+function topoGraph() {
+  const d = TOPO.data;
+  if (!d) return null;
+  const nodes = new Map(d.nodes.map((n) => [n.id, { ...n, virtual: false }]));
+  const cabs = d.cables.map((c) => ({ ...c }));
+  const have = new Set(
+    cabs
+      .map((c) => c.from + ":" + c.to)
+      .concat(cabs.map((c) => c.to + ":" + c.from)),
+  );
+  PZ.links.forEach((lk, i) => {
+    const a = PZ.chain[PZ.par[i]],
+      b = PZ.chain[i + 1];
+    if (!a || !b || lk.done || have.has(a.id + ":" + b.id)) return;
+    const A = nodes.get(a.id);
+    if (!A) return;
+    const pl = PZ.prev && PZ.prev.links[i],
+      cb = pl && pl.cable;
+    if (!nodes.has(b.id))
+      nodes.set(b.id, {
+        id: b.id,
+        name: b.name,
+        type: b.type,
+        status: "-",
+        depth: A.depth + 1,
+        parent: a.id,
+        virtual: true,
+        lat: b.lat,
+        lng: b.lng,
+      });
+    cabs.push({
+      id: "v" + i,
+      virtual: true,
+      name: cb ? cb.name : "kabel baru",
+      type: cb ? cb.type : "",
+      capacity: cb ? cb.capacity : "",
+      from: a.id,
+      to: b.id,
+      used: 0,
+      total: cb ? cb.total : 0,
+    });
+  });
+  const kids = new Map();
+  nodes.forEach((n) => {
+    if (n.parent != null && nodes.has(n.parent)) {
+      if (!kids.has(n.parent)) kids.set(n.parent, []);
+      kids.get(n.parent).push(n.id);
+    }
+  });
+  const pos = new Map();
+  let leaf = 0,
+    maxD = 0;
+  const stack = [[d.root, 0, false]];
+  // DFS tanpa rekursi: y = rata-rata anak, daun diberi baris berurutan
+  const order = [];
+  const st = [d.root],
+    dep = new Map([[d.root, 0]]);
+  while (st.length) {
+    const x = st.pop();
+    order.push(x);
+    (kids.get(x) || [])
+      .slice()
+      .reverse()
+      .forEach((c) => {
+        dep.set(c, dep.get(x) + 1);
+        st.push(c);
+      });
+  }
+  for (let i = order.length - 1; i >= 0; i--) {
+    const x = order[i],
+      ks = kids.get(x) || [];
+    maxD = Math.max(maxD, dep.get(x));
+    if (!ks.length) pos.set(x, { y: 0, leaf: true });
+  }
+  order.forEach((x) => {
+    const p = pos.get(x);
+    if (p && p.leaf) p.y = TP.PAD + leaf++ * TP.ROW;
+  });
+  for (let i = order.length - 1; i >= 0; i--) {
+    const x = order[i],
+      ks = kids.get(x) || [];
+    if (ks.length)
+      pos.set(x, { y: ks.reduce((s, c) => s + pos.get(c).y, 0) / ks.length });
+  }
+  order.forEach((x) => {
+    const p = pos.get(x);
+    p.x = TP.PAD + dep.get(x) * TP.COLW;
+  });
+  return {
+    nodes,
+    cabs,
+    kids,
+    pos,
+    order,
+    W: TP.PAD * 2 + maxD * TP.COLW + 120,
+    H: TP.PAD * 2 + Math.max(0, leaf - 1) * TP.ROW + 30,
+  };
+}
+function topoNodeClr(t) {
+  t = String(t).toUpperCase();
+  return t === "SLACK"
+    ? ["#111827", "#facc15"]
+    : [(NODE_TYPE_META[t] || { color: "#64748b" }).color, "#fff"];
+}
+function topoTrunc(s, n) {
+  s = String(s || "");
+  return s.length > n ? s.slice(0, n - 1) + "…" : s;
+}
+function topoSvg(g) {
+  const chainIdx = new Map(PZ.chain.map((n, i) => [n.id, i]));
+  let sv = "";
+  // kabel (garis siku antar induk dan anak)
+  const cabOf = new Map();
+  g.cabs.forEach((c) => {
+    cabOf.set(c.from + ":" + c.to, c);
+    cabOf.set(c.to + ":" + c.from, c);
+  });
+  g.order.forEach((id) => {
+    const n = g.nodes.get(id);
+    if (!n || n.parent == null || !g.pos.has(n.parent)) return;
+    const a = g.pos.get(n.parent),
+      b = g.pos.get(id),
+      c = cabOf.get(n.parent + ":" + id);
+    const x1 = a.x + 20,
+      x2 = b.x - 20,
+      xm = (x1 + x2) / 2;
+    const col =
+      c && c.virtual ? "#7c3aed" : TP_CABCOL[c && c.type] || "#64748b";
+    const sel =
+      TOPO.sel &&
+      TOPO.sel.k === "cable" &&
+      c &&
+      String(TOPO.sel.id) === String(c.id);
+    sv += `<g class="tp-e ${sel ? "sel" : ""}" ${c ? `data-e="${escapeHtml(String(c.id))}"` : ""} ${c ? `onclick="topoSel('cable', '${escapeHtml(String(c.id))}')"` : ""}><path d="M${x1} ${a.y} H${xm} V${b.y} H${x2}" fill="none" stroke="${col}" stroke-width="2.5" ${c && c.virtual ? 'stroke-dasharray="6 5"' : ""}/>`;
+    if (c) {
+      const lx = xm + 24,
+        tx = `${topoTrunc(c.name, 20)}`,
+        cap = c.virtual ? "baru" : `${c.used}/${c.total} core`;
+      sv += `<text class="tp-cl" x="${lx}" y="${b.y - 6}" text-anchor="start">${escapeHtml(tx)}</text><text class="tp-cs" x="${lx}" y="${b.y + 9}" text-anchor="start">${escapeHtml(c.capacity || "")} · ${escapeHtml(cap)}</text>`;
+      if (!c.virtual && can("asset.delete"))
+        sv += `<g class="tp-x" transform="translate(${xm + 11} ${b.y - 12})" onclick="event.stopPropagation(); topoDel('cable', ${Number(c.id)})"><title>Hapus kabel</title><circle r="7"/><path d="M-2.6 -2.6L2.6 2.6M2.6 -2.6L-2.6 2.6"/></g>`;
+    }
+    sv += `</g>`;
+  });
+  g.order.forEach((id) => {
+    const n = g.nodes.get(id),
+      p = g.pos.get(id),
+      t = String(n.type).toUpperCase();
+    const [bg, fg] = topoNodeClr(t),
+      sel = TOPO.sel && TOPO.sel.k === "node" && TOPO.sel.id === id,
+      ci = chainIdx.get(id);
+    sv +=
+      `<g class="tp-n ${sel ? "sel" : ""} ${n.virtual ? "virt" : ""}" data-n="${Number(id)}" transform="translate(${p.x} ${p.y})" onclick="topoSel('node', ${Number(id)})">` +
+      `${ci != null ? `<circle r="25" class="tp-ring"/>` : ""}<circle r="19" fill="${bg}" stroke="#fff" stroke-width="2"/>` +
+      `<svg x="-10" y="-10" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${fg}" style="color:${fg}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${MAP_GLYPH[t] || MAP_GLYPH.ODP}</svg>` +
+      `<text class="tp-nl" y="35" text-anchor="middle">${escapeHtml(topoTrunc(n.name, 24))}</text>` +
+      `${n.pt ? `<text class="tp-cs" y="48" text-anchor="middle">${n.pt.kind === "otb" ? "OTB " + n.pt.used + "/" + n.pt.total + " port" : n.pt.used + "/" + n.pt.total + " core diteruskan"}</text>` : ""}` +
+      `${ci != null ? `<g transform="translate(-16 -16)"><circle r="8" fill="#0f172a" stroke="#fff"/><text class="tp-bn" y="3.5" text-anchor="middle">${ci + 1}</text></g>` : ""}` +
+      `${can("asset.delete") && !n.virtual && id !== TOPO.root ? `<g class="tp-x" transform="translate(16 -16)" onclick="event.stopPropagation(); topoDel('node', ${Number(id)})"><title>Hapus aset</title><circle r="8"/><path d="M-3 -3L3 3M3 -3L-3 3"/></g>` : ""}</g>`;
+  });
+  return sv;
+}
+function topoRender() {
+  const box = $id("tf-topo");
+  if (!box || TF.tab !== "topo") return;
+  const pops =
+    typeof allInventoryData !== "undefined"
+      ? allInventoryData.filter(
+          (x) =>
+            x.category === "NODE" && String(x.type).toUpperCase() === "POP",
+        )
+      : [];
+  let h =
+    `<div class="tp-bar"><label>Mulai dari POP <select onchange="topoSetRoot(this.value)"><option value="">- pilih -</option>${pops.map((x) => `<option value="${Number(x.id)}" ${Number(x.id) === TOPO.root ? "selected" : ""}>${escapeHtml(x.name)}</option>`).join("")}</select></label>` +
+    `<button type="button" class="tf-corebtn" onclick="TOPO.dirty = true; topoOpen()"><i class="fa-solid fa-rotate"></i> Muat ulang</button>` +
+    `<span class="tp-zoom"><button type="button" onclick="topoZoom(0.8)">−</button><button type="button" onclick="topoZoom(0)">100%</button><button type="button" onclick="topoZoom(1.25)">+</button></span>` +
+    `<span class="tp-leg"><i style="background:#16a34a"></i>sudah ada <i class="v"></i>puzzle (belum diterapkan) <i class="r"></i>rantai puzzle</span></div>`;
+  if (TOPO.msg)
+    h += `<div class="pz-note err"><i class="fa-solid fa-circle-xmark"></i> ${escapeHtml(TOPO.msg)}</div>`;
+  if (!TOPO.root)
+    h += `<div class="pz-empty">Pilih POP atau mulai merangkai di tab Rangkai; diagram akan mengikuti rantai Anda.</div>`;
+  else if (TOPO.loading && !TOPO.data)
+    h += `<div class="pz-empty">Memuat topologi…</div>`;
+  else if (TOPO.data) {
+    const g = topoGraph(),
+      z = TOPO.zoom;
+    TOPO.g = g;
+    h +=
+      `<div class="tp-main"><div class="tp-canvas"><svg class="tp-svg" width="${Math.round(g.W * z)}" height="${Math.round(g.H * z)}" viewBox="0 0 ${g.W} ${g.H}">${topoSvg(g)}</svg></div><div class="tp-panel" id="tp-panel">${topoPanelHtml(g)}</div></div>` +
+      `<div class="tp-foot">${g.nodes.size} aset · ${g.cabs.length} kabel${TOPO.data.truncated ? ` · dibatasi ${TOPO.limit} aset <button type="button" class="tf-corebtn" onclick="topoMore()">tampilkan lebih banyak</button>` : ""}</div>`;
+  }
+  box.innerHTML = h;
+}
+// pilih aset/kabel: hanya sorotan dan panel yang diperbarui (diagram besar tidak digambar ulang)
+function topoPaint() {
+  const box = $id("tf-topo");
+  if (!box) return;
+  box
+    .querySelectorAll(".tp-n.sel, .tp-e.sel")
+    .forEach((e) => e.classList.remove("sel"));
+  const sel = TOPO.sel;
+  if (sel) {
+    const e = box.querySelector(
+      sel.k === "node"
+        ? `.tp-n[data-n="${sel.id}"]`
+        : `.tp-e[data-e="${String(sel.id).replace(/"/g, "")}"]`,
+    );
+    if (e) e.classList.add("sel");
+  }
+  const pn = $id("tp-panel");
+  if (pn && TOPO.g) pn.innerHTML = topoPanelHtml(TOPO.g);
+}
+async function topoSel(k, id) {
+  TOPO.sel = { k, id: k === "node" ? Number(id) : String(id) };
+  TOPO.tbl = null;
+  TOPO.pmsg = "";
+  topoPaint();
+  if (k === "cable" && String(id).startsWith("v")) return;
+  const key = k + ":" + id;
+  try {
+    const r = await apiRequest(
+      `/api/topofix/core-table?${k === "node" ? "node_id" : "cable_id"}=${Number(id)}`,
+    );
+    if (!TOPO.sel || TOPO.sel.k + ":" + TOPO.sel.id !== key) return;
+    TOPO.tbl = { key, rows: r.rows, truncated: r.truncated };
+  } catch (err) {
+    TOPO.tbl = { key, rows: [], err: err.message };
+  }
+  topoPaint();
+}
+function topoPanelHtml(g) {
+  const sel = TOPO.sel;
+  if (!sel)
+    return `<div class="tp-hint"><b>Klik aset atau kabel</b> pada diagram untuk melihat tabel koneksi core (hulu → hilir) dan mengeditnya. Ikon <span class="tp-xi">×</span> menghapus. Garis ungu putus-putus = sambungan puzzle yang belum diterapkan.</div>`;
+  const stOpt = (v) =>
+    ["Active", "Maintenance", "Cut/Broken"]
+      .map((s) => `<option ${s === v ? "selected" : ""}>${s}</option>`)
+      .join("");
+  let h = "";
+  if (sel.k === "node") {
+    const n = g.nodes.get(sel.id);
+    if (!n) return "";
+    const ci = PZ.chain.findIndex((x) => x.id === n.id);
+    h += `<div class="tp-ph"><span class="pz-ic t-${escapeHtml(String(n.type).toUpperCase())}">${mapGlyph(n.type, 16)}</span><div><b>${escapeHtml(n.name)}</b><small>${escapeHtml(n.type)}${n.virtual ? " · belum terhubung (puzzle)" : ""}</small></div></div>`;
+    if (!n.virtual && can("asset.write")) {
+      h +=
+        `<div class="tp-form"><label>Nama<input id="tp-name" type="text" value="${escapeHtml(n.name)}" maxlength="120"></label>` +
+        `<label>Status<select id="tp-status">${stOpt(n.status)}</select></label>` +
+        `<label>Kapasitas<input id="tp-cap" type="text" value="${escapeHtml(n.capacity || "")}" maxlength="60"></label>` +
+        `<label>Latitude<input id="tp-lat" type="number" step="any" value="${Number(n.latitude ?? n.lat)}"></label><label>Longitude<input id="tp-lng" type="number" step="any" value="${Number(n.longitude ?? n.lng)}"></label></div>` +
+        `<div class="tp-act"><button type="button" class="data-primary" onclick="topoSave()"><i class="fa-solid fa-floppy-disk"></i> Update</button>` +
+        `${ci >= 0 && String(n.type).toUpperCase() !== "PELANGGAN" ? `<button type="button" class="data-ghost" onclick="topoToPuzzle(${ci})"><i class="fa-solid fa-code-branch"></i> Lanjutkan rantai dari sini</button>` : ""}</div>`;
+    }
+  } else {
+    const c = g.cabs.find((x) => String(x.id) === String(sel.id));
+    if (!c) return "";
+    h += `<div class="tp-ph"><span class="pz-ic" style="background:${c.virtual ? "#7c3aed" : TP_CABCOL[c.type] || "#64748b"}">${mapGlyph("CABLE", 16)}</span><div><b>${escapeHtml(c.name)}</b><small>${c.virtual ? "kabel baru (belum diterapkan; ubah di tab Rangkai)" : `${escapeHtml(c.type)} · ${c.used}/${c.total} core terpakai · ${fmtInt(c.length_m)} m`}</small></div></div>`;
+    if (!c.virtual && can("asset.write")) {
+      h +=
+        `<div class="tp-form"><label>Nama<input id="tp-name" type="text" value="${escapeHtml(c.name)}" maxlength="120"></label>` +
+        `<label>Jenis<select id="tp-type">${["Backbone", "Feeder", "Distribution", "Drop"].map((s) => `<option ${s === c.type ? "selected" : ""}>${s}</option>`).join("")}</select></label>` +
+        `<label>Status<select id="tp-status">${stOpt(c.status)}</select></label><label>Kapasitas<input id="tp-cap" type="text" value="${escapeHtml(c.capacity || "")}" maxlength="20"></label>` +
+        `<label>Pemasangan<select id="tp-inst">${["Udara", "Tanah"].map((s) => `<option ${s === c.installation ? "selected" : ""}>${s}</option>`).join("")}</select></label></div>` +
+        `<div class="tp-act"><button type="button" class="data-primary" onclick="topoSave()"><i class="fa-solid fa-floppy-disk"></i> Update</button></div>`;
+    }
+  }
+  if (TOPO.pmsg)
+    h += `<div class="pz-note ${TOPO.pmsg.startsWith("!") ? "err" : "warn"}">${escapeHtml(TOPO.pmsg.replace(/^!/, ""))}</div>`;
+  h += `<div class="tp-th">Tabel koneksi core <small>hulu → kabel/core → hilir</small></div>`;
+  if (String(sel.id).startsWith("v"))
+    return h + `<div class="pz-empty">Belum ada sambungan core.</div>`;
+  const t = TOPO.tbl;
+  if (!t) return h + `<div class="pz-empty">memuat…</div>`;
+  if (t.err) return h + `<div class="pz-note err">${escapeHtml(t.err)}</div>`;
+  if (!t.rows.length)
+    return h + `<div class="pz-empty">Belum ada sambungan core.</div>`;
+  const cell = (x) =>
+    `${escapeHtml(x.name)}<small>${escapeHtml(x.port || "")}</small>`;
+  h +=
+    `<div class="tp-tbl"><table><thead><tr><th>Hulu</th><th></th><th>Kabel · core</th><th></th><th>Hilir</th>${can("connection.delete") ? "<th></th>" : ""}</tr></thead><tbody>` +
+    t.rows
+      .map(
+        (r) =>
+          `<tr><td>${cell(r.hulu)}</td><td class="ar">→</td><td>${r.kabel ? `${escapeHtml(r.kabel.name)}<small>${escapeHtml(r.kabel.core || "")}</small>` : `<small>(joint)</small>`}</td><td class="ar">→</td><td>${cell(r.hilir)}</td>` +
+          `${can("connection.delete") ? `<td><button type="button" class="tp-del" title="Lepas sambungan ini" onclick="topoUnlink(${Number(r.id)})">×</button></td>` : ""}</tr>`,
+      )
+      .join("") +
+    `</tbody></table></div>` +
+    (t.truncated ? `<div class="pz-empty">Hanya 600 baris pertama.</div>` : "");
+  return h;
+}
+async function topoSave() {
+  const sel = TOPO.sel;
+  if (!sel) return;
+  const v = (id) => {
+    const e = $id(id);
+    return e ? e.value.trim() : undefined;
+  };
+  const body = {
+    name: v("tp-name"),
+    status: v("tp-status"),
+    capacity: v("tp-cap"),
+  };
+  if (!body.name) {
+    TOPO.pmsg = "!Nama tidak boleh kosong";
+    return topoRender();
+  }
+  let url;
+  if (sel.k === "node") {
+    url = `/api/nodes/${sel.id}`;
+    body.latitude = parseFloat(v("tp-lat"));
+    body.longitude = parseFloat(v("tp-lng"));
+    if (!isFinite(body.latitude) || !isFinite(body.longitude)) {
+      TOPO.pmsg = "!Koordinat tidak valid";
+      return topoRender();
+    }
+  } else {
+    url = `/api/cables/${sel.id}`;
+    body.type = v("tp-type");
+    body.installation = v("tp-inst");
+  }
+  try {
+    await apiRequest(url, "PUT", body);
+    TOPO.pmsg = "Tersimpan.";
+    TOPO.dirty = true;
+    PZ.chain.forEach((x) => {
+      if (sel.k === "node" && x.id === sel.id) {
+        x.name = body.name;
+        x.lat = body.latitude;
+        x.lng = body.longitude;
+      }
+    });
+    try {
+      await loadData();
+    } catch (_) {
+      /* abaikan */
+    }
+    PZ.prev = null;
+    if (PZ.chain.length > 1) pzPreviewSoon();
+    await topoLoad();
+    topoSel(sel.k, sel.id);
+  } catch (err) {
+    TOPO.pmsg = "!" + err.message;
+    topoRender();
+  }
+}
+// buang aset/kabel yang dihapus dari rantai puzzle
+function pzDropNode(id) {
+  const idx = PZ.chain.findIndex((n) => n.id === id);
+  if (idx < 0) return;
+  const gone = new Set([idx]);
+  for (let i = 1; i < PZ.chain.length; i++)
+    if (gone.has(PZ.par[i - 1])) gone.add(i);
+  const keep = PZ.chain.map((_, i) => i).filter((i) => !gone.has(i)),
+    remap = new Map(keep.map((o, n) => [o, n]));
+  const chain = keep.map((i) => PZ.chain[i]),
+    par = [],
+    links = [];
+  keep.forEach((i) => {
+    if (i > 0) {
+      par.push(remap.get(PZ.par[i - 1]));
+      links.push(PZ.links[i - 1]);
+    }
+  });
+  PZ.chain = chain;
+  PZ.par = par;
+  PZ.links = links;
+  PZ.cur = -1;
+  PZ.prev = null;
+  PZ.sel = null;
+  PZ.doneN = chain.length ? Math.min(PZ.doneN, chain.length) : 0;
+  Object.keys(CM).forEach((k) => delete CM[k]);
+}
+function pzDropCable(cid) {
+  PZ.links.forEach((lk) => {
+    if (lk.cable_id === cid) {
+      lk.cable_id = null;
+      lk.done = false;
+      lk.dn = null;
+      lk.fresh = true;
+      lk.cores = null;
+      lk.n = null;
+    }
+  });
+  PZ.prev = null;
+}
+async function topoDel(k, id) {
+  const g = topoGraph();
+  if (!g) return;
+  const nm =
+    k === "node"
+      ? (g.nodes.get(id) || {}).name
+      : (g.cabs.find((c) => c.id === id) || {}).name;
+  if (
+    !confirm(
+      `Hapus ${k === "node" ? "aset" : "kabel"} "${nm}"? Sambungan core yang menyentuhnya ikut terhapus dan tercatat di Riwayat.`,
+    )
+  )
+    return;
+  try {
+    await apiRequest(
+      `/api/${k === "node" ? "nodes" : "cables"}/${id}`,
+      "DELETE",
+    );
+    if (k === "node") pzDropNode(id);
+    else pzDropCable(id);
+    TOPO.sel = null;
+    TOPO.tbl = null;
+    TOPO.dirty = true;
+    TOPO.pmsg = "";
+    try {
+      await loadData();
+    } catch (_) {
+      /* abaikan */
+    }
+    if (PZ.chain.length > 1) pzPreviewSoon();
+    await topoLoad();
+  } catch (err) {
+    TOPO.pmsg = "!Gagal menghapus: " + err.message;
+    topoRender();
+  }
+}
+async function topoUnlink(cid) {
+  if (!confirm("Lepas sambungan core ini?")) return;
+  try {
+    await apiRequest(`/api/connections/${cid}`, "DELETE");
+    TOPO.dirty = true;
+    const s = TOPO.sel;
+    try {
+      await loadData();
+    } catch (_) {
+      /* abaikan */
+    }
+    await topoLoad();
+    if (s) topoSel(s.k, s.id);
+  } catch (err) {
+    TOPO.pmsg = "!Gagal: " + err.message;
+    topoRender();
+  }
+}
+function topoToPuzzle(ci) {
+  tfTab("puzzle");
+  pzBranch(ci);
+}
+
+// ----- Minimap puzzle: peta kecil di panel samping, terhubung dengan daftar pilihan -----
+const PZM = {
+  all: false,
+  map: null,
+  cab: null,
+  bg: null,
+  chain: null,
+  cand: null,
+  hl: null,
+  tiles: null,
+  canvas: null,
+  candMap: {},
+};
+const PZ_COL = {
+  POP: "#dc2626",
+  CLOSURE: "#7c3aed",
+  SLACK: "#f59e0b",
+  ODP: "#16a34a",
+  PELANGGAN: "#0ea5e9",
+};
+// ikon aset pada minimap = ikon yang sama dengan peta utama (glyph + warna per jenis)
+function pzIconMk(t, kind, num) {
+  const sz = kind === "chain" ? 32 : kind === "cand" ? 28 : 24;
+  const html = `<span class="pzm-i t-${escapeHtml(t)} ${kind}">${mapGlyph(t, kind === "chain" ? 18 : 15)}${num ? `<b>${num}</b>` : ""}</span>`;
+  return L.divIcon({
+    className: "pzm-wrap",
+    html,
+    iconSize: [sz, sz],
+    iconAnchor: [sz / 2, sz / 2],
+  });
+}
+function pzLegendHtml() {
+  return (
+    ["POP", "CLOSURE", "SLACK", "ODP", "PELANGGAN"]
+      .map(
+        (t) =>
+          `<span class="pz-lg"><span class="pz-ic t-${t}">${mapGlyph(t, 12)}</span>${NODE_TYPE_META[t].label.replace(/ \/.*|Joint /g, "")}</span>`,
+      )
+      .join("") +
+    `<span class="pz-lg"><span class="pzm-i t-ODP cand lg"></span>Kandidat</span>`
+  );
+}
+function pzMapInit() {
+  if (PZM.map || typeof L === "undefined" || !$id("pz-map")) return;
+  try {
+    PZM.canvas = L.canvas({ padding: 0.2 });
+    const lg = document.querySelector(".pz-legend");
+    if (lg) lg.innerHTML = pzLegendHtml();
+    const c = map.getCenter();
+    PZM.map = L.map("pz-map", {
+      zoomControl: true,
+      attributionControl: false,
+      preferCanvas: true,
+    }).setView([c.lat, c.lng], Math.min(17, map.getZoom() || 16));
+    PZM.tiles = L.tileLayer(
+      "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      { maxZoom: 19 },
+    ).addTo(PZM.map);
+    PZM.cab = L.layerGroup().addTo(PZM.map);
+    PZM.bg = L.layerGroup().addTo(PZM.map);
+    PZM.chain = L.layerGroup().addTo(PZM.map);
+    PZM.cand = L.layerGroup().addTo(PZM.map);
+    PZM.hl = L.layerGroup().addTo(PZM.map);
+    PZM.map.on("moveend", pzMapBg);
+    PZM.map.on("zoomstart click", () => OVLM.collapse());
+    setTimeout(() => {
+      try {
+        PZM.map.invalidateSize();
+        pzMapBg();
+      } catch (_) {
+        /* abaikan */
+      }
+    }, 120);
+  } catch (_) {
+    PZM.map = null;
+  }
+}
+function pzMapBase(sat) {
+  if (!PZM.map) return;
+  try {
+    PZM.map.removeLayer(PZM.tiles);
+    PZM.tiles = sat
+      ? L.tileLayer("https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", {
+          maxZoom: 20,
+        })
+      : L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19,
+        });
+    PZM.tiles.addTo(PZM.map);
+    PZM.tiles.bringToBack();
+    $id("pz-b-map").className = sat ? "" : "on";
+    $id("pz-b-sat").className = sat ? "on" : "";
+  } catch (_) {
+    /* abaikan */
+  }
+}
+function pzMapSync() {
+  if (!PZM.map) return;
+  const c = map.getCenter();
+  PZM.map.setView([c.lat, c.lng], Math.min(18, map.getZoom()));
+}
+// aturan tampil sama dengan peta utama (folder dan lapisan yang dimatikan tidak muncul)
+function pzNodeShown(x) {
+  const mk = markersMap["node:" + x.id],
+    it = mk && mk._vi;
+  if (!it) return true;
+  if (FT.off.has(it.folder)) return false;
+  const g = ZOOM_GATES.find((z) => z.group === it.group);
+  return g
+    ? !!g.wants
+    : typeof map.hasLayer === "function"
+      ? map.hasLayer(it.group)
+      : true;
+}
+const PZ_NEXT = {
+  POP: ["CLOSURE", "SLACK"],
+  CLOSURE: ["CLOSURE", "SLACK", "ODP", "PELANGGAN"],
+  SLACK: ["CLOSURE", "SLACK", "ODP", "PELANGGAN"],
+  ODP: ["PELANGGAN"],
+  PELANGGAN: [],
+};
+function pzMapAll(on) {
+  PZM.all = !!on;
+  pzMapBg();
+}
+function pzMapBg() {
+  if (!PZM.map || !PZM.bg) return;
+  OVLM.collapse();
+  PZM.bg.clearLayers();
+  pzMapCables();
+  const b = PZM.map.getBounds().pad(0.05),
+    c = PZM.map.getCenter(),
+    inChain = new Set(PZ.chain.map((n) => Number(n.id)));
+  if (PZ.pick.open)
+    (PZ.pick.items || []).forEach((it) => inChain.add(Number(it.id))); // kandidat digambar di lapisan sendiri: jangan ganda
+  let list = allInventoryData.filter(
+    (x) =>
+      x.category === "NODE" &&
+      PZ_COL[String(x.type).toUpperCase()] &&
+      Number.isFinite(x.lat) &&
+      !inChain.has(Number(x.id)) &&
+      b.contains([x.lat, x.lng]) &&
+      pzNodeShown(x),
+  );
+  const seen0 = list.length;
+  let ref = c,
+    MAXN = 60,
+    mode = "";
+  if (!PZM.all) {
+    const cur = PZ.chain.length ? PZ.chain[pzCur()] : null;
+    if (cur) {
+      const ok = PZ_NEXT[String(cur.type).toUpperCase()] || [];
+      list = list.filter((x) => ok.includes(String(x.type).toUpperCase()));
+      if (Number.isFinite(cur.lat)) ref = L.latLng(cur.lat, cur.lng);
+      mode = `jenis yang valid setelah ${cur.type}`;
+    } else {
+      const pops = list.filter((x) => String(x.type).toUpperCase() === "POP");
+      if (pops.length) list = pops;
+      mode = "POP (titik awal)";
+    }
+  } else {
+    MAXN = 200;
+    mode = "semua jenis";
+  }
+  const total = list.length;
+  const d2 = (q) => (q.lat - ref.lat) ** 2 + (q.lng - ref.lng) ** 2;
+  if (total > MAXN) {
+    list.sort((p, q) => d2(p) - d2(q));
+    list = list.slice(0, MAXN);
+  }
+  list.forEach((x) => {
+    const t = String(x.type).toUpperCase();
+    const m = L.marker([x.lat, x.lng], { icon: pzIconMk(t, "") });
+    m.bindTooltip(`${escapeHtml(x.name)} &middot; ${escapeHtml(x.type)}`, {
+      direction: "top",
+    });
+    m.on("click", () => {
+      if (OVLM.click(m)) return;
+      pzAddNode({
+        id: Number(x.id),
+        name: x.name,
+        type: x.type,
+        lat: x.lat,
+        lng: x.lng,
+      });
+    });
+    m.addTo(PZM.bg);
+  });
+  OVLM.badges();
+  const h = $id("pz-maphint");
+  if (h)
+    h.textContent = `${list.length} aset ditampilkan (${mode}${total > MAXN ? `; ${MAXN} terdekat dari ${total}` : ""}${seen0 > total ? `; ${seen0 - total} jenis lain disembunyikan` : ""}). Klik titik untuk menambahkannya ke rantai.`;
+}
+function pzMapRender() {
+  if (!PZM.map) return;
+  PZM.chain.clearLayers();
+  PZM.cand.clearLayers();
+  PZM.candMap = {};
+  const pts = PZ.chain.map((n) => [n.lat, n.lng]);
+  for (let i = 0; i < PZ.links.length; i++) {
+    const a = PZ.chain[PZ.par[i]],
+      b = PZ.chain[i + 1];
+    if (!a || !b || !Number.isFinite(a.lat) || !Number.isFinite(b.lat))
+      continue;
+    const p = PZ.prev && PZ.prev.links[i],
+      lk = PZ.links[i],
+      neu = p && p.mode === "baru" && !lk.done;
+    L.polyline(
+      [
+        [a.lat, a.lng],
+        [b.lat, b.lng],
+      ],
+      {
+        color: lk.done ? "#16a34a" : neu ? "#7c3aed" : "#0f766e",
+        weight: PZ.sel === i ? 7 : lk.done ? 5 : 4,
+        dashArray: neu ? "6 6" : null,
+        opacity: 0.9,
+        interactive: false,
+      },
+    ).addTo(PZM.chain);
+  }
+  PZ.chain.forEach((n, i) => {
+    if (!Number.isFinite(n.lat)) return;
+    const t = String(n.type).toUpperCase();
+    const mk = L.marker([n.lat, n.lng], {
+      icon: pzIconMk(t, "chain", i + 1),
+      zIndexOffset: 1000,
+    });
+    mk.bindTooltip(escapeHtml(n.name), {
+      permanent: true,
+      direction: "right",
+      offset: [10, 0],
+      className: "pzm-tip",
+    });
+    mk.addTo(PZM.chain);
+  });
+  if (PZ.pick.open) {
+    PZ.pick.items.forEach((x) => {
+      if (!Number.isFinite(x.lat)) return;
+      const m = L.marker([x.lat, x.lng], {
+        icon: pzIconMk(String(x.type).toUpperCase(), "cand"),
+        zIndexOffset: 500,
+      });
+      m.bindTooltip(
+        `${escapeHtml(x.name)}${x.distance_m != null ? " &middot; " + fmtInt(x.distance_m) + " m" : ""}`,
+        { direction: "top" },
+      );
+      m.on("click", () => {
+        if (OVLM.click(m)) return;
+        pzAddNode(x);
+      });
+      m.addTo(PZM.cand);
+      PZM.candMap[x.id] = x;
+    });
+  }
+  pzMapBg();
+  try {
+    pzMainDraw();
+  } catch (_) {
+    /* overlay peta utama opsional */
+  }
+}
+// rantai (termasuk cabang) juga digambar di peta utama
+let PZMAIN = null;
+function pzMainDraw() {
+  if (typeof map === "undefined") return;
+  if (!PZMAIN) PZMAIN = L.layerGroup();
+  PZMAIN.clearLayers();
+  if (!PZ.chain.length) {
+    if (map.hasLayer(PZMAIN)) map.removeLayer(PZMAIN);
+    return;
+  }
+  if (!map.hasLayer(PZMAIN)) PZMAIN.addTo(map);
+  PZ.links.forEach((lk, i) => {
+    const a = PZ.chain[PZ.par[i]],
+      b = PZ.chain[i + 1],
+      p = PZ.prev && PZ.prev.links[i];
+    if (!a || !b || !Number.isFinite(a.lat) || !Number.isFinite(b.lat)) return;
+    const neu = p && p.mode === "baru" && !lk.done;
+    L.polyline(
+      [
+        [a.lat, a.lng],
+        [b.lat, b.lng],
+      ],
+      {
+        color: lk.done ? "#16a34a" : neu ? "#7c3aed" : "#0f766e",
+        weight: 6,
+        dashArray: neu ? "8 8" : null,
+        opacity: 0.85,
+        interactive: false,
+      },
+    ).addTo(PZMAIN);
+  });
+  PZ.chain.forEach((n, i) => {
+    if (!Number.isFinite(n.lat)) return;
+    const mk = L.marker([n.lat, n.lng], {
+      icon: pzIconMk(String(n.type).toUpperCase(), "chain", i + 1),
+      zIndexOffset: 900,
+      interactive: false,
+    });
+    mk.bindTooltip(escapeHtml(n.name), {
+      permanent: true,
+      direction: "right",
+      offset: [12, 0],
+      className: "pzm-tip",
+    });
+    mk.addTo(PZMAIN);
+  });
+}
+// kabel yang sudah ada di area minimap (termasuk yang baru diterapkan)
+function pzMapCables(force) {
+  if (!PZM.map || !PZM.cab) return;
+  const b = PZM.map.getBounds().pad(0.1),
+    sig = b.toBBoxString() + "|" + PZM.map.getZoom() + "|" + (PZM.cabVer || 0);
+  if (!force && PZM.cabSig === sig) return; // peta/data tidak berubah: tidak perlu gambar ulang
+  PZM.cabSig = sig;
+  PZM.cab.clearLayers();
+  let n = 0;
+  for (const k in markersMap) {
+    if (!k.startsWith("cable:") || n >= 800) continue;
+    const ly = markersMap[k];
+    let ll;
+    try {
+      ll = ly.getLatLngs();
+    } catch (_) {
+      continue;
+    }
+    let bb = null;
+    try {
+      bb = ly.getBounds();
+    } catch (_) {
+      bb = null;
+    }
+    if (!bb || !b.intersects(bb)) continue;
+    const flat =
+      Array.isArray(ll) && ll.length && Array.isArray(ll[0])
+        ? ll.flat(Infinity)
+        : ll;
+    if (!flat || !flat.length) continue;
+    L.polyline(flat, {
+      renderer: PZM.canvas,
+      color: (ly.options && ly.options.color) || "#64748b",
+      weight: 3,
+      opacity: 0.75,
+      interactive: false,
+    }).addTo(PZM.cab);
+    n++;
+  }
+}
+function pzMapFit() {
+  if (!PZM.map) return;
+  const pts = PZ.chain
+    .filter((n) => Number.isFinite(n.lat))
+    .map((n) => [n.lat, n.lng]);
+  try {
+    if (pts.length === 1)
+      PZM.map.setView(pts[0], Math.max(PZM.map.getZoom(), 17));
+    else if (pts.length > 1)
+      PZM.map.fitBounds(L.latLngBounds(pts).pad(0.35), { maxZoom: 18 });
+  } catch (_) {
+    /* abaikan */
+  }
+}
+function pzHover(id) {
+  if (!PZM.map || !PZM.hl) return;
+  PZM.hl.clearLayers();
+  const x =
+    id != null
+      ? PZM.candMap[id] ||
+        PZ.pick.items.find((i) => Number(i.id) === Number(id))
+      : null;
+  if (!x || !Number.isFinite(x.lat)) return;
+  L.circleMarker([x.lat, x.lng], {
+    radius: 16,
+    weight: 4,
+    color: "#f97316",
+    fillOpacity: 0,
+    interactive: false,
+  }).addTo(PZM.hl);
+  try {
+    if (!PZM.map.getBounds().contains([x.lat, x.lng]))
+      PZM.map.panTo([x.lat, x.lng]);
+  } catch (_) {
+    /* abaikan */
+  }
+}

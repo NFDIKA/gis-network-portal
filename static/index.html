@@ -26,7 +26,7 @@
     />
 
     <!-- External Custom CSS -->
-    <link rel="stylesheet" href="style.css?v=20261008i" />
+    <link rel="stylesheet" href="style.css?v=20261009k" />
   </head>
   <body>
     <div id="net-bar" class="net-bar"></div>
@@ -69,6 +69,14 @@
           >
           <a
             class="nav-item"
+            id="nav-topofix"
+            onclick="openTopofixModal()"
+            style="display: none"
+            ><i class="fa-solid fa-diagram-project"></i
+            ><span>Rapikan Topologi</span></a
+          >
+          <a
+            class="nav-item"
             id="nav-plan"
             onclick="openPlanPanel()"
             style="display: none"
@@ -100,6 +108,14 @@
             onclick="openWilayahModal()"
             style="display: none"
             ><i class="fa-solid fa-earth-asia"></i><span>Wilayah</span></a
+          >
+          <a
+            class="nav-item"
+            id="nav-naming"
+            onclick="openNamingModal()"
+            style="display: none"
+            ><i class="fa-solid fa-wand-magic-sparkles"></i
+            ><span>Format Nama Aset</span></a
           >
         </nav>
         <div class="user-box" id="user-box" style="display: none">
@@ -1439,8 +1455,7 @@
             <input
               type="text"
               id="asset-name"
-              required
-              placeholder="Contoh: ODP-BJM-001"
+              placeholder="Kosongkan untuk nama otomatis (kecuali POP / Pelanggan)"
               oninput="assetUniqDebounce()"
               style="
                 width: 100%;
@@ -1643,6 +1658,7 @@
           <div id="cust-box" class="ap-box" style="display: none">
             <div class="ap-title">
               <i class="fa-solid fa-user-tag"></i> Data layanan pelanggan
+              <small>(opsional)</small>
             </div>
             <div class="ap-grid">
               <label
@@ -3273,6 +3289,80 @@
       </div>
     </div>
 
+    <!-- ===== FORMAT NAMA ASET OTOMATIS ===== -->
+    <div id="modal-naming" class="modal-overlay" style="display: none">
+      <div class="modal-container" style="max-width: 760px">
+        <div class="modal-header" style="background: #7c3aed; color: white">
+          <h3>
+            <i class="fa-solid fa-wand-magic-sparkles"></i> Format Nama Aset
+            Otomatis
+          </h3>
+          <button
+            class="btn-close"
+            onclick="closeNamingModal()"
+            style="color: white"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="modal-body adm-body">
+          <p class="nm-note">
+            Berlaku untuk semua aset <b>kecuali POP dan Pelanggan</b> (keduanya
+            tetap diberi nama manual). Dipakai saat kolom nama dikosongkan, dan
+            pada tombol <i>Nama otomatis</i> di Asset Inventory.
+          </p>
+          <div id="nm-presets" class="nm-presets"></div>
+          <div class="nm-row">
+            <label
+              >Template
+              <input
+                type="text"
+                id="nm-template"
+                oninput="nmPreviewSoon()"
+                maxlength="60"
+            /></label>
+            <label
+              >Digit nomor
+              <input
+                type="number"
+                id="nm-digits"
+                min="2"
+                max="8"
+                oninput="nmPreviewSoon()"
+            /></label>
+          </div>
+          <label class="nm-imp"
+            ><input
+              type="checkbox"
+              id="nm-import"
+              checked
+              onchange="nmPreviewSoon()"
+            />
+            Saat impor, samakan nama aset baru dengan format ini (kecuali POP
+            dan Pelanggan)</label
+          >
+          <div class="nm-tokens">
+            Token: <code>{TIPE}</code> <code>{CLUSTER}</code>
+            <code>{AREA}</code> <code>{NO}</code> (wajib, sekali)
+          </div>
+          <div id="nm-codes" class="nm-codes"></div>
+          <div id="nm-msg" class="ap-msg"></div>
+          <h4 class="nm-h">Contoh nama yang akan dihasilkan</h4>
+          <div id="nm-examples" class="nm-examples"></div>
+          <div class="nm-foot">
+            <button
+              type="button"
+              class="inv-bar-btn primary"
+              id="nm-save"
+              onclick="nmSave()"
+            >
+              <i class="fa-solid fa-floppy-disk"></i> Simpan format
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ===== WILAYAH: Regional > Cluster > Area ===== -->
     <div id="modal-wilayah" class="modal-overlay" style="display: none">
       <div class="modal-container" style="max-width: 860px">
@@ -3428,6 +3518,93 @@
 
     <!-- Modal Import / Export data -->
     <!-- ===== CEK COVERAGE MASSAL ===== -->
+    <div id="modal-topofix" class="modal-overlay" style="display: none">
+      <div class="modal-container data-container tf-container">
+        <div class="modal-header" style="background: #0f766e; color: white">
+          <h3><i class="fa-solid fa-diagram-project"></i> Rapikan Topologi</h3>
+          <button
+            class="btn-close"
+            onclick="closeTopofixModal()"
+            title="Tutup"
+            style="color: white"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="modal-body data-body">
+          <div id="tf-tabs" class="tf-tabs"></div>
+          <div id="tf-msg" class="data-msg" style="display: none"></div>
+          <div id="tf-body"></div>
+          <div id="tf-puzzle" class="pz-layout" style="display: none">
+            <div id="pz-main" class="pz-main"></div>
+            <div id="pz-mapcol" class="pz-mapcol">
+              <div class="pz-maptools">
+                <b>Minimap</b>
+                <span
+                  ><button
+                    type="button"
+                    id="pz-b-map"
+                    class="on"
+                    onclick="pzMapBase(false)"
+                  >
+                    Peta</button
+                  ><button
+                    type="button"
+                    id="pz-b-sat"
+                    onclick="pzMapBase(true)"
+                  >
+                    Satelit
+                  </button></span
+                >
+                <button
+                  type="button"
+                  onclick="pzMapSync()"
+                  title="Samakan dengan tampilan peta utama"
+                >
+                  Ikuti peta utama
+                </button>
+              </div>
+              <div id="pz-map" class="pz-map"></div>
+              <div id="pz-maphint" class="pz-maphint"></div>
+              <label class="pz-all"
+                ><input
+                  type="checkbox"
+                  id="pz-all"
+                  onchange="pzMapAll(this.checked)"
+                />
+                tampilkan semua jenis aset</label
+              >
+              <div class="pz-legend">
+                <i class="t-POP"></i>POP <i class="t-CLOSURE"></i>Closure
+                <i class="t-SLACK"></i>Slack <i class="t-ODP"></i>ODP
+                <i class="t-PELANGGAN"></i>Pelanggan
+                <i class="ring"></i>Kandidat
+              </div>
+            </div>
+          </div>
+          <div id="tf-topo" class="topo-wrap" style="display: none"></div>
+          <div class="tf-foot">
+            <button
+              type="button"
+              class="data-ghost"
+              onclick="closeTopofixModal()"
+            >
+              Tutup
+            </button>
+            <button
+              type="button"
+              id="tf-go"
+              class="data-primary"
+              onclick="tfGo()"
+              disabled
+            >
+              <span>Terapkan 0 terpilih</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="modal-covbulk" class="modal-overlay" style="display: none">
       <div class="modal-container data-container cb-container">
         <div class="modal-header" style="background: #0f766e; color: white">
@@ -4342,6 +4519,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
 
     <!-- External Custom JS Logic -->
-    <script src="app.js?v=20261008i"></script>
+    <script src="app.js?v=20261009k"></script>
   </body>
 </html>
