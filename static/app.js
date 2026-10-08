@@ -19895,6 +19895,32 @@ function mxLoad(i) {
       });
   });
 }
+// hulu yang sudah "diambil" sambungan lain pada rantai yang sama (belum diterapkan): label -> nama tujuan
+function mxReserved(i, L) {
+  const resv = new Map(),
+    me = PZ.prev.links[i],
+    fid = me.from.id;
+  PZ.links.forEach((lk, j) => {
+    const pj = PZ.prev.links[j];
+    if (j === i || !lk || lk.done || !pj || pj.from.id !== fid) return;
+    const name = pj.to.name,
+      mx = lk.mx;
+    if (mx && mx.pairs.length && mx.pairs.every((x) => x.u))
+      mx.pairs.forEach((x) => resv.set(x.u, name));
+    else if (j < i && !(mx && mx.pairs.length)) {
+      // otomatis: server memakai hulu bebas pertama sebanyak core-nya
+      let n = (pj.cores || []).length;
+      for (const l of L) {
+        if (n <= 0) break;
+        if (!resv.has(l)) {
+          resv.set(l, name);
+          n--;
+        }
+      }
+    }
+  });
+  return resv;
+}
 function mxLists(i) {
   const p = PZ.prev.links[i],
     lk = PZ.links[i],
@@ -19925,6 +19951,8 @@ function mxLists(i) {
       LA = U.d.all || L;
     }
   }
+  const resv = L.length ? mxReserved(i, L) : new Map();
+  if (resv.size) L = L.filter((l) => !resv.has(l));
   const R = p.cable.free || [],
     tot = p.cable.total || 0;
   const RA = tot ? Array.from({ length: tot }, (_, k) => coreLabelN(k + 1)) : R;
@@ -19932,6 +19960,7 @@ function mxLists(i) {
   return {
     L,
     LA,
+    resv,
     R,
     RA,
     D: (Dn && Dn.d && Dn.d.ports) || [],
@@ -20124,7 +20153,7 @@ function mxPayload(i) {
     upstream: hasU && m.isJ && m.upCable ? m.upCable : null,
   };
 }
-function mxColHtml(i, side, title, sub, all, free, m, note) {
+function mxColHtml(i, side, title, sub, all, free, m, note, resv) {
   const MAX = 288,
     used = new Map(),
     fr = new Set(free);
@@ -20160,7 +20189,7 @@ function mxColHtml(i, side, title, sub, all, free, m, note) {
             : side === "D"
               ? `mxClickD(${i}, '${escapeHtml(l)}')`
               : `mxClick(${i}, '${side}', '${escapeHtml(l)}', event)`;
-        return `<button type="button" class="mx-i ${cls}" title="${escapeHtml(l)}${gone ? " · sudah terpakai" : ""}" ${gone || side === "M" ? "disabled" : `onclick="${fn}"`}>${escapeHtml(mxShort(l))}${k != null ? `<sup>${k + 1}</sup>` : ""}</button>`;
+        return `<button type="button" class="mx-i ${cls}" title="${escapeHtml(l)}${gone ? (resv && resv.has(l) ? " · dipakai sambungan ke " + resv.get(l) : " · sudah terpakai") : ""}" ${gone || side === "M" ? "disabled" : `onclick="${fn}"`}>${escapeHtml(mxShort(l))}${k != null ? `<sup>${k + 1}</sup>` : ""}</button>`;
       })
       .join("") ||
     `<small class="mx-none">${escapeHtml(note || "kosong")}</small>`;
@@ -20176,6 +20205,8 @@ function mxHtml(i) {
     noL = !q.L.length;
   const free = q.R.length;
   let h = `<div class="mx"><div class="mx-top"><b>Matriks sambungan core</b><small>${m.pairs.length ? `${m.pairs.length} pasangan dipilih` : `otomatis: ${fmtInt(p.cores.length)} core pertama`} · ${fmtInt(free)} core bebas${q.loading ? " · memuat hulu…" : ""}</small></div>`;
+  if (q.L.length > free && free)
+    h += `<div class="mx-hint">Kabel ${escapeHtml(p.cable.capacity || "")} membawa maksimal ${fmtInt(q.RA.length)} core; ${fmtInt(q.L.length - free)} hulu lainnya bisa dipakai cabang lain.</div>`;
   h += `<div class="mx-tools"><button type="button" class="${!m.pairs.length ? "on" : ""}" onclick="mxQuick(${i}, 'auto')">Otomatis</button><button type="button" onclick="mxQuick(${i}, 'lurus')" title="Hulu terkecil ↔ core terkecil">Lurus</button><button type="button" onclick="mxQuick(${i}, 'terbalik')" title="Hulu terkecil ↔ core terbesar">Terbalik</button><button type="button" class="mx-all" onclick="mxQuick(${i}, 'all')"><i class="fa-solid fa-bolt"></i> Sambung semua (${fmtInt(noL ? free : Math.min(q.L.length, free))})</button><button type="button" class="${m.showText ? "on" : ""}" onclick="mxQuick(${i}, 'text')">Tempel daftar</button><label>jumlah <input type="number" min="1" max="${Math.max(1, free)}" value="${lk.n || p.cores.length || 1}" onchange="mxCount(${i}, this.value)"></label></div>`;
   if (q.cabs.length > 1)
     h += `<label class="mx-cab">Kabel hulu <select onchange="mxUpCable(${i}, this.value)">${q.cabs.map((c) => `<option value="${Number(c.id)}" ${c.id === m.upCable ? "selected" : ""}>${escapeHtml(c.name)} (${fmtInt(c.free.length)} bebas)</option>`).join("")}</select></label>`;
@@ -20198,11 +20229,12 @@ function mxHtml(i) {
     i,
     "L",
     `Hulu · ${upNm}`,
-    `${fmtInt(q.L.length)} bebas`,
+    `${fmtInt(q.L.length)} bebas${q.resv && q.resv.size ? " · " + fmtInt(q.resv.size) + " dipakai cabang lain" : ""}`,
     q.LA,
     q.L,
     m,
     noteL,
+    q.resv,
   );
   h += mxColHtml(
     i,
